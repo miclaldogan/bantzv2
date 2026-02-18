@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bantz"
+version = "0.1.0"
+description = "Local-first AI assistant — your terminal, your host."
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.59.0",
+    "httpx>=0.27.0",
+    "aiosqlite>=0.20.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "psutil>=5.9.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+translation = [
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "sentencepiece>=0.2.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+bantz = "bantz.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bantz"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
