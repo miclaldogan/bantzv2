@@ -40,6 +40,10 @@ class Config(BaseSettings):
     # ── Storage ───────────────────────────────────────────────────────────
     data_dir: str = Field("", alias="BANTZ_DATA_DIR")
 
+    # ── Telegram ──────────────────────────────────────────────────────────
+    telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
+    telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
+
     @property
     def db_path(self) -> Path:
         base = (
