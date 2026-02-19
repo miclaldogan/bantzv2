@@ -47,7 +47,13 @@ class Config(BaseSettings):
             if self.data_dir
             else Path.home() / ".local" / "share" / "bantz"
         )
-        return base / "store.db"
+        new = base / "bantz.db"
+        # One-time migration: store.db → bantz.db
+        if not new.exists():
+            old = base / "store.db"
+            if old.exists():
+                old.rename(new)
+        return new
 
     def ensure_dirs(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
