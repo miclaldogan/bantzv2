@@ -10,6 +10,7 @@ Commands:
   bantz --setup google classroom → OAuth setup for Classroom
   bantz --setup schedule        → class schedule setup
   bantz --setup telegram        → Telegram bot token setup
+  bantz --setup places          → Known locations setup
 """
 from __future__ import annotations
 
@@ -51,6 +52,9 @@ def _handle_setup(parts: list[str]) -> None:
     if len(parts) >= 1 and parts[0].lower() == "telegram":
         _setup_telegram()
         return
+    if len(parts) >= 1 and parts[0].lower() == "places":
+        asyncio.run(_setup_places())
+        return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
         from bantz.auth.google_oauth import setup_google
@@ -62,6 +66,7 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup google [gmail|classroom|calendar]")
         print("  bantz --setup schedule")
         print("  bantz --setup telegram")
+        print("  bantz --setup places")
 
 
 def _setup_telegram() -> None:
@@ -112,6 +117,67 @@ def _setup_telegram() -> None:
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n✅ Token kaydedildi: {env_path}")
     print("Başlatmak için: python -m bantz.integrations.telegram_bot")
+
+
+async def _setup_places() -> None:
+    """Interactive known-places setup — writes places.json."""
+    from bantz.core.places import places
+    from bantz.core.location import location_service
+
+    print("\n📍 Bilinen Konumlar Kurulumu")
+    print("─" * 40)
+
+    data = dict(places.all_places())
+    if data:
+        print("Mevcut konumlar:")
+        for k, v in data.items():
+            print(f"  {k}: {v.get('label', k)}  ({v.get('lat', 0):.4f}, {v.get('lon', 0):.4f})")
+        print()
+
+    # Try getting current location for convenience
+    print("Mevcut konumun alınıyor...")
+    loc = await location_service.get()
+    if loc.lat != 0.0 and loc.lon != 0.0:
+        print(f"  📡 {loc.display}  ({loc.lat:.4f}, {loc.lon:.4f})  via {loc.source}")
+    else:
+        print("  ⚠  Konum alınamadı — elle gireceksin.")
+    print()
+
+    print("Konum ekle (örn: yurt, kampüs, ev). Bitirmek için boş bırak.")
+    while True:
+        try:
+            key = input("\nKonum kodu (örn: yurt): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not key:
+            break
+
+        label = input(f"  Görünen ad [{key.capitalize()}]: ").strip() or key.capitalize()
+
+        use_current = ""
+        if loc.lat != 0.0:
+            use_current = input(f"  Şu anki konumu kullan? ({loc.lat:.4f}, {loc.lon:.4f}) [E/h]: ").strip().lower()
+
+        if use_current in ("", "e", "evet", "y", "yes"):
+            lat, lon = loc.lat, loc.lon
+        else:
+            lat_str = input("  Enlem (lat): ").strip()
+            lon_str = input("  Boylam (lon): ").strip()
+            try:
+                lat, lon = float(lat_str), float(lon_str)
+            except ValueError:
+                print("  ✗ Geçersiz koordinat, atlanıyor.")
+                continue
+
+        data[key] = {"label": label, "lat": lat, "lon": lon}
+        print(f"  ✓ {key}: {label} ({lat:.4f}, {lon:.4f})")
+
+    if data:
+        places.save(data)
+        print(f"\n✅ Konumlar kaydedildi: {places.setup_path()}")
+        print(f"  {len(data)} konum tanımlı")
+    else:
+        print("\nHiç konum eklenmedi.")
 
 
 def _setup_profile() -> None:
@@ -292,6 +358,16 @@ async def _doctor() -> None:
     tg_icon = "✓" if tg_ok else "○"
     tg_status = "token set" if tg_ok else "not configured  → bantz --setup telegram"
     print(f"{tg_icon} Telegram: {tg_status}")
+
+    # Habits
+    from bantz.core.habits import habits as _hab
+    print(f"✓ Habits: {_hab.status_line()}")
+
+    # Places
+    from bantz.core.places import places as _plc
+    plc_icon = "✓" if _plc.is_configured() else "○"
+    print(f"{plc_icon} Places: {_plc.status_line()}")
+
     print("─" * 44)
 
 

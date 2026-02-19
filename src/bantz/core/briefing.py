@@ -16,6 +16,7 @@ from typing import Optional
 from bantz.core.schedule import schedule
 from bantz.core.time_context import time_ctx
 from bantz.core.profile import profile as _profile
+from bantz.core.habits import habits as _habits
 
 
 class Briefing:
@@ -38,7 +39,8 @@ class Briefing:
 
         # Schedule is local — no network, no failure
         schedule_str = self._get_schedule(now)
-        next_class_str = self._get_next_class(now)
+        next_class_str = await self._get_next_class(now)
+        habit_str = self._get_habit_hint(now)
 
         return self._format(
             tc=tc,
@@ -49,6 +51,7 @@ class Briefing:
             classroom=classroom_str,
             schedule=schedule_str,
             next_class=next_class_str,
+            habits=habit_str,
         )
 
     # ── Formatters ────────────────────────────────────────────────────────
@@ -61,6 +64,7 @@ class Briefing:
         classroom: Optional[str],
         schedule: Optional[str],
         next_class: Optional[str],
+        habits: Optional[str] = None,
     ) -> str:
         lines = []
 
@@ -93,6 +97,10 @@ class Briefing:
         # Classroom — upcoming assignments only
         if classroom:
             lines.append(f"📚  {classroom}")
+
+        # Habit-based hint
+        if habits:
+            lines.append(f"🔁  {habits}")
 
         # Footer if everything failed
         if not any([weather, calendar, gmail, classroom]):
@@ -176,10 +184,46 @@ class Briefing:
             return None
         return schedule.format_today(now)
 
-    def _get_next_class(self, now: datetime) -> Optional[str]:
+    async def _get_next_class(self, now: datetime) -> Optional[str]:
         if not schedule.is_configured():
             return None
-        return schedule.format_next(now)
+        text = schedule.format_next(now)
+        # Append travel hint if places are configured
+        try:
+            from bantz.core.places import places as _places
+            if _places.is_configured():
+                cls = schedule.next_class(now)
+                if cls and cls.get("starts_today") and cls.get("location"):
+                    hint = await _places.travel_hint(
+                        cls["location"], cls["starts_in_minutes"]
+                    )
+                    if hint:
+                        text += f"\n  🚶 {hint}"
+        except Exception:
+            pass
+        return text
+
+    def _get_habit_hint(self, now: datetime) -> Optional[str]:
+        """Show tools the user habitually uses at this time of day."""
+        try:
+            hour = now.hour
+            if 6 <= hour < 12:
+                segment = "sabah"
+            elif 12 <= hour < 17:
+                segment = "oglen"
+            elif 17 <= hour < 21:
+                segment = "aksam"
+            else:
+                segment = "gece_gec"
+
+            top = _habits.top_tools_for_segment(segment, n=3, days=14)
+            if not top:
+                return None
+
+            names = ", ".join(t["tool"] for t in top)
+            return f"Bu saatlerde sık kullandıkların: {names}"
+        except Exception:
+            return None
 
 
 briefing = Briefing()
