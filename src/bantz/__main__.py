@@ -169,9 +169,13 @@ async def _doctor() -> None:
     if any(st != "ok" for st in g_status.values()):
         print("  → Run: bantz --setup google gmail  /  bantz --setup google classroom")
 
-    # DB
+    # Memory DB
     config.ensure_dirs()
-    print(f"✓ DB: {config.db_path}")
+    from bantz.core.memory import memory as _mem
+    _mem.init(config.db_path)
+    s = _mem.stats()
+    print(f"✓ Memory DB: {s['db_path']}")
+    print(f"  {s['total_conversations']} konuşma  |  {s['total_messages']} toplam mesaj")
     print("─" * 44)
 
 
