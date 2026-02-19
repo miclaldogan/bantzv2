@@ -120,9 +120,27 @@ def _setup_telegram() -> None:
 
 
 async def _setup_places() -> None:
-    """Interactive known-places setup — writes places.json."""
+    """Interactive known-places setup — writes places.json.
+    Three coordinate options: auto IP, city name search, manual entry.
+    First place (or explicit choice) becomes default location in .env.
+    """
+    import json
+    import urllib.request
+    from pathlib import Path
     from bantz.core.places import places
     from bantz.core.location import location_service
+
+    def _nominatim_search(query: str) -> list[dict]:
+        """Forward geocode via Nominatim (no API key)."""
+        import urllib.parse
+        encoded = urllib.parse.quote(query)
+        url = (
+            f"https://nominatim.openstreetmap.org/search"
+            f"?q={encoded}&format=json&limit=3&accept-language=tr"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Bantz/2.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
 
     print("\n📍 Bilinen Konumlar Kurulumu")
     print("─" * 40)
@@ -131,22 +149,26 @@ async def _setup_places() -> None:
     if data:
         print("Mevcut konumlar:")
         for k, v in data.items():
-            print(f"  {k}: {v.get('label', k)}  ({v.get('lat', 0):.4f}, {v.get('lon', 0):.4f})")
+            prim = " ★" if v.get("primary") else ""
+            print(f"  {k}: {v.get('label', k)}  ({v.get('lat', 0):.4f}, {v.get('lon', 0):.4f}){prim}")
         print()
 
-    # Try getting current location for convenience
-    print("Mevcut konumun alınıyor...")
+    # Get IP location for option 1
+    print("IP konumun alınıyor...")
     loc = await location_service.get()
     if loc.lat != 0.0 and loc.lon != 0.0:
         print(f"  📡 {loc.display}  ({loc.lat:.4f}, {loc.lon:.4f})  via {loc.source}")
     else:
-        print("  ⚠  Konum alınamadı — elle gireceksin.")
+        print("  ⚠  IP konum alınamadı.")
     print()
 
-    print("Konum ekle (örn: yurt, kampüs, ev). Bitirmek için boş bırak.")
+    print("Konum ekle (örn: yurt, kampüs, ev). Bitirmek için boş bırak.\n")
+
+    primary_key: str | None = None
+
     while True:
         try:
-            key = input("\nKonum kodu (örn: yurt): ").strip().lower()
+            key = input("Konum kodu (örn: yurt): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
         if not key:
@@ -154,30 +176,133 @@ async def _setup_places() -> None:
 
         label = input(f"  Görünen ad [{key.capitalize()}]: ").strip() or key.capitalize()
 
-        use_current = ""
+        # 3 options for coordinates
+        print()
+        print("  Koordinat seçeneği:")
         if loc.lat != 0.0:
-            use_current = input(f"  Şu anki konumu kullan? ({loc.lat:.4f}, {loc.lon:.4f}) [E/h]: ").strip().lower()
-
-        if use_current in ("", "e", "evet", "y", "yes"):
-            lat, lon = loc.lat, loc.lon
+            print(f"  [1] Otomatik (IP konumu: {loc.city}, {loc.lat:.4f}, {loc.lon:.4f})")
         else:
-            lat_str = input("  Enlem (lat): ").strip()
-            lon_str = input("  Boylam (lon): ").strip()
+            print("  [1] Otomatik (IP konumu alınamadı)")
+        print("  [2] Şehir/adres adı ile ara")
+        print("  [3] Manuel gir (lat, lon)")
+        choice = input("  Seçim [2]: ").strip() or "2"
+
+        lat, lon = 0.0, 0.0
+
+        if choice == "1" and loc.lat != 0.0:
+            lat, lon = loc.lat, loc.lon
+            print(f"  → {loc.city}  ({lat:.4f}, {lon:.4f})")
+
+        elif choice == "3":
+            raw = input("  Koordinat (lat, lon): ").strip()
             try:
-                lat, lon = float(lat_str), float(lon_str)
-            except ValueError:
+                parts = raw.replace(" ", "").split(",")
+                lat, lon = float(parts[0]), float(parts[1])
+            except (ValueError, IndexError):
                 print("  ✗ Geçersiz koordinat, atlanıyor.")
+                continue
+
+        else:  # default: option 2 — search
+            query = input("  Şehir/adres: ").strip()
+            if not query:
+                print("  ✗ Boş sorgu, atlanıyor.")
+                continue
+            try:
+                results = _nominatim_search(query)
+                if not results:
+                    print("  ✗ Sonuç bulunamadı.")
+                    continue
+
+                if len(results) == 1:
+                    pick = results[0]
+                else:
+                    print("  Bulunan sonuçlar:")
+                    for i, r in enumerate(results, 1):
+                        print(f"    [{i}] {r['display_name'][:80]}")
+                    idx = input(f"  Seçim [1]: ").strip() or "1"
+                    try:
+                        pick = results[int(idx) - 1]
+                    except (ValueError, IndexError):
+                        pick = results[0]
+
+                lat = float(pick["lat"])
+                lon = float(pick["lon"])
+                display = pick.get("display_name", "")[:60]
+                print(f"  → Bulunan: {lat:.4f}, {lon:.4f}  ({display})")
+
+                confirm = input("  Doğru mu? [E/h]: ").strip().lower()
+                if confirm in ("h", "hayır", "n", "no"):
+                    print("  Atlanıyor.")
+                    continue
+
+            except Exception as e:
+                print(f"  ✗ Arama hatası: {e}")
                 continue
 
         data[key] = {"label": label, "lat": lat, "lon": lon}
         print(f"  ✓ {key}: {label} ({lat:.4f}, {lon:.4f})")
 
-    if data:
-        places.save(data)
-        print(f"\n✅ Konumlar kaydedildi: {places.setup_path()}")
-        print(f"  {len(data)} konum tanımlı")
-    else:
+        # Ask if this is primary location
+        if not primary_key:
+            is_primary = input("  Bu ana konumun mu? (hava durumu vs. için) [E/h]: ").strip().lower()
+            if is_primary in ("", "e", "evet", "y", "yes"):
+                primary_key = key
+                data[key]["primary"] = True
+        print()
+
+    if not data:
         print("\nHiç konum eklenmedi.")
+        return
+
+    places.save(data)
+    print(f"\n✅ Konumlar kaydedildi: {places.setup_path()}")
+    print(f"  {len(data)} konum tanımlı")
+
+    # Write primary location to .env so location_service uses it
+    pkey = primary_key
+    if not pkey:
+        # Find any existing primary
+        for k, v in data.items():
+            if v.get("primary"):
+                pkey = k
+                break
+    if not pkey and len(data) == 1:
+        pkey = next(iter(data))
+
+    if pkey and pkey in data:
+        place = data[pkey]
+        _write_location_to_env(
+            city=place["label"],
+            lat=place["lat"],
+            lon=place["lon"],
+        )
+        print(f"  📡 Ana konum .env'ye yazıldı: {place['label']} ({place['lat']:.4f}, {place['lon']:.4f})")
+        print("  → location_service artık bu koordinatları kullanacak")
+
+
+def _write_location_to_env(city: str, lat: float, lon: float) -> None:
+    """Write BANTZ_CITY / BANTZ_LAT / BANTZ_LON to .env."""
+    from pathlib import Path
+
+    env_path = Path.cwd() / ".env"
+    existing = ""
+    if env_path.exists():
+        existing = env_path.read_text(encoding="utf-8")
+
+    lines = existing.splitlines()
+    # Remove old location entries
+    lines = [
+        l for l in lines
+        if not l.startswith("BANTZ_CITY=")
+        and not l.startswith("BANTZ_LAT=")
+        and not l.startswith("BANTZ_LON=")
+    ]
+
+    lines.append(f"BANTZ_CITY={city}")
+    lines.append(f"BANTZ_LAT={lat}")
+    lines.append(f"BANTZ_LON={lon}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _setup_profile() -> None:

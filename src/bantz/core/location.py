@@ -71,19 +71,23 @@ class LocationService:
             return self._cache
 
     async def _resolve(self) -> Location:
-        # 1. Manual .env override
+        # 1. Manual .env override (BANTZ_CITY / BANTZ_LAT / BANTZ_LON)
         if loc := self._from_config():
             return loc
 
-        # 2. GeoClue2 (Linux system location)
+        # 2. places.json primary location (set via --setup places)
+        if loc := self._from_places():
+            return loc
+
+        # 3. GeoClue2 (Linux system location)
         if loc := await self._from_geoclue():
             return loc
 
-        # 3. ipinfo.io
+        # 4. ipinfo.io
         if loc := await self._from_ipinfo():
             return loc
 
-        # 4. Fallback
+        # 5. Fallback
         logger.warning("All location sources failed — using fallback (Ankara, TR)")
         return Location(**FALLBACK, source="fallback")
 
@@ -101,6 +105,46 @@ class LocationService:
             lon=float(getattr(config, "location_lon", 0.0) or 0.0),
             source="config",
         )
+
+    def _from_places(self) -> Optional[Location]:
+        """Read primary location from places.json (set via --setup places)."""
+        import json
+        from pathlib import Path
+
+        places_path = Path.home() / ".local" / "share" / "bantz" / "places.json"
+        if not places_path.exists():
+            return None
+        try:
+            data = json.loads(places_path.read_text(encoding="utf-8"))
+            if not data:
+                return None
+
+            # Find primary place, or fall back to first place
+            place = None
+            for v in data.values():
+                if v.get("primary"):
+                    place = v
+                    break
+            if not place:
+                place = next(iter(data.values()))
+
+            lat = place.get("lat", 0.0)
+            lon = place.get("lon", 0.0)
+            if lat == 0.0 and lon == 0.0:
+                return None
+
+            label = place.get("label", "Unknown")
+            return Location(
+                city=label,
+                country="TR",
+                timezone="Europe/Istanbul",
+                lat=lat,
+                lon=lon,
+                source="places",
+            )
+        except Exception as exc:
+            logger.debug(f"places.json read failed: {exc}")
+            return None
 
     async def _from_geoclue(self) -> Optional[Location]:
         """Try GeoClue2 via D-Bus. Requires geoclue2 installed and user permission."""
