@@ -186,18 +186,37 @@ class Brain:
             to_match = re.search(r"(\S+?)(?:['\u2019]?(?:ya|ye|[ea])\b)", o)
             to = to_match.group(1) if to_match else ""
             if to:  # only trigger compose if we found a recipient
-                return {"tool": "gmail", "args": {"action": "compose", "to": to}}
+                return {"tool": "gmail", "args": {
+                    "action": "compose", "to": to, "intent": orig,
+                }}
 
         # Gmail
         if any(k in both for k in ("mail", "inbox", "gelen kutu", "okunmamış",
                                     "e-posta", "eposta", "mailleri", "mailine",
                                     "mailim", "mallerim", "maillerim")):
-            if any(k in both for k in ("gönder", "yaz", "send", "compose", "söyle")):
-                return {"tool": "gmail", "args": {"action": "compose"}}
-            if any(k in both for k in ("filtrele", "filter", "gönderen", "sender",
-                                        "tarih", "date", "yıldız", "starred",
-                                        "etiket", "label")):
-                return {"tool": "gmail", "args": {"action": "filter"}}
+            # ── Filter: sender/date/star/label/attachment patterns ──
+            _is_filter = (
+                re.search(r"\S+[''\u2019]?(?:den|dan|tan|ten|ndan|nden)\s+(?:mailler?|mail|gelen)", o)
+                or any(k in both for k in (
+                    "yıldızlı", "önemli mail", "ekli mail", "okunmamış",
+                    "filtrele", "filter", "gönderen", "etiketli",
+                    "sosyal mail", "tanıtım mail", "promosyon",
+                ))
+                or re.search(r"bu hafta\w*\s+mail|son\s+\d+\s*gün", both)
+                or (any(k in both for k in ("gelen", "gönder")) and resolve_date(orig) is not None)
+            )
+            if _is_filter:
+                return {"tool": "gmail", "args": {
+                    "action": "filter", "raw_query": orig,
+                }}
+            # ── Compose / send ──
+            if any(k in both for k in ("gönder", "yaz", "send", "compose",
+                                        "mail at", "söyle")):
+                to = _extract_mail_recipient(o)
+                return {"tool": "gmail", "args": {
+                    "action": "compose", "to": to, "intent": orig,
+                }}
+            # ── Default: unread summary ──
             return {"tool": "gmail", "args": {"action": "unread"}}
 
         # Calendar
@@ -365,6 +384,25 @@ class Brain:
             return BrainResult(response=err, tool_used=None)
 
         result = await tool.execute(**tool_args)
+
+        # ── Compose/reply draft → confirmation flow ──
+        if result.success and result.data and result.data.get("draft"):
+            d = result.data
+            memory.add("assistant", result.output, tool_used=tool_name)
+            return BrainResult(
+                response=result.output,
+                tool_used=tool_name,
+                tool_result=result,
+                needs_confirm=True,
+                pending_tool="gmail",
+                pending_args={
+                    "action": "send",
+                    "to": d["to"],
+                    "subject": d.get("subject", ""),
+                    "body": d["body"],
+                },
+            )
+
         resp = await self._finalize(en_input, result, tc)
         memory.add("assistant", resp, tool_used=tool_name)
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
@@ -419,6 +457,28 @@ def _extract_city(text: str) -> str:
     ).strip()
     cleaned = re.sub(r"'(da|de|ta|te|nda|nde|daki|deki)\b", "", cleaned).strip()
     return cleaned.title() if cleaned and len(cleaned) > 2 else ""
+
+
+def _extract_mail_recipient(text: str) -> str:
+    """
+    Extract recipient from Turkish compose phrases.
+    "hocama mail at" → "hocam"
+    "ahmet'e mail gönder" → "ahmet"
+    "prof@uni.edu'ya mail at" → "prof@uni.edu"
+    """
+    # Direct email address
+    m = re.search(r"(\S+@\S+)", text)
+    if m:
+        return m.group(1).rstrip("'\".,;:")
+    # Dative recipient: X'e, X'a, X'ya, X'ye, X'na
+    m = re.search(r"(\S+?)[''\u2019]?(?:ya|ye|na|ne|[ea])\s+(?:mail|meil)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    # "X'a yaz", "X'a gönder"
+    m = re.search(r"(\S+?)[''\u2019]?(?:ya|ye|na|ne|[ea])\s+(?:yaz|gönder|at\b)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def _extract_event_title(text: str) -> str:

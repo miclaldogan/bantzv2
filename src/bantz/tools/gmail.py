@@ -12,8 +12,7 @@ Actions:
   summary   — LLM-powered unread summary
   count     — unread count
   read      — read single message content
-  search    — filtered search (from, date, stars, label)
-  send      — direct send (to/subject/body known)
+  search    — filtered search (from, date, stars, label)  filter    — natural-language advanced filtering (sender, date, stars, labels)  send      — direct send (to/subject/body known)
   compose   — LLM generates body, confirms before send
   reply     — reply to a thread
 """
@@ -149,7 +148,7 @@ class GmailTool(BaseTool):
     async def execute(
         self,
         action: str = "summary",
-        # summary | count | read | search | send | compose | reply | contacts
+        # summary | count | read | search | filter | send | compose | reply | contacts
         message_id: str = "",
         from_sender: str = "",
         subject_filter: str = "",
@@ -160,6 +159,7 @@ class GmailTool(BaseTool):
         subject: str = "",
         body: str = "",
         intent: str = "",        # for compose: "yarın teslim edemeyeceğimi söyle"
+        raw_query: str = "",     # for filter/compose: full original Turkish text
         alias: str = "",         # for contacts: add alias
         email: str = "",         # for contacts: add email
         limit: int = 5,
@@ -177,10 +177,12 @@ class GmailTool(BaseTool):
         elif action == "search":
             return await self._search(creds, from_sender, subject_filter,
                                       days_ago, starred, label, limit)
+        elif action == "filter":
+            return await self._filter(creds, raw_query or intent, limit)
         elif action == "send":
             return await self._send(creds, to, subject, body)
         elif action == "compose":
-            return await self._compose(creds, to, subject, intent)
+            return await self._compose(creds, to, subject, intent or raw_query)
         elif action == "reply":
             return await self._reply(creds, message_id, intent or body)
         elif action == "contacts":
@@ -306,6 +308,109 @@ class GmailTool(BaseTool):
             data={"count": len(messages), "messages": messages, "query": query},
         )
 
+    # ── Filter (natural language → Gmail query) ──────────────────────────
+
+    async def _filter(self, creds, raw_query: str, limit: int = 10) -> ToolResult:
+        """Parse Turkish natural language into Gmail query and search."""
+        q = self._build_gmail_query(raw_query)
+        messages = await asyncio.get_event_loop().run_in_executor(
+            None, self._fetch_messages_sync, creds, q, limit, False
+        )
+        if not messages:
+            return ToolResult(
+                success=True,
+                output=f"'{raw_query}' için mail bulunamadı.",
+                data={"query": q},
+            )
+        lines = [
+            f"From: {m['from']}  Subject: {m['subject']}  Date: {m['date']}  "
+            f"Snippet: {m['snippet'][:100]}"
+            for m in messages
+        ]
+        summary = await self._llm_summarize("\n".join(lines), GMAIL_SUMMARY_PROMPT)
+        return ToolResult(
+            success=True,
+            output=f"🔍 Filtre ({q}):\n{summary}",
+            data={"count": len(messages), "messages": messages, "query": q},
+        )
+
+    def _build_gmail_query(self, text: str) -> str:
+        """
+        Convert Turkish natural language to Gmail query syntax.
+
+        Examples:
+          "github'dan mailler"           → "from:noreply@github.com"
+          "hocamdan mailler"             → "from:prof@uni.edu"
+          "yıldızlı mailler"             → "is:starred"
+          "önemli mailler"               → "is:important"
+          "ekli mailler"                 → "has:attachment"
+          "okunmamış mailler"            → "is:unread"
+          "dün gelen mailler"            → "after:2025/06/18 before:2025/06/19"
+          "bu hafta gelen mailler"       → "after:2025/06/16"
+          "okunmamış ahmet'ten mailler"  → "from:ahmet is:unread"
+          "sosyal mailler"               → "category:social"
+          "tanıtım mailleri"             → "category:promotions"
+        """
+        q_parts: list[str] = []
+
+        # Sender: "X'den/X'tan/X'dan/X'ten mailler"
+        m = re.search(
+            r"(\S+?)[''\u2019]?(?:den|dan|tan|ten|ndan|nden)\s+(?:mailler?|mail|gelen)",
+            text, re.IGNORECASE,
+        )
+        if m:
+            sender = m.group(1)
+            email = contacts.resolve(sender)
+            q_parts.append(f"from:{email}")
+
+        # Stars / importance / attachment / unread
+        if re.search(r"yıldız", text, re.IGNORECASE):
+            q_parts.append("is:starred")
+        if re.search(r"önemli", text, re.IGNORECASE):
+            q_parts.append("is:important")
+        if re.search(r"ekli|ek\s+olan|attachment", text, re.IGNORECASE):
+            q_parts.append("has:attachment")
+        if re.search(r"okunmam[ıi]ş", text, re.IGNORECASE):
+            q_parts.append("is:unread")
+
+        # Labels / categories
+        _CATEGORY_MAP = {
+            "sosyal": "social", "tanıtım": "promotions", "promosyon": "promotions",
+            "güncelleme": "updates", "forum": "forums",
+        }
+        for tr_label, gmail_cat in _CATEGORY_MAP.items():
+            if tr_label in text.lower():
+                q_parts.append(f"category:{gmail_cat}")
+                break
+
+        # Label by name (etiketli pattern)
+        lm = re.search(r"(\S+)\s+etiketli", text, re.IGNORECASE)
+        if lm:
+            q_parts.append(f"label:{lm.group(1)}")
+
+        # Date ranges using date_parser
+        from bantz.core.date_parser import resolve_date
+        dt = resolve_date(text)
+        if dt:
+            after = dt.strftime("%Y/%m/%d")
+            before = (dt + timedelta(days=1)).strftime("%Y/%m/%d")
+            q_parts.append(f"after:{after} before:{before}")
+        else:
+            # "bu hafta" / "son X gün"
+            if "bu hafta" in text.lower():
+                from datetime import datetime as _dt
+                now = _dt.now()
+                monday = now - timedelta(days=now.weekday())
+                q_parts.append(f"after:{monday.strftime('%Y/%m/%d')}")
+            else:
+                dm = re.search(r"son\s+(\d+)\s*gün", text, re.IGNORECASE)
+                if dm:
+                    days = int(dm.group(1))
+                    after = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
+                    q_parts.append(f"after:{after}")
+
+        return " ".join(q_parts) if q_parts else "is:unread"
+
     # ── Send ──────────────────────────────────────────────────────────────
 
     async def _send(self, creds, to: str, subject: str, body: str) -> ToolResult:
@@ -334,10 +439,14 @@ class GmailTool(BaseTool):
 
         to_resolved = contacts.resolve(to)
 
-        # LLM generates body
+        # LLM generates body from user intent
         body = await self._llm_compose(to_resolved, subject, intent)
         if not body:
             return ToolResult(success=False, output="", error="Mail içeriği oluşturulamadı.")
+
+        # Auto-generate subject if not provided
+        if not subject:
+            subject = await self._generate_subject(body)
 
         # Return draft — brain will show confirmation
         preview = (
@@ -444,14 +553,17 @@ class GmailTool(BaseTool):
         ).execute()
         return result.get("resultSizeEstimate", 0)
 
-    def _fetch_messages_sync(self, creds, query: str, limit: int) -> list[dict]:
+    def _fetch_messages_sync(self, creds, query: str, limit: int,
+                             inbox_only: bool = True) -> list[dict]:
         svc = self._build_service(creds)
-        result = svc.users().messages().list(
-            userId="me",
-            labelIds=["INBOX"],
-            q=query,
-            maxResults=limit,
-        ).execute()
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "q": query,
+            "maxResults": limit,
+        }
+        if inbox_only:
+            kwargs["labelIds"] = ["INBOX"]
+        result = svc.users().messages().list(**kwargs).execute()
 
         messages = []
         for ref in result.get("messages", []):
@@ -516,6 +628,20 @@ class GmailTool(BaseTool):
         return True
 
     # ── LLM helpers ───────────────────────────────────────────────────────
+
+    async def _generate_subject(self, body: str) -> str:
+        """Use LLM to generate a concise email subject from the body."""
+        try:
+            from bantz.llm.ollama import ollama
+            raw = await ollama.chat([
+                {"role": "system", "content":
+                 "Generate a short, natural Turkish email subject line (max 8 words). "
+                 "Return ONLY the subject. No quotes, no prefix."},
+                {"role": "user", "content": body[:300]},
+            ])
+            return raw.strip().strip('"').strip("'")
+        except Exception:
+            return ""
 
     async def _llm_summarize(self, text: str, system_prompt: str) -> str:
         try:
