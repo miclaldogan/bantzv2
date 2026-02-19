@@ -203,6 +203,23 @@ class Memory:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def search_by_date(self, date: "datetime", limit: int = 20) -> list[dict]:
+        """
+        Return messages from a specific date (all conversations).
+        Useful for "dün ne yaptık" type queries.
+        """
+        date_str = date.strftime("%Y-%m-%d")
+        rows = self._conn.execute(
+            """SELECT m.role, m.content, m.tool_used, m.created_at,
+                      c.id as conv_id
+               FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               WHERE m.created_at LIKE ?
+               ORDER BY m.created_at ASC LIMIT ?""",
+            (f"{date_str}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def conversation_list(self, limit: int = 20) -> list[dict]:
         """Return recent conversations with message count (for a history UI)."""
         rows = self._conn.execute(

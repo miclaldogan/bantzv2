@@ -138,6 +138,43 @@ class Schedule:
         day_tr = DAYS_TR[self._day_key(now)]
         return f"{day_tr} derslerin:\n" + "\n".join(lines)
 
+    def format_for_date(self, target: datetime) -> str:
+        """Return formatted string of classes for an arbitrary date."""
+        return self.format_today(target)
+
+    def format_week(self, start: datetime | None = None) -> str:
+        """Return formatted string for an entire week starting from Monday."""
+        self._load()
+        start = start or datetime.now()
+        # Find Monday of the given week
+        monday = start - timedelta(days=start.weekday())
+
+        sections: list[str] = []
+        total = 0
+        for i in range(7):
+            day_dt = monday + timedelta(days=i)
+            key = self._day_key(day_dt)
+            classes = sorted(
+                self._data.get(key, []),
+                key=lambda c: c.get("time", ""),
+            )
+            if not classes:
+                continue
+            total += len(classes)
+            day_tr = DAYS_TR[key]
+            lines = []
+            for cls in classes:
+                emoji = TYPE_EMOJI.get(cls.get("type", ""), "📚")
+                name = cls.get("name", "")
+                time = cls.get("time", "")
+                lines.append(f"    {emoji} {time}  {name}")
+            sections.append(f"  {day_tr}:\n" + "\n".join(lines))
+
+        if not sections:
+            return "Bu hafta ders yok."
+        header = f"Haftalık program ({total} ders):"
+        return header + "\n" + "\n".join(sections)
+
     def format_next(self, now: datetime | None = None) -> str:
         """Return formatted string of next upcoming class."""
         now = now or datetime.now()
