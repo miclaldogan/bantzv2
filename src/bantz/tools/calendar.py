@@ -182,7 +182,7 @@ class CalendarTool(BaseTool):
         tz = pytz.timezone(tz_name)
         now = datetime.now(tz)
         time_min = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        time_max = (now + timedelta(days=days)).replace(hour=23, minute=59, second=59).isoformat()
+        time_max = (now + timedelta(days=days - 1)).replace(hour=23, minute=59, second=59).isoformat()
 
         svc = build("calendar", "v3", credentials=creds)
         result = svc.events().list(
