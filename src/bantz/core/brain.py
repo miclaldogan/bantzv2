@@ -210,6 +210,16 @@ class Brain:
                 }}
             if any(k in both for k in ("güncelle", "taşı", "değiştir", "update", "move")):
                 return {"tool": "calendar", "args": {"action": "update"}}
+            # Week view
+            if any(k in both for k in ("bu hafta", "haftalık", "this week", "weekly")):
+                return {"tool": "calendar", "args": {"action": "week"}}
+            # Resolve date from text (yarın, pazartesi, etc.)
+            resolved = resolve_date(orig)
+            if resolved:
+                return {"tool": "calendar", "args": {
+                    "action": "today",
+                    "date": resolved.strftime("%Y-%m-%d"),
+                }}
             return {"tool": "calendar", "args": {"action": "today"}}
 
         # Schedule — BEFORE classroom (both match "ders", schedule is more specific)

@@ -48,7 +48,7 @@ class CalendarTool(BaseTool):
         tz_name = loc.timezone
 
         if action == "week":
-            return await self._get_events(creds, tz_name, days=7)
+            return await self._get_events(creds, tz_name, days=7, anchor=date)
         elif action == "create":
             return await self._create(creds, tz_name, title, date, time, duration)
         elif action == "delete":
@@ -56,17 +56,19 @@ class CalendarTool(BaseTool):
         elif action == "update":
             return await self._update(creds, tz_name, event_id, title, new_title, new_date, new_time)
         else:
-            return await self._get_events(creds, tz_name, days=1)
+            return await self._get_events(creds, tz_name, days=1, anchor=date)
 
     # ── List events ───────────────────────────────────────────────────────
 
-    async def _get_events(self, creds, tz_name: str, days: int = 1) -> ToolResult:
+    async def _get_events(
+        self, creds, tz_name: str, days: int = 1, anchor: str = "",
+    ) -> ToolResult:
         events = await asyncio.get_event_loop().run_in_executor(
-            None, self._fetch_events_sync, creds, tz_name, days
+            None, self._fetch_events_sync, creds, tz_name, days, anchor
         )
         if not events:
-            period = "Bugün" if days == 1 else f"Önümüzdeki {days} gün"
-            return ToolResult(success=True, output=f"{period} için takviminde etkinlik yok.")
+            label = self._period_label(days, anchor)
+            return ToolResult(success=True, output=f"{label} için takviminde etkinlik yok.")
 
         lines = []
         for ev in events:
@@ -74,12 +76,31 @@ class CalendarTool(BaseTool):
             ev_id = f"  [id:{ev['id'][:8]}]"
             lines.append(f"  {ev['start_local']}  {ev['summary']}{loc_str}{ev_id}")
 
-        period = "Bugün" if days == 1 else f"Önümüzdeki {days} gün"
+        label = self._period_label(days, anchor)
         return ToolResult(
             success=True,
-            output=f"{period}:\n" + "\n".join(lines),
+            output=f"{label}:\n" + "\n".join(lines),
             data={"count": len(events), "events": events},
         )
+
+    @staticmethod
+    def _period_label(days: int, anchor: str) -> str:
+        if not anchor:
+            return "Bugün" if days == 1 else f"Önümüzdeki {days} gün"
+        try:
+            dt = datetime.strptime(anchor, "%Y-%m-%d")
+            today = datetime.now().date()
+            delta = (dt.date() - today).days
+            if delta == 0:
+                return "Bugün"
+            elif delta == 1:
+                return "Yarın"
+            elif delta == -1:
+                return "Dün"
+            else:
+                return dt.strftime("%d %b %A")
+        except Exception:
+            return "Bugün"
 
     # ── Create ────────────────────────────────────────────────────────────
 
@@ -175,14 +196,21 @@ class CalendarTool(BaseTool):
 
     # ── Sync helpers ──────────────────────────────────────────────────────
 
-    def _fetch_events_sync(self, creds, tz_name: str, days: int) -> list[dict]:
+    def _fetch_events_sync(self, creds, tz_name: str, days: int, anchor: str = "") -> list[dict]:
         from googleapiclient.discovery import build
         import pytz
 
         tz = pytz.timezone(tz_name)
-        now = datetime.now(tz)
-        time_min = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        time_max = (now + timedelta(days=days - 1)).replace(hour=23, minute=59, second=59).isoformat()
+        if anchor:
+            try:
+                base = datetime.strptime(anchor, "%Y-%m-%d")
+                base = tz.localize(base)
+            except Exception:
+                base = datetime.now(tz)
+        else:
+            base = datetime.now(tz)
+        time_min = base.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        time_max = (base + timedelta(days=days - 1)).replace(hour=23, minute=59, second=59).isoformat()
 
         svc = build("calendar", "v3", credentials=creds)
         result = svc.events().list(
