@@ -9,6 +9,7 @@ Commands:
   bantz --setup google gmail    → OAuth setup for Gmail
   bantz --setup google classroom → OAuth setup for Classroom
   bantz --setup schedule        → class schedule setup
+  bantz --setup telegram        → Telegram bot token setup
 """
 from __future__ import annotations
 
@@ -47,6 +48,9 @@ def _handle_setup(parts: list[str]) -> None:
     if len(parts) >= 1 and parts[0].lower() == "schedule":
         _setup_schedule()
         return
+    if len(parts) >= 1 and parts[0].lower() == "telegram":
+        _setup_telegram()
+        return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
         from bantz.auth.google_oauth import setup_google
@@ -57,6 +61,57 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup profile")
         print("  bantz --setup google [gmail|classroom|calendar]")
         print("  bantz --setup schedule")
+        print("  bantz --setup telegram")
+
+
+def _setup_telegram() -> None:
+    """Interactive Telegram bot token setup."""
+    from pathlib import Path
+
+    print("\n🦌 Telegram Bot Kurulumu")
+    print("─" * 40)
+    print("1. @BotFather'a git → /newbot → token al")
+    print("2. Token'ı buraya yapıştır:")
+    print()
+
+    token = input("Bot token: ").strip()
+    if not token:
+        print("Token gerekli. İptal edildi.")
+        return
+
+    # Optionally get allowed user IDs
+    print()
+    print("(Güvenlik) Sadece belirli kullanıcılar mı kullansın?")
+    print("Telegram user ID'lerini virgülle gir (boş=herkes):")
+    allowed = input("User ID'ler: ").strip()
+
+    # Proxy (Turkey blocks api.telegram.org)
+    print()
+    print("(Proxy) Türkiye'den erişim için HTTPS proxy gerekebilir.")
+    print("Örnek: socks5://127.0.0.1:1080 veya http://proxy:8080")
+    proxy = input("Proxy URL (boş=geç): ").strip()
+
+    # Write to .env
+    env_path = Path.cwd() / ".env"
+    existing = ""
+    if env_path.exists():
+        existing = env_path.read_text(encoding="utf-8")
+
+    lines = existing.splitlines()
+    # Remove old telegram entries
+    lines = [l for l in lines if not l.startswith("TELEGRAM_BOT_TOKEN=")
+             and not l.startswith("TELEGRAM_ALLOWED_USERS=")
+             and not l.startswith("TELEGRAM_PROXY=")]
+
+    lines.append(f"TELEGRAM_BOT_TOKEN={token}")
+    if allowed:
+        lines.append(f"TELEGRAM_ALLOWED_USERS={allowed}")
+    if proxy:
+        lines.append(f"TELEGRAM_PROXY={proxy}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"\n✅ Token kaydedildi: {env_path}")
+    print("Başlatmak için: python -m bantz.integrations.telegram_bot")
 
 
 def _setup_profile() -> None:
@@ -231,6 +286,12 @@ async def _doctor() -> None:
     from bantz.core.profile import profile as _prof
     icon = "✓" if _prof.is_configured() else "○"
     print(f"{icon} Profile: {_prof.status_line()}")
+
+    # Telegram
+    tg_ok = bool(config.telegram_bot_token)
+    tg_icon = "✓" if tg_ok else "○"
+    tg_status = "token set" if tg_ok else "not configured  → bantz --setup telegram"
+    print(f"{tg_icon} Telegram: {tg_status}")
     print("─" * 44)
 
 

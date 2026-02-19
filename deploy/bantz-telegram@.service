@@ -1,0 +1,16 @@
+[Unit]
+Description=Bantz Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/bantzv2
+EnvironmentFile=/home/%i/bantzv2/.env
+ExecStart=/home/%i/bantzv2/.venv/bin/python -m bantz.integrations.telegram_bot
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
