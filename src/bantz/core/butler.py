@@ -1,7 +1,8 @@
 """
-Bantz v2 — Butler Greeting
+Bantz v2 — Broadcaster Greeting
 
-Context-aware "Efendim" greeting on app launch.
+Context-aware theatrical greeting on app launch.
+Bantz is "The Broadcaster" — a 1930s radio showman who treats the terminal as his studio.
 Combines absence awareness, time-of-day, and live service summaries.
 """
 from __future__ import annotations
@@ -55,38 +56,48 @@ class Butler:
         is_first: bool,
         segment: str,
     ) -> str:
-        name = profile.get("name") if profile.is_configured() else ""
-        efendim = f"Efendim {name}" if name else "Efendim"
-
         if is_first:
             # Very first launch ever
-            greet = self._time_greeting(segment)
-            return f"{greet} {efendim.strip()}, Bantz hizmetinizde."
+            return (
+                "Sinyal güçlü, kahve acı, ve ben buradayım. "
+                "Selamlar eski dostum — yayın başlasın."
+            )
 
         if absence_hours < 1:
-            return f"{efendim}, tekrar hoş geldiniz."
+            return "Aa, tekrar sen! Sahneyi terk etmemişsin bile."
 
         if absence_hours < 6:
-            return f"{efendim}, tekrar hoş geldiniz."
+            return "Hoş geldin dostum, sesin güzel geliyor bu frekanstan."
 
         if absence_hours < 20:
             # Same day, been away for a while
-            greet = self._time_greeting(segment)
-            return f"{greet} {efendim.strip()}, tekrar hoş geldiniz."
+            return "Eski arkadaşım, geri döndün! Stüdyo sensiz sessizdi."
 
         if absence_hours < 30:
-            # Closed last night, opened this morning/afternoon
+            # Closed last night, opened this morning
             if segment == "sabah":
-                return f"Günaydın {efendim.strip()}, umarım iyi uyudunuz."
-            return f"{efendim}, tekrar hoş geldiniz. Dün geceden beri yoktunuz."
+                return (
+                    "Günaydın dostum! Umarım rüyalar güzeldi — "
+                    "çünkü gerçeklik burada beni bekliyor."
+                )
+            return "Dün gece kapattın perdeyi, ama şov devam ediyor."
 
         if absence_hours < 72:
-            return f"{efendim}, sizi tekrar görmek güzel. Birkaç gündür yoktunuz."
+            return (
+                "Eski arkadaşım! Birkaç gündür stüdyo karanlıktı. "
+                "Ama sinyal hiç kesilmedi."
+            )
 
         if absence_hours < 168:
-            return f"{efendim}, sizi tekrar görmek güzel. Bir haftadır görüşememiştik."
+            return (
+                "Dostum, bir haftadır yayında yoktun! "
+                "Frekanslar seni arıyordu."
+            )
 
-        return f"{efendim}, sizi tekrardan görmek güzel. Uzun zamandır görüşememiştik."
+        return (
+            "Sevgili dinleyicim... uzun zamandır ses yoktu bu kanalda. "
+            "Ama Bantz her zaman burada, her zaman yayında."
+        )
 
     @staticmethod
     def _time_greeting(segment: str) -> str:
@@ -146,8 +157,8 @@ class Butler:
             if count == 0:
                 return None
             if count == 1:
-                return f"1 okunmamış mailiniz var."
-            return f"{count} okunmamış mailiniz var."
+                return "Posta kutusunda 1 okunmamış mektup bekliyor."
+            return f"Posta kutusunda {count} okunmamış mektup birikmiş."
         except Exception:
             return None
 
@@ -175,7 +186,7 @@ class Butler:
                     # Remove [id:...] suffixes from calendar output
                     cleaned = re.sub(r"\s*\[id:[^\]]+\]", "", stripped).strip()
                     if cleaned:
-                        return f"Takviminizde bugün: {cleaned}."
+                        return f"Bugünün programında: {cleaned}."
             return None
         except Exception:
             return None
@@ -200,7 +211,7 @@ class Butler:
             count = len(lines)
             if count == 0:
                 return None
-            return f"Yaklaşan {count} ödeviniz var."
+            return f"Sahne arkasında {count} ödev teslim bekliyor."
         except Exception:
             return None
 

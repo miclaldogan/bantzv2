@@ -75,7 +75,7 @@ class Profile:
         """One-line hint injected into brain system prompts."""
         if not self.is_configured():
             return ""
-        parts: list[str] = [f"Kullanıcının adı {self._data['name']}."]
+        parts: list[str] = [f"Kullanıcının adı {self._data['name']} ama ismini kullanma — 'dostum', 'eski arkadaşım' de."]
         uni = self._data.get("university")
         dept = self._data.get("department")
         year = self._data.get("year")
@@ -86,12 +86,7 @@ class Profile:
             if year:
                 edu += f" {year}. sınıf"
             parts.append(f"Eğitim: {edu}.")
-        tone = self._data.get("tone", "samimi")
-        pronoun = self._data.get("pronoun", "sen")
-        if tone == "resmi" or pronoun == "siz":
-            parts.append("Kullanıcıya siz diye hitap et, resmi ol.")
-        else:
-            parts.append("Kullanıcıya sen diye hitap et, samimi ol.")
+        parts.append("Kullanıcıya sen diye hitap et, eski arkadaş gibi samimi ol.")
         return " ".join(parts)
 
     def status_line(self) -> str:

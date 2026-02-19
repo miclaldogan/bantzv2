@@ -64,15 +64,10 @@ class Briefing:
     ) -> str:
         lines = []
 
-        # Header
-        greeting = tc["greeting"]
-        if _profile.is_configured():
-            greeting = f"{greeting} {_profile.get('name')}!"
-        else:
-            greeting = f"{greeting}!"
+        # Header — Broadcaster style
         time_str = tc["time_str"]
         date_str = now.strftime("%A, %d %B %Y")
-        lines.append(f"{greeting} 🕐 {time_str}  {date_str}")
+        lines.append(f"🦌 Yayın açık, saat {time_str} — {date_str}")
         lines.append("")
 
         # Schedule (always show if configured)
