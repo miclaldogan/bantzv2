@@ -464,20 +464,40 @@ def _extract_mail_recipient(text: str) -> str:
     "hocama mail at" → "hocam"
     "ahmet'e mail gönder" → "ahmet"
     "prof@uni.edu'ya mail at" → "prof@uni.edu"
+    "ikincil mailime merhaba yaz" → "ikincil"
     """
-    # Direct email address
-    m = re.search(r"(\S+@\S+)", text)
-    if m:
-        return m.group(1).rstrip("'\".,;:")
-    # Dative recipient: X'e, X'a, X'ya, X'ye, X'na
-    m = re.search(r"(\S+?)[''\u2019]?(?:ya|ye|na|ne|[ea])\s+(?:mail|meil)", text, re.IGNORECASE)
+    # Direct email address (strip trailing apostrophe+suffix)
+    m = re.search(r"([\w.+-]+@[\w.-]+\.\w+)", text)
     if m:
         return m.group(1)
-    # "X'a yaz", "X'a gönder"
+
+    # Alias before mail+suffix: "ikincil mailime", "hocam mailine", "hocama mail"
+    _NOISE = {"son", "yeni", "bu", "bir", "benim", "tüm", "kaç",
+              "okunmamış", "önemli", "yıldızlı", "ekli", "gelen"}
+    m = re.search(r"(\S+)\s+mail\w*", text, re.IGNORECASE)
+    if m and m.group(1).lower() not in _NOISE:
+        return _strip_suffixes(m.group(1))
+
+    # "X'a yaz", "X'a gönder" — guard against common words ending in -a/-e
+    _NOT_RECIPIENT = {"merhab", "nasılsı", "bakalı", "selam", "iyi", "güzel",
+                      "teşekkür", "hoşça", "lütfe"}
     m = re.search(r"(\S+?)[''\u2019]?(?:ya|ye|na|ne|[ea])\s+(?:yaz|gönder|at\b)", text, re.IGNORECASE)
-    if m:
+    if m and m.group(1).lower() not in _NOT_RECIPIENT:
         return m.group(1)
     return ""
+
+
+def _strip_suffixes(word: str) -> str:
+    """Strip Turkish dative/possessive suffixes and apostrophe from a name."""
+    # Remove trailing apostrophe variants + suffix: 'e, 'a, 'ya, 'ye, 'na, 'ne
+    cleaned = re.sub(r"[''\u2019](?:ya|ye|na|ne|[ea])$", "", word)
+    if cleaned != word:
+        return cleaned
+    # Remove bare dative: -a, -e, -ya, -ye (only if word is long enough)
+    cleaned = re.sub(r"(?:ya|ye|na|ne|[ea])$", "", word)
+    if cleaned != word and len(cleaned) >= 2:
+        return cleaned
+    return word
 
 
 def _extract_contact(text: str) -> tuple[str, str]:
