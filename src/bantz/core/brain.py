@@ -175,15 +175,23 @@ class Brain:
                 }}
             return {"tool": "gmail", "args": {"action": "contacts"}}
 
-        # Compose without "mail" keyword
-        if any(k in both for k in ("söyle", "de ki", "ilet", "bildir", "haber ver")):
+        # Compose without "mail" keyword — requires a dative recipient
+        # "Ahmet'e söyle ..." ✓  but "söyler misin" / "söyle bana" ✗
+        _COMPOSE_VERBS = ("söyle", "de ki", "ilet", "bildir", "haber ver")
+        _NOT_COMPOSE = ("söyler misin", "söyle bana", "bana söyle",
+                        "söylesene", "söyler mi", "ders", "program",
+                        "takvim", "schedule", "hava", "saat")
+        if any(k in both for k in _COMPOSE_VERBS) and \
+           not any(k in both for k in _NOT_COMPOSE):
             to_match = re.search(r"(\S+?)(?:['\u2019]?(?:ya|ye|[ea])\b)", o)
             to = to_match.group(1) if to_match else ""
-            return {"tool": "gmail", "args": {"action": "compose", "to": to}}
+            if to:  # only trigger compose if we found a recipient
+                return {"tool": "gmail", "args": {"action": "compose", "to": to}}
 
         # Gmail
         if any(k in both for k in ("mail", "inbox", "gelen kutu", "okunmamış",
-                                    "e-posta", "eposta", "mailleri", "mailine", "mailim")):
+                                    "e-posta", "eposta", "mailleri", "mailine",
+                                    "mailim", "mallerim", "maillerim")):
             if any(k in both for k in ("gönder", "yaz", "send", "compose", "söyle")):
                 return {"tool": "gmail", "args": {"action": "compose"}}
             if any(k in both for k in ("filtrele", "filter", "gönderen", "sender",
@@ -223,9 +231,9 @@ class Brain:
             return {"tool": "calendar", "args": {"action": "today"}}
 
         # Schedule — BEFORE classroom (both match "ders", schedule is more specific)
-        if any(k in both for k in ("ders program", "schedule", "derslerim", "bugün ders",
-                                    "yarın ders", "sıradaki ders", "next class",
-                                    "hafta ders", "dersler ne")):
+        if any(k in both for k in ("ders program", "schedule", "derslerim", "dersleri",
+                                    "bugün ders", "yarın ders", "sıradaki ders",
+                                    "next class", "hafta ders", "dersler ne")):
             if any(k in both for k in ("sıradaki", "next", "sonraki")):
                 return {"tool": "_schedule_next", "args": {}}
             if any(k in both for k in ("bu hafta", "haftalık", "this week", "weekly")):
@@ -405,7 +413,8 @@ class Brain:
 
 def _extract_city(text: str) -> str:
     cleaned = re.sub(
-        r"\b(hava|durumu|weather|forecast|sıcaklık|yağmur|derece|nasıl|bugün|yarın|var mı)\b",
+        r"\b(hava|durumu|weather|forecast|sıcaklık|yağmur|derece|nasıl|bugün|yarın|var mı"
+        r"|söyler?|misin|bana|benim|lütfen|bi|bir|bakar? mısın)\b",
         "", text, flags=re.IGNORECASE,
     ).strip()
     cleaned = re.sub(r"'(da|de|ta|te|nda|nde|daki|deki)\b", "", cleaned).strip()
