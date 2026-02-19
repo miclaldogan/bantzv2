@@ -188,7 +188,56 @@ class BantzApp(App):
         chat.add_system(f"Model: {config.ollama_model}")
         chat.add_system("─" * 38)
         self._check_ollama()
+        self._show_startup_greeting()
         self.query_one("#chat-input", Input).focus()
+
+    @work(exclusive=False)
+    async def _show_startup_greeting(self) -> None:
+        """Context-aware greeting on app launch (non-blocking)."""
+        from bantz.core.time_context import time_ctx
+        from bantz.core.memory import memory
+
+        tc = time_ctx.snapshot()
+        seg = tc["segment"]
+
+        try:
+            if seg == "sabah":
+                # Morning → full briefing
+                from bantz.core.briefing import briefing as _briefing
+                text = await _briefing.generate()
+            elif seg in ("oglen", "aksam"):
+                # Afternoon/evening → short greeting + next event hint
+                text = time_ctx.greeting_line()
+                try:
+                    from bantz.core.schedule import schedule as _sched
+                    nxt = _sched.format_next()
+                    if nxt and "ders yok" not in nxt:
+                        text += f"\n{nxt}"
+                except Exception:
+                    pass
+            else:
+                # Night → greeting + tomorrow preview
+                text = time_ctx.greeting_line()
+                try:
+                    from bantz.core.schedule import schedule as _sched
+                    from datetime import datetime, timedelta
+                    tomorrow = datetime.now() + timedelta(days=1)
+                    tmrw_text = _sched.format_for_date(tomorrow)
+                    if tmrw_text and "ders yok" not in tmrw_text:
+                        text += f"\nYarın: {tmrw_text}"
+                except Exception:
+                    pass
+        except Exception:
+            text = time_ctx.greeting_line()
+
+        chat = self.query_one("#chat-log", ChatLog)
+        chat.add_bantz(text)
+
+        # Save to memory
+        try:
+            memory.add("assistant", text, tool_used="startup")
+        except Exception:
+            pass
 
     @work(exclusive=False)
     async def _check_ollama(self) -> None:
