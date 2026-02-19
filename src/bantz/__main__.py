@@ -1,6 +1,12 @@
 """
 Bantz v2 — Entry point
-`python -m bantz` or `bantz` command.
+
+Commands:
+  bantz                         → TUI
+  bantz --once "query"          → single query, no UI
+  bantz --doctor                → system health check
+  bantz --setup google gmail    → OAuth setup for Gmail
+  bantz --setup google classroom → OAuth setup for Classroom
 """
 from __future__ import annotations
 
@@ -12,17 +18,34 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="bantz", description="Bantz v2 — your terminal host")
     parser.add_argument("--once", metavar="QUERY", help="Run single query, no UI")
     parser.add_argument("--doctor", action="store_true", help="System health check")
+    parser.add_argument("--setup", nargs="+", metavar="SERVICE",
+                        help="Setup integrations: --setup google gmail")
     args = parser.parse_args()
 
     if args.doctor:
         asyncio.run(_doctor())
         return
+
+    if args.setup:
+        _handle_setup(args.setup)
+        return
+
     if args.once:
         asyncio.run(_once(args.once))
         return
 
     from bantz.app import run
     run()
+
+
+def _handle_setup(parts: list[str]) -> None:
+    if len(parts) >= 2 and parts[0].lower() == "google":
+        service = parts[1].lower()
+        from bantz.auth.google_oauth import setup_google
+        setup_google(service)
+    else:
+        print(f"Unknown setup target: {' '.join(parts)}")
+        print("Available: bantz --setup google [gmail|classroom|calendar]")
 
 
 async def _doctor() -> None:
