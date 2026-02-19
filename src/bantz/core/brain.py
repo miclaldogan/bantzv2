@@ -3,11 +3,6 @@ Bantz v2 — Brain (Orchestrator)
 
 Pipeline:
   TR input → [bridge: TR→EN] → quick_route OR router (Ollama) → tool → finalizer → output
-
-Phase 2 additions:
-- TimeContext injected into all LLM prompts
-- WeatherTool + NewsTool registered and quick-routed
-- LocationService used by weather/news automatically
 """
 from __future__ import annotations
 
@@ -21,8 +16,6 @@ from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 
 
-# ── Markdown stripper ─────────────────────────────────────────────────────────
-
 def strip_markdown(text: str) -> str:
     text = re.sub(r"```(?:\w+)?\s*\n?(.*?)```", r"\1", text, flags=re.DOTALL)
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
@@ -33,61 +26,29 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 
-# ── Prompts ───────────────────────────────────────────────────────────────────
-
 ROUTER_SYSTEM = """\
 You are Bantz's routing brain. Analyze the user request and return a JSON routing decision.
 
 AVAILABLE TOOLS:
 {tool_schemas}
 
-ROUTING RULES — follow strictly:
+ROUTING RULES:
+- shell: run terminal commands, list files, disk usage
+- system: CPU%, RAM%, uptime
+- weather: hava, sıcaklık, yağmur, forecast
+- news: haberler, gündem, hacker news
+- gmail: mail, inbox, mailleri oku/özetle/gönder, X'ten mailler
+- calendar: takvim, toplantı, etkinlik, randevu ekle/sil/güncelle
+- classroom: ödev, duyuru, kurslar, hangi sınıflar, teslim tarihi
+- filesystem: read/write file content only
+- chat: ONLY for greetings or questions no tool can answer
 
-shell tool:
-  - Use when user wants to RUN any terminal command (ls, df, ps, grep, find, cat, etc.)
-  - Use when user asks to LIST files/dirs in a directory
-  - Use when user wants disk usage → shell: "df -h"
-  - Put the exact command string in tool_args.command
+NEVER answer questions about system, mail, calendar, assignments from memory.
 
-system tool:
-  - Use ONLY for: CPU %, RAM %, disk %, uptime from psutil
+Return ONLY valid JSON. No markdown.
 
-weather tool:
-  - Use for: weather, hava, forecast, sıcaklık, yağmur
-  - Optional: tool_args.city = specific city name (empty = auto-detect)
-
-news tool:
-  - Use for: haberler, gündem, news, hacker news, teknoloji haberleri
-  - Optional: tool_args.source = "hn" | "google" | "all" (default: "all")
-
-gmail tool:
-  - Use for: mail, gmail, inbox, mailleri oku/özetle/gönder, X'ten mailler
-  - tool_args.action = "summary" | "count" | "read" | "search" | "send"
-  - Optional: tool_args.from_sender, tool_args.message_id, tool_args.limit
-
-calendar tool:
-  - Use for: takvim, toplantı, etkinlik, randevu, bugün ne var, bu hafta
-  - tool_args.action = "today" | "week" | "create" | "delete" | "update"
-  - Optional: tool_args.title, tool_args.date, tool_args.time, tool_args.event_id
-
-classroom tool:
-  - Use for: ödev, duyuru, classroom, teslim tarihi, hangi sınıflar, kurslarım
-  - tool_args.action = "assignments" | "announcements" | "due_today" | "courses"
-
-filesystem tool:
-  - Use ONLY for: reading or writing file content
-
-chat:
-  - ONLY for greetings or questions that truly need no tool
-  - NEVER answer questions about system state from memory
-
-Return ONLY valid JSON. No markdown. No explanation.
-
-Tool:
-{{"route":"tool","tool_name":"<n>","tool_args":{{<args>}},"risk_level":"safe|moderate|destructive","reasoning":"<one line>"}}
-
-Chat:
-{{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","reasoning":"<one line>"}}\
+Tool: {{"route":"tool","tool_name":"<n>","tool_args":{{<args>}},"risk_level":"safe|moderate|destructive","reasoning":"<one line>"}}
+Chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","reasoning":"<one line>"}}\
 """
 
 CHAT_SYSTEM = """\
@@ -105,20 +66,18 @@ Be direct and specific. No markdown. No bullet points. Plain text only.\
 
 COMMAND_SYSTEM = """\
 You are a Linux bash expert. The user request is given in two forms:
-- TR: original Turkish (may contain details lost in translation)
-- EN: English translation (use for intent)
+- TR: original Turkish
+- EN: English translation
 
-Return ONLY one bash command. No explanation. No markdown fences. No comments.
+Return ONLY one bash command. No explanation. No markdown. Single line.
 
-STRICT RULES:
-1. mkdir -p for creating a single directory — NOTHING ELSE, no subdirs
-2. For writing files with content: mkdir -p <dir> && printf '%s\\n' '<content>' > <path>
-3. Locations: ~ = home, ~/Desktop = masaüstü, ~/Downloads = indirilenler/downloads, ~/Documents = belgeler
-4. Create EXACTLY what was asked — one folder means ONE folder, not a tree
-5. NEVER use: sudo, nano, vim, vi, brace expansion {{a,b,c}}, &&cd, interactive commands
-6. NEVER invent subdirectories the user did not ask for
-7. If file content is in TR request but missing from EN, use the TR version
-8. Output ONLY the command — single line, nothing else\
+RULES:
+1. mkdir -p for one directory — nothing else, no subdirs
+2. Writing files: mkdir -p <dir> && printf '%s\\n' '<content>' > <path>
+3. ~/Desktop=masaüstü, ~/Downloads=indirilenler, ~/Documents=belgeler
+4. NEVER: sudo, nano, vim, brace expansion, interactive commands
+5. NEVER invent extra files or directories
+6. Use TR content if EN lost it\
 """
 
 
@@ -128,8 +87,6 @@ def _extract_json(text: str) -> dict:
     m = re.search(r"\{.*\}", text, re.DOTALL)
     return json.loads(m.group() if m else text)
 
-
-# ── Result ────────────────────────────────────────────────────────────────────
 
 @dataclass
 class BrainResult:
@@ -142,25 +99,17 @@ class BrainResult:
     pending_args: dict = field(default_factory=dict)
 
 
-# ── Brain ─────────────────────────────────────────────────────────────────────
-
 class Brain:
     def __init__(self) -> None:
-        # Phase 1 tools
         import bantz.tools.shell        # noqa: F401
         import bantz.tools.system       # noqa: F401
         import bantz.tools.filesystem   # noqa: F401
-        # Phase 2 tools
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
-        # Phase 3 tools
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
-
         self._bridge = None
-
-    # ── Bridge ────────────────────────────────────────────────────────────
 
     def _get_bridge(self):
         if self._bridge is None:
@@ -188,8 +137,6 @@ class Brain:
             except Exception:
                 pass
         return text
-
-    # ── Quick route ───────────────────────────────────────────────────────
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
@@ -259,9 +206,27 @@ class Brain:
             # Default: summary
             return {"tool": "gmail", "args": {"action": "summary"}}
 
-        # ── Calendar ────────────────────────────────────────────────────────
-        _CAL = ("takvim", "toplantı", "calendar", "etkinlik", "randevu", "program")
-        if any(k in both for k in _CAL) or any(k in both for k in ("bugün ne var", "today", "bugünkü")):
+        # ── Schedule (before calendar/classroom — "ders" keywords) ─────
+        _SCHED = ("derslerim", "schedule", "sıradaki ders", "next class",
+                  "bugün ders", "ders programı", "sınıfa", "derse", "dersler")
+        if any(k in both for k in _SCHED):
+            # "hangi ders/sınıf" → classroom, not schedule
+            if any(k in both for k in ("hangi", "which", "liste", "kayıtlı")):
+                pass  # fall through to classroom
+            elif any(k in both for k in ("sıradaki", "sonraki", "next", "kaç kaldı")):
+                return {"tool": "_schedule_next", "args": {}}
+            else:
+                return {"tool": "_schedule_today", "args": {}}
+
+        # ── Briefing ─────────────────────────────────────────────────────
+        _BRIEFING = ("brifing", "briefing", "günüme bak", "güne başla",
+                     "sabah özeti", "daily summary", "günün özeti")
+        if any(k in both for k in _BRIEFING):
+            return {"tool": "_briefing", "args": {}}
+
+        # ── Calendar ──────────────────────────────────────────────────────
+        _CAL = ("takvim", "toplantı", "calendar", "etkinlik", "randevu")
+        if any(k in both for k in _CAL) or "bugün ne var" in both:
             # Delete
             if any(k in both for k in ("sil", "kaldır", "iptal", "delete", "remove", "cancel")):
                 title = _extract_event_title(both)
@@ -270,16 +235,19 @@ class Brain:
             if any(k in both for k in ("güncelle", "taşı", "değiştir", "update", "move", "reschedule")):
                 title = _extract_event_title(both)
                 return {"tool": "calendar", "args": {"action": "update", "title": title}}
-            # Create
+            # Create — extract title/date/time inline
             if any(k in both for k in ("ekle", "oluştur", "add", "create", "yeni", "new")):
-                return {"tool": "calendar", "args": {"action": "create"}}
+                title, date, time_str = _extract_event_create(o)
+                return {"tool": "calendar", "args": {
+                    "action": "create", "title": title, "date": date, "time": time_str,
+                }}
             # Week view
             if any(k in both for k in ("hafta", "week", "7 gün")):
                 return {"tool": "calendar", "args": {"action": "week"}}
             # Default: today
             return {"tool": "calendar", "args": {"action": "today"}}
 
-        # ── Classroom ───────────────────────────────────────────────────────
+        # ── Classroom ─────────────────────────────────────────────────────
         _CLASS = ("ödev", "assignment", "classroom", "duyuru", "teslim",
                   "kurs", "ders", "sınıf", "class", "hangi ders", "hangi sınıf")
         if any(k in both for k in _CLASS):
@@ -296,62 +264,49 @@ class Brain:
             # Default: assignments
             return {"tool": "classroom", "args": {"action": "assignments"}}
 
-        # Write / create
+        # Write / create files
         _WRITE = ("oluştur", "yaz", "kaydet", "create", "write", "save",
-                  "make dir", "mkdir", "ekle", "add", "klasör aç", "dosya aç")
-        # Don't trigger _generate for calendar creates already handled above
+                  "mkdir", "ekle", "add", "klasör aç", "dosya aç")
         if any(w in both for w in _WRITE):
             return {"tool": "_generate", "args": {}}
 
         return None
 
-    # ── Command generator ─────────────────────────────────────────────────
-
     async def _generate_command(self, orig_tr: str, en_input: str) -> str:
-        user_msg = f"TR: {orig_tr}\nEN: {en_input}"
         try:
             raw = await ollama.chat([
                 {"role": "system", "content": COMMAND_SYSTEM},
-                {"role": "user", "content": user_msg},
+                {"role": "user", "content": f"TR: {orig_tr}\nEN: {en_input}"},
             ])
         except Exception as exc:
             return f"echo 'Command generation failed: {exc}'"
-
-        cmd = raw.strip()
-        cmd = re.sub(r"^```(?:bash|sh)?\s*", "", cmd)
+        cmd = re.sub(r"^```(?:bash|sh)?\s*", "", raw.strip())
         cmd = re.sub(r"\s*```$", "", cmd)
-        cmd = cmd.splitlines()[0].strip()
-        return cmd
-
-    # ── Main ──────────────────────────────────────────────────────────────
+        return cmd.splitlines()[0].strip()
 
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
-        # 1. TR → EN
         en_input = await self._to_en(user_input)
-
-        # 2. Time context snapshot (used in prompts)
         tc = time_ctx.snapshot()
-
-        # 3. Quick keyword route
         quick = self._quick_route(user_input, en_input)
 
-        if quick and quick["tool"] == "_generate":
+        if quick and quick["tool"] == "_briefing":
+            from bantz.core.briefing import briefing as _briefing
+            text = await _briefing.generate()
+            return BrainResult(response=text, tool_used="briefing")
+        elif quick and quick["tool"] == "_schedule_today":
+            from bantz.core.schedule import schedule as _schedule
+            return BrainResult(response=_schedule.format_today(), tool_used="schedule")
+        elif quick and quick["tool"] == "_schedule_next":
+            from bantz.core.schedule import schedule as _schedule
+            return BrainResult(response=_schedule.format_next(), tool_used="schedule")
+        elif quick and quick["tool"] == "_generate":
             cmd = await self._generate_command(user_input, en_input)
-            plan = {
-                "route": "tool",
-                "tool_name": "shell",
-                "tool_args": {"command": cmd},
-                "risk_level": "moderate",
-            }
+            plan = {"route": "tool", "tool_name": "shell",
+                    "tool_args": {"command": cmd}, "risk_level": "moderate"}
         elif quick:
-            plan = {
-                "route": "tool",
-                "tool_name": quick["tool"],
-                "tool_args": quick["args"],
-                "risk_level": "safe",
-            }
+            plan = {"route": "tool", "tool_name": quick["tool"],
+                    "tool_args": quick["args"], "risk_level": "safe"}
         else:
-            # 4. LLM router fallback
             schema_str = "\n".join(
                 f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
                 for t in registry.all_schemas()
@@ -431,23 +386,13 @@ class Brain:
             return output[:1500]
 
 
-# ── City extractor helper ─────────────────────────────────────────────────────
-
 def _extract_city(text: str) -> str:
-    """Try to extract a city name from a weather query. Returns '' for auto-detect."""
-    # Patterns: "istanbul hava", "hava ankara", "izmir'de hava"
-    import re
-    # Remove common weather words
     cleaned = re.sub(
         r"\b(hava|durumu|weather|forecast|sıcaklık|yağmur|derece|nasıl|bugün|yarın|var mı)\b",
-        "", text, flags=re.IGNORECASE
+        "", text, flags=re.IGNORECASE,
     ).strip()
-    # Remove Turkish location suffixes: 'da, 'de, 'ta, 'te, 'nda
     cleaned = re.sub(r"'(da|de|ta|te|nda|nde|daki|deki)\b", "", cleaned).strip()
-    # What's left might be a city
-    if cleaned and len(cleaned) > 2 and not cleaned.isspace():
-        return cleaned.title()
-    return ""
+    return cleaned.title() if cleaned and len(cleaned) > 2 else ""
 
 
 def _extract_event_title(text: str) -> str:
@@ -461,6 +406,48 @@ def _extract_event_title(text: str) -> str:
         return m.group(1).strip()
     # "toplantıyı sil" — no title, return empty
     return ""
+
+
+def _extract_event_create(text: str) -> tuple[str, str, str]:
+    """Extract title, date, time from a calendar create request.
+
+    Returns (title, date_iso, time_hhmm).
+    """
+    from datetime import datetime, timedelta
+
+    # ── Time: look for HH:MM or "saat X" ──
+    time_str = ""
+    tm = re.search(r"(\d{1,2}:\d{2})", text)
+    if tm:
+        time_str = tm.group(1)
+    else:
+        tm2 = re.search(r"saat\s+(\d{1,2})", text, re.IGNORECASE)
+        if tm2:
+            time_str = f"{int(tm2.group(1)):02d}:00"
+
+    # ── Date: look for YYYY-MM-DD, "yarın", "bugün", day names ──
+    date_str = ""
+    dm = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+    if dm:
+        date_str = dm.group(1)
+    elif re.search(r"\byarın\b|tomorrow", text, re.IGNORECASE):
+        date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    elif re.search(r"\bbugün\b|today", text, re.IGNORECASE):
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # ── Title: strip noise words, keep the meaningful part ──
+    noise = (
+        r"\b(takvim\w*|calendar|ekle|oluştur|add|create|yeni|new|"
+        r"yarın|bugün|tomorrow|today|saat|için|benim|bir|"
+        r"my|to|the|at|for|a|an)\b"
+    )
+    title = re.sub(noise, "", text, flags=re.IGNORECASE)
+    title = re.sub(r"\d{1,2}:\d{2}", "", title)          # remove time
+    title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)      # remove date
+    title = re.sub(r"\s+", " ", title).strip(" .,;:!?'\"")
+    title = title.strip()
+
+    return title or "Etkinlik", date_str, time_str
 
 
 brain = Brain()

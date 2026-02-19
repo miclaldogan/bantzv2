@@ -39,13 +39,80 @@ def main() -> None:
 
 
 def _handle_setup(parts: list[str]) -> None:
+    if len(parts) >= 1 and parts[0].lower() == "schedule":
+        _setup_schedule()
+        return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
         from bantz.auth.google_oauth import setup_google
         setup_google(service)
     else:
         print(f"Unknown setup target: {' '.join(parts)}")
-        print("Available: bantz --setup google [gmail|classroom|calendar]")
+        print("Available:")
+        print("  bantz --setup google [gmail|classroom|calendar]")
+        print("  bantz --setup schedule")
+
+
+def _setup_schedule() -> None:
+    """Interactive schedule setup — writes schedule.json."""
+    import json
+    from bantz.core.schedule import Schedule, DAYS_EN, DAYS_TR
+
+    path = Schedule.setup_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing if present
+    data: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            print(f"Mevcut program yüklendi: {path}")
+        except Exception:
+            pass
+
+    print("\n📅 Ders Programı Kurulumu")
+    print("─" * 40)
+    print("Dersleri gün gün gir. Bitirmek için boş bırak.")
+    print("Format: HH:MM  Ders Adı  Süre(dk)  Konum")
+    print()
+
+    for day_en in DAYS_EN:
+        day_tr = DAYS_TR[day_en]
+        print(f"\n{day_tr}:")
+        existing = data.get(day_en, [])
+        if existing:
+            for c in existing:
+                print(f"  (mevcut) {c.get('time','')} {c.get('name','')} {c.get('location','')}")
+
+        classes = list(existing)  # keep existing
+        while True:
+            try:
+                raw = input(f"  Yeni ders (boş=geç): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not raw:
+                break
+            parts = raw.split(None, 3)
+            if len(parts) < 2:
+                print("  En az saat ve ders adı gir.")
+                continue
+            time_str = parts[0]
+            name = parts[1]
+            duration = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 90
+            location = parts[3] if len(parts) > 3 else ""
+
+            cls: dict = {"name": name, "time": time_str, "duration": duration}
+            if location:
+                cls["location"] = location
+            classes.append(cls)
+            print(f"  ✓ Eklendi: {time_str} {name}")
+
+        if classes:
+            data[day_en] = sorted(classes, key=lambda c: c.get("time", ""))
+
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n✅ Ders programı kaydedildi: {path}")
+    print("Test: bantz --once 'bugün derslerim'")
 
 
 async def _doctor() -> None:
