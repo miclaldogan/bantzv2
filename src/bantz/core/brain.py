@@ -70,6 +70,10 @@ calendar tool:
   - tool_args.action = "today" | "week" | "create" | "delete" | "update"
   - Optional: tool_args.title, tool_args.date, tool_args.time, tool_args.event_id
 
+classroom tool:
+  - Use for: ödev, duyuru, classroom, teslim tarihi, hangi sınıflar, kurslarım
+  - tool_args.action = "assignments" | "announcements" | "due_today" | "courses"
+
 filesystem tool:
   - Use ONLY for: reading or writing file content
 
@@ -152,6 +156,7 @@ class Brain:
         # Phase 3 tools
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
+        import bantz.tools.classroom    # noqa: F401
 
         self._bridge = None
 
@@ -273,6 +278,23 @@ class Brain:
                 return {"tool": "calendar", "args": {"action": "week"}}
             # Default: today
             return {"tool": "calendar", "args": {"action": "today"}}
+
+        # ── Classroom ───────────────────────────────────────────────────────
+        _CLASS = ("ödev", "assignment", "classroom", "duyuru", "teslim",
+                  "kurs", "ders", "sınıf", "class", "hangi ders", "hangi sınıf")
+        if any(k in both for k in _CLASS):
+            # Course list
+            if any(k in both for k in ("hangi", "liste", "kurslar", "dersler",
+                                        "sınıflar", "which", "list", "kayıtlı")):
+                return {"tool": "classroom", "args": {"action": "courses"}}
+            # Announcements
+            if any(k in both for k in ("duyuru", "announcement")):
+                return {"tool": "classroom", "args": {"action": "announcements"}}
+            # Due today
+            if any(k in both for k in ("bugün", "today", "bu gün")):
+                return {"tool": "classroom", "args": {"action": "due_today"}}
+            # Default: assignments
+            return {"tool": "classroom", "args": {"action": "assignments"}}
 
         # Write / create
         _WRITE = ("oluştur", "yaz", "kaydet", "create", "write", "save",

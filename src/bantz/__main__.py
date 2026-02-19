@@ -52,16 +52,23 @@ async def _doctor() -> None:
     from bantz.llm.ollama import ollama
     from bantz.config import config
     from bantz.tools import registry
-    import bantz.tools.shell        # noqa: F401
-    import bantz.tools.system       # noqa: F401
-    import bantz.tools.filesystem   # noqa: F401
+    from bantz.auth.token_store import token_store
+    import bantz.tools.shell
+    import bantz.tools.system
+    import bantz.tools.filesystem
+    import bantz.tools.weather
+    import bantz.tools.news
+    import bantz.tools.gmail
+    import bantz.tools.calendar
+    import bantz.tools.classroom
 
     print("Bantz v2 — System Check")
-    print("─" * 42)
+    print("─" * 44)
 
     # Ollama
     ok = await ollama.is_available()
-    print(f"{'✓' if ok else '✗'} Ollama ({config.ollama_base_url}): {'connected' if ok else 'UNREACHABLE'}")
+    status = "connected" if ok else "UNREACHABLE"
+    print(f"{'✓' if ok else '✗'} Ollama ({config.ollama_base_url}): {status}")
     print(f"  model: {config.ollama_model}")
 
     # psutil
@@ -69,24 +76,36 @@ async def _doctor() -> None:
     print(f"✓ psutil: CPU {psutil.cpu_percent(interval=0.3):.0f}%")
 
     # Tools
-    print(f"✓ Tools: {', '.join(registry.names())}")
+    names = [t["name"] for t in registry.all_schemas()]
+    print(f"✓ Tools ({len(names)}): {', '.join(names)}")
 
-    # Bridge
+    # Translation / Bridge
     print(f"  translation_enabled: {config.translation_enabled}")
     if config.translation_enabled and config.language == "tr":
         try:
-            from transformers import pipeline  # noqa: F401
-            print("✓ MarianMT (transformers): available")
+            from transformers import AutoTokenizer  # noqa: F401
+            print("✓ MarianMT: available")
         except ImportError:
-            print("✗ MarianMT: NOT installed")
-            print("  → pip install 'bantz[translation]'")
-    else:
-        print("  Bridge: disabled (set BANTZ_TRANSLATION_ENABLED=true to enable)")
+            print("✗ MarianMT: NOT installed  → pip install 'bantz[translation]'")
+
+    # Location
+    from bantz.core.location import location_service
+    loc = await location_service.get()
+    print(f"✓ Location: {loc.display}  (via {loc.source})")
+
+    # Google integrations
+    print("  Google integrations:")
+    g_status = token_store.status()
+    for svc, st in g_status.items():
+        icon = "✓" if st == "ok" else "○"
+        print(f"  {icon} {svc}: {st}")
+    if any(st != "ok" for st in g_status.values()):
+        print("  → Run: bantz --setup google gmail  /  bantz --setup google classroom")
 
     # DB
     config.ensure_dirs()
     print(f"✓ DB: {config.db_path}")
-    print("─" * 42)
+    print("─" * 44)
 
 
 async def _once(query: str) -> None:
