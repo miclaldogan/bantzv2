@@ -4,10 +4,10 @@ Bantz v2 — Brain (Orchestrator)
 Pipeline:
   TR input → [bridge: TR→EN] → quick_route OR router (Ollama) → tool → finalizer → output
 
-Key design decisions:
-- LLM router works in English only
-- _generate_command receives BOTH TR original and EN translation to avoid bridge content loss
-- No regex command parsers — LLM generates bash with strict constraints
+Phase 2 additions:
+- TimeContext injected into all LLM prompts
+- WeatherTool + NewsTool registered and quick-routed
+- LocationService used by weather/news automatically
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from bantz.config import config
+from bantz.core.time_context import time_ctx
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 
@@ -44,25 +45,27 @@ ROUTING RULES — follow strictly:
 
 shell tool:
   - Use when user wants to RUN any terminal command (ls, df, ps, grep, find, cat, etc.)
-  - Use when user asks to LIST files/dirs in a directory (→ shell: "ls -la <path>")
+  - Use when user asks to LIST files/dirs in a directory
   - Use when user wants disk usage → shell: "df -h"
-  - Use when user wants to see processes → shell: "ps aux"
   - Put the exact command string in tool_args.command
 
 system tool:
   - Use ONLY for: CPU %, RAM %, disk %, uptime from psutil
-  - Use when user asks "how much RAM", "CPU usage", "memory", "uptime"
-  - Do NOT use system tool for listing files
+
+weather tool:
+  - Use for: weather, hava, forecast, sıcaklık, yağmur
+  - Optional: tool_args.city = specific city name (empty = auto-detect)
+
+news tool:
+  - Use for: haberler, gündem, news, hacker news, teknoloji haberleri
+  - Optional: tool_args.source = "hn" | "google" | "all" (default: "all")
 
 filesystem tool:
-  - Use ONLY for: reading file content, writing file content
-  - Do NOT use for directory listing (use shell: ls instead)
+  - Use ONLY for: reading or writing file content
 
 chat:
   - ONLY for greetings or questions that truly need no tool
-  - NEVER answer questions about system state from memory — use a tool
-
-CRITICAL: Never make up system information. Always use a tool to get real data.
+  - NEVER answer questions about system state from memory
 
 Return ONLY valid JSON. No markdown. No explanation.
 
@@ -75,16 +78,17 @@ Chat:
 
 CHAT_SYSTEM = """\
 You are Bantz, a sharp personal terminal assistant on Linux.
+{time_hint}
 Always respond in Turkish. Be concise. Plain text only — no markdown.\
 """
 
 FINALIZER_SYSTEM = """\
 You are Bantz. A tool just ran successfully.
+{time_hint}
 Summarize the result in 1-3 plain sentences in Turkish.
-Be direct and specific with numbers. No markdown. No bullet points. Plain text only.\
+Be direct and specific. No markdown. No bullet points. Plain text only.\
 """
 
-# Strict command generator — receives both TR and EN to prevent content loss
 COMMAND_SYSTEM = """\
 You are a Linux bash expert. The user request is given in two forms:
 - TR: original Turkish (may contain details lost in translation)
@@ -97,7 +101,7 @@ STRICT RULES:
 2. For writing files with content: mkdir -p <dir> && printf '%s\\n' '<content>' > <path>
 3. Locations: ~ = home, ~/Desktop = masaüstü, ~/Downloads = indirilenler/downloads, ~/Documents = belgeler
 4. Create EXACTLY what was asked — one folder means ONE folder, not a tree
-5. NEVER use: sudo, nano, vim, vi, brace expansion {a,b,c}, &&cd, interactive commands
+5. NEVER use: sudo, nano, vim, vi, brace expansion {{a,b,c}}, &&cd, interactive commands
 6. NEVER invent subdirectories the user did not ask for
 7. If file content is in TR request but missing from EN, use the TR version
 8. Output ONLY the command — single line, nothing else\
@@ -128,9 +132,14 @@ class BrainResult:
 
 class Brain:
     def __init__(self) -> None:
+        # Phase 1 tools
         import bantz.tools.shell        # noqa: F401
         import bantz.tools.system       # noqa: F401
         import bantz.tools.filesystem   # noqa: F401
+        # Phase 2 tools
+        import bantz.tools.weather      # noqa: F401
+        import bantz.tools.news         # noqa: F401
+
         self._bridge = None
 
     # ── Bridge ────────────────────────────────────────────────────────────
@@ -162,20 +171,15 @@ class Brain:
                 pass
         return text
 
-    # ── Quick route (keyword bypass) ──────────────────────────────────────
+    # ── Quick route ───────────────────────────────────────────────────────
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
-        """
-        Fast path for obvious patterns — no LLM call needed.
-        Returns {"tool": ..., "args": ...} or None (fall through to LLM router).
-        Special value "_generate" = LLM generates a bash command.
-        """
         o = orig.lower().strip()
         e = en.lower().strip()
         both = o + " " + e
 
-        # User typed a real shell command directly
+        # Direct shell commands
         _DIRECT = ("ls", "cd ", "df", "free", "ps ", "cat ", "grep ",
                    "find ", "pwd", "uname", "whoami", "du ", "mount",
                    "ip ", "ping ", "top", "htop", "mkdir", "touch",
@@ -188,7 +192,7 @@ class Brain:
         if any(k in both for k in ("disk", "df -", "depolama", "storage", "space")):
             return {"tool": "shell", "args": {"command": "df -h"}}
 
-        # RAM / memory
+        # RAM
         if any(k in both for k in ("ram", "bellek", "memory", "free -")):
             return {"tool": "shell", "args": {"command": "free -h"}}
 
@@ -204,21 +208,30 @@ class Brain:
         if any(k in both for k in ("süreç", "process listesi", "running process")):
             return {"tool": "shell", "args": {"command": "ps aux --sort=-%mem | head -15"}}
 
-        # Write / create / mkdir — LLM generates the exact bash command
+        # Weather — check for city name after "hava" keyword
+        _WEATHER = ("hava", "weather", "sıcaklık", "yağmur", "forecast", "derece", "nem")
+        if any(k in both for k in _WEATHER):
+            # Try to extract explicit city: "istanbul hava", "hava ankara"
+            city = _extract_city(o)
+            return {"tool": "weather", "args": {"city": city}}
+
+        # News
+        _NEWS = ("haber", "gündem", "news", "manşet", "son dakika", "hacker news", "teknoloji haberi")
+        if any(k in both for k in _NEWS):
+            source = "hn" if any(k in both for k in ("hacker", "hn")) else "all"
+            return {"tool": "news", "args": {"source": source, "limit": 5}}
+
+        # Write / create
         _WRITE = ("oluştur", "yaz", "kaydet", "create", "write", "save",
                   "make dir", "mkdir", "ekle", "add", "klasör aç", "dosya aç")
         if any(w in both for w in _WRITE):
             return {"tool": "_generate", "args": {}}
 
-        return None  # fall through to LLM router
+        return None
 
-    # ── LLM command generator ─────────────────────────────────────────────
+    # ── Command generator ─────────────────────────────────────────────────
 
     async def _generate_command(self, orig_tr: str, en_input: str) -> str:
-        """
-        Ask LLM to produce a single bash command.
-        Passes BOTH TR original and EN translation so bridge content loss doesn't matter.
-        """
         user_msg = f"TR: {orig_tr}\nEN: {en_input}"
         try:
             raw = await ollama.chat([
@@ -231,7 +244,6 @@ class Brain:
         cmd = raw.strip()
         cmd = re.sub(r"^```(?:bash|sh)?\s*", "", cmd)
         cmd = re.sub(r"\s*```$", "", cmd)
-        # Take only first line — drop any leaked explanation
         cmd = cmd.splitlines()[0].strip()
         return cmd
 
@@ -241,11 +253,13 @@ class Brain:
         # 1. TR → EN
         en_input = await self._to_en(user_input)
 
-        # 2. Quick keyword route
+        # 2. Time context snapshot (used in prompts)
+        tc = time_ctx.snapshot()
+
+        # 3. Quick keyword route
         quick = self._quick_route(user_input, en_input)
 
         if quick and quick["tool"] == "_generate":
-            # Write/create: LLM generates bash — gets both TR and EN
             cmd = await self._generate_command(user_input, en_input)
             plan = {
                 "route": "tool",
@@ -261,7 +275,7 @@ class Brain:
                 "risk_level": "safe",
             }
         else:
-            # 3. LLM router fallback
+            # 4. LLM router fallback
             schema_str = "\n".join(
                 f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
                 for t in registry.all_schemas()
@@ -273,7 +287,7 @@ class Brain:
                 ])
                 plan = _extract_json(raw)
             except Exception:
-                resp = await self._chat(en_input)
+                resp = await self._chat(en_input, tc)
                 return BrainResult(response=resp, tool_used=None)
 
         route     = plan.get("route", "chat")
@@ -281,12 +295,10 @@ class Brain:
         tool_args = plan.get("tool_args") or {}
         risk      = plan.get("risk_level", "safe")
 
-        # Chat only
         if route != "tool" or not tool_name:
-            resp = await self._chat(en_input)
+            resp = await self._chat(en_input, tc)
             return BrainResult(response=resp, tool_used=None)
 
-        # Destructive confirm
         if risk == "destructive" and config.shell_confirm_destructive and not confirmed:
             cmd_str = tool_args.get("command", tool_name)
             return BrainResult(
@@ -298,52 +310,68 @@ class Brain:
                 pending_args=tool_args,
             )
 
-        # Execute
         tool = registry.get(tool_name)
         if not tool:
             return BrainResult(response=f"Tool bulunamadı: {tool_name}", tool_used=None)
 
         result = await tool.execute(**tool_args)
-
-        # Finalize
-        resp = await self._finalize(en_input, result)
+        resp = await self._finalize(en_input, result, tc)
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
-    async def _chat(self, en_input: str) -> str:
+    async def _chat(self, en_input: str, tc: dict) -> str:
+        system = CHAT_SYSTEM.format(time_hint=tc["prompt_hint"])
         try:
             raw = await ollama.chat([
-                {"role": "system", "content": CHAT_SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": en_input},
             ])
             return strip_markdown(raw)
         except Exception as exc:
             return f"(Ollama hatası: {exc})"
 
-    async def _finalize(self, en_input: str, result: ToolResult) -> str:
+    async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         if not result.success:
             return f"Hata: {result.error}"
 
         output = result.output.strip()
 
-        # Silent commands (mkdir, touch, echo >) → confirm done
         if not output or output == "(command executed successfully, no output)":
             return "Tamam, işlem tamamlandı. ✓"
 
-        # Short single-line → show directly
-        if len(output) < 200 and "\n" not in output:
+        # Weather/news output is rich — show directly, no LLM summarization
+        if len(output) < 600:
             return output
 
-        # Long output → LLM summarize in Turkish
+        system = FINALIZER_SYSTEM.format(time_hint=tc["prompt_hint"])
         try:
             raw = await ollama.chat([
-                {"role": "system", "content": FINALIZER_SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"},
             ])
             return strip_markdown(raw)
         except Exception:
             return output[:1500]
+
+
+# ── City extractor helper ─────────────────────────────────────────────────────
+
+def _extract_city(text: str) -> str:
+    """Try to extract a city name from a weather query. Returns '' for auto-detect."""
+    # Patterns: "istanbul hava", "hava ankara", "izmir'de hava"
+    import re
+    # Remove common weather words
+    cleaned = re.sub(
+        r"\b(hava|durumu|weather|forecast|sıcaklık|yağmur|derece|nasıl|bugün|yarın|var mı)\b",
+        "", text, flags=re.IGNORECASE
+    ).strip()
+    # Remove Turkish location suffixes: 'da, 'de, 'ta, 'te, 'nda
+    cleaned = re.sub(r"'(da|de|ta|te|nda|nde|daki|deki)\b", "", cleaned).strip()
+    # What's left might be a city
+    if cleaned and len(cleaned) > 2 and not cleaned.isspace():
+        return cleaned.title()
+    return ""
 
 
 brain = Brain()
