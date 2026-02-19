@@ -1,47 +1,58 @@
 """
 Bantz v2 — Configuration
-All settings are read from here. They can be overridden by a .env file or environment variables.
+Reads from environment variables / .env file.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Config(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_prefix="BANTZ_",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    # ── Ollama ────────────────────────────────────────────────────────────
+    ollama_model: str = Field("qwen2.5-coder:7b", alias="BANTZ_OLLAMA_MODEL")
+    ollama_base_url: str = Field("http://localhost:11434", alias="BANTZ_OLLAMA_BASE_URL")
 
-    # ── LLM ──────────────────────────────────────────────────────────────
-    ollama_model: str = "qwen2.5-coder:7b"
-    ollama_base_url: str = "http://localhost:11434"
+    # ── Gemini (optional) ─────────────────────────────────────────────────
+    gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
+    gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")
+    gemini_model: str = Field("gemini-2.0-flash", alias="BANTZ_GEMINI_MODEL")
 
-    gemini_enabled: bool = False
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
-
-    # ── Language / Translation ─────────────────────────────────────────────────────
-    language: str = "tr"           # "tr" → MarianMT bridge active, "en" → direct
-    translation_enabled: bool = True
-
-    # ── Database ────────────────────────────────────────────────────────
-    db_path: Path = Path.home() / ".local" / "share" / "bantz" / "store.db"
+    # ── Language / Translation ────────────────────────────────────────────
+    language: str = Field("tr", alias="BANTZ_LANGUAGE")
+    translation_enabled: bool = Field(True, alias="BANTZ_TRANSLATION_ENABLED")
 
     # ── Shell Security ────────────────────────────────────────────────────
-    shell_confirm_destructive: bool = True   # rm, sudo etc. require confirmation
-    shell_timeout_seconds: int = 30          # command timeout
+    shell_confirm_destructive: bool = Field(True, alias="BANTZ_SHELL_CONFIRM_DESTRUCTIVE")
+    shell_timeout_seconds: int = Field(30, alias="BANTZ_SHELL_TIMEOUT_SECONDS")
 
-    # ── UI ────────────────────────────────────────────────────────────────
-    ui_theme: str = "dark"                   # textual theme
+    # ── Location (manual override — optional) ─────────────────────────────
+    # Priority: .env manual > GeoClue2 > ipinfo.io > fallback
+    location_city: str = Field("", alias="BANTZ_CITY")
+    location_country: str = Field("TR", alias="BANTZ_COUNTRY")
+    location_timezone: str = Field("Europe/Istanbul", alias="BANTZ_TIMEZONE")
+    location_region: str = Field("", alias="BANTZ_REGION")
+    location_lat: float = Field(0.0, alias="BANTZ_LAT")
+    location_lon: float = Field(0.0, alias="BANTZ_LON")
+
+    # ── Storage ───────────────────────────────────────────────────────────
+    data_dir: str = Field("", alias="BANTZ_DATA_DIR")
+
+    @property
+    def db_path(self) -> Path:
+        base = (
+            Path(self.data_dir)
+            if self.data_dir
+            else Path.home() / ".local" / "share" / "bantz"
+        )
+        return base / "store.db"
 
     def ensure_dirs(self) -> None:
-        """Create necessary directories."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
-# Singleton — can be used from anywhere with `from bantz.config import config`
+
 config = Config()
