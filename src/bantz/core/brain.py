@@ -171,12 +171,16 @@ class Brain:
 
         # News
         if any(k in both for k in ("haber", "gündem", "news", "manşet", "son dakika")):
-            source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
-            return {"tool": "news", "args": {"source": source, "limit": 5}}
+            # "haber ver" = notify, not news
+            if "haber ver" not in both:
+                source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
+                return {"tool": "news", "args": {"source": source, "limit": 5}}
 
         # ── Contacts ──────────────────────────────────────────────────────
-        _CONTACTS = ("kişi ekle", "kaydet", "contact", "rehber")
-        if any(k in both for k in _CONTACTS):
+        _CONTACTS = ("kişi ekle", "contact", "rehber")
+        # Also match "kaydet" when an email address is present
+        _has_email = bool(re.search(r"\S+@\S+", both))
+        if any(k in both for k in _CONTACTS) or ("kaydet" in both and _has_email):
             # "hocamı kaydet: prof@uni.edu" or "kişi ekle"
             m = re.search(r"(\S+)\s+(?:kaydet|ekle)[:\s]+(\S+@\S+)", both)
             if m:
@@ -186,22 +190,38 @@ class Brain:
                 }}
             return {"tool": "gmail", "args": {"action": "contacts"}}
 
+        # ── Compose without "mail" keyword ─────────────────────────────
+        # "hocama söyle", "ali'ye de ki", "anneme haber ver"
+        _COMPOSE_VERB = ("söyle", "de ki", "ilet", "bildir", "haber ver")
+        if any(k in both for k in _COMPOSE_VERB):
+            # Find first dative-suffix word: “hocama”, “ali’ye”, “anneme”
+            to = ""
+            to_match = re.search(
+                r"(\S+?)(?:['\u2019]?(?:ya|ye|[ea])\b)",
+                o,
+            )
+            if to_match:
+                to = to_match.group(1).strip("'\u2019")
+            return {"tool": "gmail", "args": {
+                "action": "compose", "to": to, "intent": orig,
+            }}
+
         # ── Gmail ─────────────────────────────────────────────────────────
-        _GMAIL = ("mail", "gmail", "gelen kutu", "inbox", "e-posta", "eposta", "mesaj")
+        _GMAIL = ("mail", "gmail", "gelen kutu", "inbox", "e-posta", "eposta",
+                  "mesaj", "göndermiş", "gönderen", "gelmiş", "yazmış")
         if any(k in both for k in _GMAIL):
             # Compose: "X'e mail at, şunu yaz" — natural language intent
             if any(k in both for k in ("mail at", "mesaj at", "mail gönder", "mesaj gönder",
                                         "mail yaz", "compose", "write mail", "send mail")):
-                # Extract recipient and intent
+                # Extract recipient from original Turkish input
                 to_match = re.search(
-                    r"(\S+)[''e]?\s+(?:mail|mesaj)\s+(?:at|gönder|yaz)|"
-                    r"(?:mail|mesaj)\s+(?:at|gönder)\s+(\S+)",
-                    both,
+                    r"(\S+?)(?:['\u2019]?(?:ya|ye|[ea])\b)\s.*?(?:mail|mesaj)|"  # hocama mail at
+                    r"(?:mail|mesaj)\s+(?:at|g\u00f6nder)\s+(\S+)",  # mail at hocaya
+                    o,
                 )
                 to = ""
                 if to_match:
-                    to = (to_match.group(1) or to_match.group(2) or "").strip("'")
-                    to = re.sub(r"[ıiüuae]$", "", to)  # strip TR case suffix
+                    to = (to_match.group(1) or to_match.group(2) or "").strip("'\u2019")
                 return {"tool": "gmail", "args": {
                     "action": "compose",
                     "to": to,
@@ -233,30 +253,59 @@ class Brain:
                 if label_tr in both:
                     return {"tool": "gmail", "args": {"action": "search", "label": label_tr}}
 
-            # Sender filter: "X'ten mailler", "X'den mailler"
-            sender_match = re.search(
-                r"(?:from|gönderen|kimden)[:\s]+(\S+)|(\S+)['']\s*(?:ten|dan|den|tan)\s+(?:gel|mail|mesaj)",
-                both,
-            )
-            if sender_match:
-                sender = (sender_match.group(1) or sender_match.group(2) or "").strip()
-                return {"tool": "gmail", "args": {"action": "search", "from_sender": sender}}
-
             # Count (before read — "kaç" contains "aç")
             if any(k in both for k in ("kaç", "count", "sayı", "how many")):
                 return {"tool": "gmail", "args": {"action": "count"}}
-            # Read
-            if any(k in both for k in ("oku", "read", "içerik", "maili aç", "open")):
+            # Read (before sender filter — "son maili oku" should read, not search)
+            if any(k in both for k in ("oku", "read", "içerik", "maili aç", "open", "son mail")):
                 return {"tool": "gmail", "args": {"action": "read"}}
+
+            # Sender filter: "X'ten mailler", "X ne göndermiş", "X'den gelen"
+            sender_match = re.search(
+                r"(?:from|gönderen|kimden)[:\s]+(\S+)|"
+                r"(\S+)[''']\s*(?:ten|dan|den|tan|nın|nin|ın|in|un|ün)\s+(?:gel|mail|mesaj|gönder|yazd)|"
+                r"(\S+)\s+(?:ne\s+göndermiş|ne\s+yazmış|ne\s+gelmiş|mailini|mailin)",
+                both,
+            )
+            if sender_match:
+                sender = (sender_match.group(1) or sender_match.group(2) or sender_match.group(3) or "").strip()
+                # Exclude noise words that aren't real senders
+                if sender.lower() not in ("son", "bu", "bir", "tüm", "bütün", "o", "ilk", "şu"):
+                    return {"tool": "gmail", "args": {"action": "search", "from_sender": sender}}
+
+            # Specific mail reference: "X mailinin içeriği", "X'in maili"
+            specific_match = re.search(
+                r"(\S+)\s+mail\w*\s*(?:ını|ini|inin|nin|ın|in|i)\s*(?:özetle|oku|göster|aç|içeriğ)",
+                both,
+            )
+            if specific_match:
+                sender = specific_match.group(1).strip()
+                return {"tool": "gmail", "args": {"action": "search", "from_sender": sender}}
+
             # Default: summary
             return {"tool": "gmail", "args": {"action": "summary"}}
 
         # ── Schedule (before calendar/classroom — "ders" keywords) ─────
         _SCHED = ("derslerim", "schedule", "sıradaki ders", "next class",
-                  "bugün ders", "ders programı", "sınıfa", "derse", "dersler")
-        if any(k in both for k in _SCHED):
-            # "hangi ders/sınıf" → classroom, not schedule
+                  "bugün ders", "ders programı", "sınıfa", "derse", "dersler",
+                  "dersim", "ders var", "gitmem gereken")
+        _SCHED_TIME = ("bugün", "şimdi", "var mı", "ne zaman", "today", "now",
+                       "kaçta", "gitmem", "sıradaki", "sonraki")
+        # Also catch: "bugün bir dersim var mı" — has ders + time context
+        _has_ders = any(k in both for k in ("ders", "sınıf"))
+        _has_time = any(k in both for k in _SCHED_TIME)
+        _is_schedule = (any(k in both for k in _SCHED) or (_has_ders and _has_time))
+        if _is_schedule:
+            # "hangi ders/sınıf" → classroom ONLY if not time-oriented
             if any(k in both for k in ("hangi", "which", "liste", "kayıtlı")):
+                # "hangi ders" = classroom, BUT "şimdi hangi ders var" = schedule
+                if any(k in both for k in ("şimdi", "now", "var mı", "kaçta")):
+                    return {"tool": "_schedule_next", "args": {}}
+                pass  # fall through to classroom
+            # "ödev" intent → classroom, UNLESS explicitly negated
+            elif any(k in both for k in ("ödev", "teslim", "assignment")):
+                if any(k in both for k in ("değil", "not", "değıl")):
+                    return {"tool": "_schedule_today", "args": {}}
                 pass  # fall through to classroom
             elif any(k in both for k in ("sıradaki", "sonraki", "next", "kaç kaldı")):
                 return {"tool": "_schedule_next", "args": {}}
@@ -270,8 +319,13 @@ class Brain:
             return {"tool": "_briefing", "args": {}}
 
         # ── Calendar ──────────────────────────────────────────────────────
-        _CAL = ("takvim", "toplantı", "calendar", "etkinlik", "randevu")
-        if any(k in both for k in _CAL) or "bugün ne var" in both:
+        _CAL = ("takvim", "toplantı", "calendar", "etkinlik", "randevu",
+                "takvimime", "takvime")
+        # Also trigger on "koy" (put) with time context
+        _koy_intent = ("koy" in both and any(k in both for k in
+                       ("saat", "akşam", "sabah", "öğle", "yedi", "sekiz", "dokuz",
+                        "on", ":", ".")))
+        if any(k in both for k in _CAL) or "bugün ne var" in both or _koy_intent:
             # Delete
             if any(k in both for k in ("sil", "kaldır", "iptal", "delete", "remove", "cancel")):
                 title = _extract_event_title(both)
@@ -281,7 +335,8 @@ class Brain:
                 title = _extract_event_title(both)
                 return {"tool": "calendar", "args": {"action": "update", "title": title}}
             # Create — extract title/date/time inline
-            if any(k in both for k in ("ekle", "oluştur", "add", "create", "yeni", "new")):
+            if any(k in both for k in ("ekle", "oluştur", "add", "create", "yeni", "new",
+                                        "koy", "kaydet", "gir", "yaz", "put")):
                 title, date, time_str = _extract_event_create(o)
                 return {"tool": "calendar", "args": {
                     "action": "create", "title": title, "date": date, "time": time_str,
@@ -451,17 +506,56 @@ def _extract_event_create(text: str) -> tuple[str, str, str]:
     """
     from datetime import datetime, timedelta
 
-    # ── Time: look for HH:MM or "saat X" ──
+    # ── Turkish number words ──
+    # ── Turkish number words (sorted longest-first to avoid partial match) ──
+    _TR_NUM = [
+        ("on iki", 12), ("onbir", 11), ("on bir", 11), ("oniki", 12),
+        ("dokuz", 9), ("sekiz", 8), ("yedi", 7), ("altı", 6),
+        ("beş", 5), ("dört", 4), ("üç", 3), ("iki", 2), ("bir", 1),
+        ("on", 10),
+    ]
+
+    # ── Time: HH:MM, HH.MM, "saat X", "akşam yediye", "öğlen" ──
     time_str = ""
-    tm = re.search(r"(\d{1,2}:\d{2})", text)
+    # HH:MM or HH.MM
+    tm = re.search(r"(\d{1,2})[:\.](\d{2})", text)
     if tm:
-        time_str = tm.group(1)
+        time_str = f"{int(tm.group(1)):02d}:{tm.group(2)}"
     else:
+        # "saat 14", "saat 9"
         tm2 = re.search(r"saat\s+(\d{1,2})", text, re.IGNORECASE)
         if tm2:
             time_str = f"{int(tm2.group(1)):02d}:00"
+        else:
+            # "akşam yediye", "sabah dokuzda", "öğlen"
+            period = ""
+            if re.search(r"akşam|gece", text, re.IGNORECASE):
+                period = "pm"
+            elif re.search(r"sabah|öğle", text, re.IGNORECASE):
+                period = "am"
 
-    # ── Date: look for YYYY-MM-DD, "yarın", "bugün", day names ──
+            # Find a Turkish number word near time context
+            for word, val in _TR_NUM:
+                if word in text.lower():
+                    h = val
+                    if period == "pm" and h < 12:
+                        h += 12
+                    time_str = f"{h:02d}:00"
+                    break
+
+            # "öğlen" alone = 12:00
+            if not time_str and re.search(r"\böğle(?:n|yin)?\b", text, re.IGNORECASE):
+                time_str = "12:00"
+
+    # ── Bare hour: "19 a", "7 ye", "14 de" ──
+    if not time_str:
+        tm3 = re.search(r"\b(\d{1,2})\s*(?:'?(?:[eyaıiuü])|(?:da|de|ta|te))\b", text)
+        if tm3:
+            h = int(tm3.group(1))
+            if 0 <= h <= 23:
+                time_str = f"{h:02d}:00"
+
+    # ── Date: YYYY-MM-DD, "yarın", "bugün", day names ──
     date_str = ""
     dm = re.search(r"(\d{4}-\d{2}-\d{2})", text)
     if dm:
@@ -473,13 +567,18 @@ def _extract_event_create(text: str) -> tuple[str, str, str]:
 
     # ── Title: strip noise words, keep the meaningful part ──
     noise = (
-        r"\b(takvim\w*|calendar|ekle|oluştur|add|create|yeni|new|"
-        r"yarın|bugün|tomorrow|today|saat|için|benim|bir|"
+        r"\b(takvim\w*|calendar|ekle|oluştur|add|create|yeni|new|koy|kaydet|gir|"
+        r"yarın|bugün|tomorrow|today|saat|akşam|sabah|öğle\w*|gece|"
+        r"için|benim|bir|"
         r"my|to|the|at|for|a|an)\b"
     )
     title = re.sub(noise, "", text, flags=re.IGNORECASE)
-    title = re.sub(r"\d{1,2}:\d{2}", "", title)          # remove time
-    title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)      # remove date
+    # Remove number words used for time
+    for word, _ in _TR_NUM:
+        title = re.sub(rf"\b{word}(?:[eyaıiuü]|da|de|ta|te)?\b", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\d{1,2}[:.]\d{2}", "", title)        # remove time
+    title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)       # remove date
+    title = re.sub(r"\b\d{1,2}\s*(?:'?[eyaıiuü]|da|de|ta|te)\b", "", title)  # "19 a"
     title = re.sub(r"\s+", " ", title).strip(" .,;:!?'\"")
     title = title.strip()
 
