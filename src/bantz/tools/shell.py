@@ -72,8 +72,8 @@ class ShellTool(BaseTool):
         # Destructive flag — brain.py can request confirmation based on this
         # But if confirmation has already been obtained, we reach this point with confidence
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            proc = await asyncio.create_subprocess_exec(
+                "bash", "-c", command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
