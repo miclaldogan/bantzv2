@@ -5,8 +5,10 @@ Commands:
   bantz                         → TUI
   bantz --once "query"          → single query, no UI
   bantz --doctor                → system health check
+  bantz --setup profile         → user profile setup
   bantz --setup google gmail    → OAuth setup for Gmail
   bantz --setup google classroom → OAuth setup for Classroom
+  bantz --setup schedule        → class schedule setup
 """
 from __future__ import annotations
 
@@ -39,6 +41,9 @@ def main() -> None:
 
 
 def _handle_setup(parts: list[str]) -> None:
+    if len(parts) >= 1 and parts[0].lower() == "profile":
+        _setup_profile()
+        return
     if len(parts) >= 1 and parts[0].lower() == "schedule":
         _setup_schedule()
         return
@@ -49,8 +54,53 @@ def _handle_setup(parts: list[str]) -> None:
     else:
         print(f"Unknown setup target: {' '.join(parts)}")
         print("Available:")
+        print("  bantz --setup profile")
         print("  bantz --setup google [gmail|classroom|calendar]")
         print("  bantz --setup schedule")
+
+
+def _setup_profile() -> None:
+    """Interactive profile setup — writes profile.json."""
+    from bantz.core.profile import profile
+
+    print("\n👤 Kullanıcı Profili Kurulumu")
+    print("─" * 40)
+    if profile.is_configured():
+        print(f"Mevcut profil: {profile.get('name')} ({profile.get('tone')})")
+        print()
+
+    name = input("Adın: ").strip()
+    if not name:
+        print("İsim gerekli. İptal edildi.")
+        return
+
+    university = input("Üniversite (boş=geç): ").strip()
+    department = input("Bölüm (boş=geç): ").strip()
+    year_raw = input("Sınıf (1-6, boş=geç): ").strip()
+    year = int(year_raw) if year_raw.isdigit() else 0
+
+    print("\nHitap şekli:")
+    print("  1) sen (samimi)")
+    print("  2) siz (resmi)")
+    pronoun_choice = input("Seçim [1]: ").strip()
+    pronoun = "siz" if pronoun_choice == "2" else "sen"
+
+    print("\nTon:")
+    print("  1) samimi")
+    print("  2) resmi")
+    tone_choice = input("Seçim [1]: ").strip()
+    tone = "resmi" if tone_choice == "2" else "samimi"
+
+    profile.save({
+        "name": name,
+        "university": university,
+        "department": department,
+        "year": year,
+        "pronoun": pronoun,
+        "tone": tone,
+    })
+    print(f"\n✅ Profil kaydedildi: {profile.path}")
+    print(f"  → {profile.prompt_hint()}")
 
 
 def _setup_schedule() -> None:
@@ -176,6 +226,11 @@ async def _doctor() -> None:
     s = _mem.stats()
     print(f"✓ Memory DB: {s['db_path']}")
     print(f"  {s['total_conversations']} konuşma  |  {s['total_messages']} toplam mesaj")
+
+    # Profile
+    from bantz.core.profile import profile as _prof
+    icon = "✓" if _prof.is_configured() else "○"
+    print(f"{icon} Profile: {_prof.status_line()}")
     print("─" * 44)
 
 

@@ -15,6 +15,7 @@ from typing import Optional
 
 from bantz.core.schedule import schedule
 from bantz.core.time_context import time_ctx
+from bantz.core.profile import profile as _profile
 
 
 class Briefing:
@@ -65,9 +66,13 @@ class Briefing:
 
         # Header
         greeting = tc["greeting"]
+        if _profile.is_configured():
+            greeting = f"{greeting} {_profile.get('name')}!"
+        else:
+            greeting = f"{greeting}!"
         time_str = tc["time_str"]
         date_str = now.strftime("%A, %d %B %Y")
-        lines.append(f"{greeting}! 🕐 {time_str}  {date_str}")
+        lines.append(f"{greeting} 🕐 {time_str}  {date_str}")
         lines.append("")
 
         # Schedule (always show if configured)
