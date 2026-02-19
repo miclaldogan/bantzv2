@@ -25,9 +25,13 @@ class SystemTool(BaseTool):
 
     async def execute(self, metric: str = "all", **kwargs: Any) -> ToolResult:
         """
-        metric: "all" | "cpu" | "ram" | "disk" | "uptime"
+        metric: "all" | "cpu" | "ram" | "memory" | "disk" | "uptime"
         """
         try:
+            # Normalise aliases
+            if metric == "memory":
+                metric = "ram"
+
             data: dict[str, Any] = {}
             lines: list[str] = []
 

@@ -142,7 +142,7 @@ class Brain:
         if any(k in both for k in ("bellek", "memory", "ram", "free -",
                                     "ne kadar ram", "ram kullanım",
                                     "ram ne kadar", "bellek kullanım")):
-            return {"tool": "system", "args": {"metric": "memory"}}
+            return {"tool": "system", "args": {"metric": "ram"}}
         if any(k in both for k in ("cpu", "işlemci", "uptime", "yük", "load")):
             return {"tool": "system", "args": {"metric": "all"}}
 
