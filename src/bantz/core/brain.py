@@ -65,6 +65,11 @@ gmail tool:
   - tool_args.action = "summary" | "count" | "read" | "search" | "send"
   - Optional: tool_args.from_sender, tool_args.message_id, tool_args.limit
 
+calendar tool:
+  - Use for: takvim, toplantı, etkinlik, randevu, bugün ne var, bu hafta
+  - tool_args.action = "today" | "week" | "create" | "delete" | "update"
+  - Optional: tool_args.title, tool_args.date, tool_args.time, tool_args.event_id
+
 filesystem tool:
   - Use ONLY for: reading or writing file content
 
@@ -146,6 +151,7 @@ class Brain:
         import bantz.tools.news         # noqa: F401
         # Phase 3 tools
         import bantz.tools.gmail        # noqa: F401
+        import bantz.tools.calendar     # noqa: F401
 
         self._bridge = None
 
@@ -248,9 +254,30 @@ class Brain:
             # Default: summary
             return {"tool": "gmail", "args": {"action": "summary"}}
 
+        # ── Calendar ────────────────────────────────────────────────────────
+        _CAL = ("takvim", "toplantı", "calendar", "etkinlik", "randevu", "program")
+        if any(k in both for k in _CAL) or any(k in both for k in ("bugün ne var", "today", "bugünkü")):
+            # Delete
+            if any(k in both for k in ("sil", "kaldır", "iptal", "delete", "remove", "cancel")):
+                title = _extract_event_title(both)
+                return {"tool": "calendar", "args": {"action": "delete", "title": title}}
+            # Update / move
+            if any(k in both for k in ("güncelle", "taşı", "değiştir", "update", "move", "reschedule")):
+                title = _extract_event_title(both)
+                return {"tool": "calendar", "args": {"action": "update", "title": title}}
+            # Create
+            if any(k in both for k in ("ekle", "oluştur", "add", "create", "yeni", "new")):
+                return {"tool": "calendar", "args": {"action": "create"}}
+            # Week view
+            if any(k in both for k in ("hafta", "week", "7 gün")):
+                return {"tool": "calendar", "args": {"action": "week"}}
+            # Default: today
+            return {"tool": "calendar", "args": {"action": "today"}}
+
         # Write / create
         _WRITE = ("oluştur", "yaz", "kaydet", "create", "write", "save",
                   "make dir", "mkdir", "ekle", "add", "klasör aç", "dosya aç")
+        # Don't trigger _generate for calendar creates already handled above
         if any(w in both for w in _WRITE):
             return {"tool": "_generate", "args": {}}
 
@@ -398,6 +425,19 @@ def _extract_city(text: str) -> str:
     # What's left might be a city
     if cleaned and len(cleaned) > 2 and not cleaned.isspace():
         return cleaned.title()
+    return ""
+
+
+def _extract_event_title(text: str) -> str:
+    """Try to extract event title for delete/update operations."""
+    # "X toplantısını sil", "X randevusunu iptal et"
+    m = re.search(
+        r"(?:sil|kaldır|iptal|güncelle|taşı|değiştir)\s+['\"]?(.+?)['\"]?\s*(?:toplantı|randevu|etkinlik|$)",
+        text, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+    # "toplantıyı sil" — no title, return empty
     return ""
 
 
