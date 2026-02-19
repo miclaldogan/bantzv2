@@ -85,6 +85,12 @@ def _setup_telegram() -> None:
     print("Telegram user ID'lerini virgülle gir (boş=herkes):")
     allowed = input("User ID'ler: ").strip()
 
+    # Proxy (Turkey blocks api.telegram.org)
+    print()
+    print("(Proxy) Türkiye'den erişim için HTTPS proxy gerekebilir.")
+    print("Örnek: socks5://127.0.0.1:1080 veya http://proxy:8080")
+    proxy = input("Proxy URL (boş=geç): ").strip()
+
     # Write to .env
     env_path = Path.cwd() / ".env"
     existing = ""
@@ -94,11 +100,14 @@ def _setup_telegram() -> None:
     lines = existing.splitlines()
     # Remove old telegram entries
     lines = [l for l in lines if not l.startswith("TELEGRAM_BOT_TOKEN=")
-             and not l.startswith("TELEGRAM_ALLOWED_USERS=")]
+             and not l.startswith("TELEGRAM_ALLOWED_USERS=")
+             and not l.startswith("TELEGRAM_PROXY=")]
 
     lines.append(f"TELEGRAM_BOT_TOKEN={token}")
     if allowed:
         lines.append(f"TELEGRAM_ALLOWED_USERS={allowed}")
+    if proxy:
+        lines.append(f"TELEGRAM_PROXY={proxy}")
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n✅ Token kaydedildi: {env_path}")

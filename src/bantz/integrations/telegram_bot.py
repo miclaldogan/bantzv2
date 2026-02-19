@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Callable, Coroutine, Any
 
 from telegram import Update
@@ -35,6 +36,14 @@ from telegram.ext import (
 )
 
 from bantz.config import config
+
+# ── Proxy support (Turkey blocks api.telegram.org) ──────────────────────
+_PROXY = config.telegram_proxy.strip() or os.environ.get("HTTPS_PROXY", "").strip()
+if _PROXY:
+    # python-telegram-bot uses httpx under the hood;
+    # setting these env vars makes httpx route through the proxy.
+    os.environ.setdefault("HTTPS_PROXY", _PROXY)
+    os.environ.setdefault("HTTP_PROXY", _PROXY)
 
 logging.basicConfig(
     format="%(asctime)s [bantz-tg] %(levelname)s — %(message)s",
@@ -212,6 +221,8 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("haber", cmd_haber))
 
     log.info("🦌 Bantz Telegram bot başlatılıyor...")
+    if _PROXY:
+        log.info(f"   Proxy: {_PROXY}")
     if _ALLOWED:
         log.info(f"   İzinli kullanıcılar: {_ALLOWED}")
     else:
