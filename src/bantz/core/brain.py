@@ -60,6 +60,11 @@ news tool:
   - Use for: haberler, gündem, news, hacker news, teknoloji haberleri
   - Optional: tool_args.source = "hn" | "google" | "all" (default: "all")
 
+gmail tool:
+  - Use for: mail, gmail, inbox, mailleri oku/özetle/gönder, X'ten mailler
+  - tool_args.action = "summary" | "count" | "read" | "search" | "send"
+  - Optional: tool_args.from_sender, tool_args.message_id, tool_args.limit
+
 filesystem tool:
   - Use ONLY for: reading or writing file content
 
@@ -139,6 +144,8 @@ class Brain:
         # Phase 2 tools
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
+        # Phase 3 tools
+        import bantz.tools.gmail        # noqa: F401
 
         self._bridge = None
 
@@ -220,6 +227,26 @@ class Brain:
         if any(k in both for k in _NEWS):
             source = "hn" if any(k in both for k in ("hacker", "hn")) else "all"
             return {"tool": "news", "args": {"source": source, "limit": 5}}
+
+        # ── Gmail ─────────────────────────────────────────────────────────
+        _GMAIL = ("mail", "gmail", "gelen kutu", "inbox", "e-posta", "eposta", "mesaj")
+        if any(k in both for k in _GMAIL):
+            # Filtered search: "X'ten mailler", "X'den mailler"
+            sender_match = re.search(
+                r"(?:from|gönderen|kimden)[:\s]+(\S+)|(\S+)['\s](?:ten|dan|den|tan)\s+(?:gel|mail|mesaj)",
+                both,
+            )
+            if sender_match:
+                sender = (sender_match.group(1) or sender_match.group(2) or "").strip()
+                return {"tool": "gmail", "args": {"action": "search", "from_sender": sender}}
+            # Read specific / most recent
+            if any(k in both for k in ("oku", "read", "içerik", "content", "aç", "open")):
+                return {"tool": "gmail", "args": {"action": "read"}}
+            # Count only
+            if any(k in both for k in ("kaç", "count", "sayı", "how many")):
+                return {"tool": "gmail", "args": {"action": "count"}}
+            # Default: summary
+            return {"tool": "gmail", "args": {"action": "summary"}}
 
         # Write / create
         _WRITE = ("oluştur", "yaz", "kaydet", "create", "write", "save",
@@ -340,8 +367,8 @@ class Brain:
         if not output or output == "(command executed successfully, no output)":
             return "Tamam, işlem tamamlandı. ✓"
 
-        # Weather/news output is rich — show directly, no LLM summarization
-        if len(output) < 600:
+        # Weather/news/gmail output is rich — show directly, no LLM summarization
+        if len(output) < 800:
             return output
 
         system = FINALIZER_SYSTEM.format(time_hint=tc["prompt_hint"])
