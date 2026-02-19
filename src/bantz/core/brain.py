@@ -18,6 +18,7 @@ from bantz.config import config
 from bantz.core.time_context import time_ctx
 from bantz.core.memory import memory
 from bantz.core.router import route as _ollama_route
+from bantz.core.date_parser import resolve_date
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 
@@ -139,9 +140,10 @@ class Brain:
         if any(k in both for k in ("disk", "df -", "depolama", "storage", "space",
                                     "diskte", "disk alan")):
             return {"tool": "shell", "args": {"command": "df -h"}}
-        if any(k in both for k in ("bellek", "memory", "ram", "free -",
+        if any(k in both for k in ("bellek", "memory", "free -",
                                     "ne kadar ram", "ram kullanım",
-                                    "ram ne kadar", "bellek kullanım")):
+                                    "ram ne kadar", "bellek kullanım")) or \
+           re.search(r"\bram\b", both):
             return {"tool": "system", "args": {"metric": "ram"}}
         if any(k in both for k in ("cpu", "işlemci", "uptime", "yük", "load")):
             return {"tool": "system", "args": {"metric": "all"}}
@@ -210,19 +212,26 @@ class Brain:
                 return {"tool": "calendar", "args": {"action": "update"}}
             return {"tool": "calendar", "args": {"action": "today"}}
 
-        # Classroom
-        if any(k in both for k in ("ödev", "assignment", "classroom", "kurs", "ders",
+        # Schedule — BEFORE classroom (both match "ders", schedule is more specific)
+        if any(k in both for k in ("ders program", "schedule", "derslerim", "bugün ders",
+                                    "yarın ders", "sıradaki ders", "next class",
+                                    "hafta ders", "dersler ne")):
+            if any(k in both for k in ("sıradaki", "next", "sonraki")):
+                return {"tool": "_schedule_next", "args": {}}
+            if any(k in both for k in ("bu hafta", "haftalık", "this week", "weekly")):
+                return {"tool": "_schedule_week", "args": {}}
+            # Try resolving a date from the text
+            resolved = resolve_date(orig)
+            if resolved:
+                return {"tool": "_schedule_date", "args": {"date_iso": resolved.isoformat()}}
+            return {"tool": "_schedule_today", "args": {}}
+
+        # Classroom — narrower keywords (no bare "ders", use "ders notu", "ders ödev" etc.)
+        if any(k in both for k in ("ödev", "assignment", "classroom", "kurs",
                                     "duyuru", "teslim", "deadline", "announcement")):
             if any(k in both for k in ("bugün", "today", "yakında", "upcoming")):
                 return {"tool": "classroom", "args": {"action": "due_today"}}
             return {"tool": "classroom", "args": {"action": "assignments"}}
-
-        # Schedule
-        if any(k in both for k in ("ders program", "schedule", "derslerim", "bugün ders",
-                                    "yarın ders", "sıradaki ders", "next class")):
-            if any(k in both for k in ("sıradaki", "next", "sonraki")):
-                return {"tool": "_schedule_next", "args": {}}
-            return {"tool": "_schedule_today", "args": {}}
 
         # Briefing
         if any(k in both for k in ("günaydın", "good morning", "özet", "briefing",
@@ -271,6 +280,22 @@ class Brain:
             from bantz.core.schedule import schedule as _sched
             text = _sched.format_next()
             memory.add("assistant", text, tool_used="schedule")
+            return BrainResult(response=text, tool_used="schedule")
+
+        if quick and quick["tool"] == "_schedule_date":
+            from bantz.core.schedule import schedule as _sched
+            from datetime import datetime as _dt
+            target = _dt.fromisoformat(quick["args"]["date_iso"])
+            text = _sched.format_for_date(target)
+            memory.add("assistant", text, tool_used="schedule")
+            return BrainResult(response=text, tool_used="schedule")
+
+        if quick and quick["tool"] == "_schedule_week":
+            from bantz.core.schedule import schedule as _sched
+            resolved = resolve_date(user_input)
+            text = _sched.format_week(resolved)
+            memory.add("assistant", text, tool_used="schedule")
+            return BrainResult(response=text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_generate":
