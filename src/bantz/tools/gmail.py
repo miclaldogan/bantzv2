@@ -621,10 +621,10 @@ class GmailTool(BaseTool):
         msg["to"] = to
         msg["subject"] = subject
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-        body_data: dict = {"raw": raw}
+        message_body: dict = {"raw": raw}
         if thread_id:
-            body_data["threadId"] = thread_id
-        svc.users().messages().send(userId="me", body=body_data).execute()
+            message_body["threadId"] = thread_id
+        svc.users().messages().send(userId="me", body=message_body).execute()
         return True
 
     # ── LLM helpers ───────────────────────────────────────────────────────

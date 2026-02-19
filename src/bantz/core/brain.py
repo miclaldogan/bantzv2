@@ -332,7 +332,6 @@ class Brain:
             text = _sched.format_week(resolved)
             memory.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
-            return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_generate":
             cmd = await self._generate_command(user_input, en_input)
