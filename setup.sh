@@ -2,25 +2,32 @@
 # Bantz v2 — Quick setup
 set -e
 
-echo "🔧 Bantz v2 setup starting..."
+echo "🔧 Bantz v2 setup..."
 
-# Python interpreter check (prefer python3.11+, fallback to python3 if suitable)
-PYTHON_BIN=""
-if command -v python3.11 >/dev/null 2>&1; then
-  PYTHON_BIN="python3.11"
-elif python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"; then
-  PYTHON_BIN="python3"
-else
-  echo "❌ Python 3.11+ required"
-  exit 1
-fi
+python3 -c "import sys; assert sys.version_info >= (3,11), 'Python 3.11+ required'" \
+  || { echo "❌ Python 3.11+ required"; exit 1; }
 
 # Venv
-"$PYTHON_BIN" -m venv .venv
+if [ ! -d ".venv" ]; then
+  python3 -m venv .venv
+fi
 source .venv/bin/activate
 
-# Packages
+# Base install
 pip install -e "." --quiet
+echo "✓ Base packages installed"
+
+# MarianMT (optional but recommended for Turkish support)
+read -p "Install MarianMT for TR↔EN translation? (~300MB) [y/N] " yn
+if [[ "$yn" =~ ^[Yy]$ ]]; then
+  pip install -e ".[translation]" --quiet
+  echo "✓ MarianMT installed"
+  # Update .env
+  if [ -f .env ]; then
+    sed -i 's/BANTZ_TRANSLATION_ENABLED=false/BANTZ_TRANSLATION_ENABLED=true/' .env
+    echo "✓ .env updated: BANTZ_TRANSLATION_ENABLED=true"
+  fi
+fi
 
 # .env
 if [ ! -f .env ]; then
@@ -29,9 +36,9 @@ if [ ! -f .env ]; then
 fi
 
 echo ""
-echo "✅ Setup complete!"
+echo "✅ Done!"
 echo ""
-echo "Next steps:"
+echo "Next:"
 echo "  source .venv/bin/activate"
-echo "  python -m bantz --doctor    # system check"
-echo "  python -m bantz             # start TUI"
+echo "  python -m bantz --doctor"
+echo "  python -m bantz"

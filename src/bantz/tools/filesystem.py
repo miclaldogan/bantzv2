@@ -76,12 +76,16 @@ class FilesystemTool(BaseTool):
             entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
             lines = []
             for e in entries[:100]:   # max 100 entries
-                if e.is_dir():
-                    lines.append(f"📁 {e.name}/")
-                else:
-                    lines.append(f"📄 {e.name}  ({e.stat().st_size} bytes)")
+                try:
+                    if e.is_dir():
+                        lines.append(f"📁 {e.name}/")
+                    else:
+                        lines.append(f"📄 {e.name}  ({e.stat().st_size} bytes)")
+                except (OSError, FileNotFoundError):
+                    # Broken symlink or inaccessible entry
+                    lines.append(f"⛓ {e.name}  (broken link)")
             output = f"{p}\n" + "\n".join(lines)
-            if len(list(p.iterdir())) > 100:
+            if len(entries) > 100:
                 output += "\n... (first 100 shown)"
             return ToolResult(success=True, output=output, data={"path": str(p), "count": len(lines)})
         except PermissionError:
