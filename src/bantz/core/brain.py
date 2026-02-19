@@ -165,13 +165,12 @@ class Brain:
         # Contacts
         _has_email = bool(re.search(r"\S+@\S+", both))
         if any(k in both for k in ("kişi ekle", "contact", "rehber")) or (
-            "kaydet" in both and _has_email
+            _has_email and re.search(r"kaydet|kayded|ekle\b", both)
         ):
-            m = re.search(r"(\S+)\s+(?:kaydet|ekle)[:\s]+(\S+@\S+)", both)
-            if m:
-                alias = re.sub(r"[ıiüuae]$", "", m.group(1))
+            alias, email = _extract_contact(o)
+            if alias and email:
                 return {"tool": "gmail", "args": {
-                    "action": "contacts", "alias": alias, "email": m.group(2)
+                    "action": "contacts", "alias": alias, "email": email
                 }}
             return {"tool": "gmail", "args": {"action": "contacts"}}
 
@@ -479,6 +478,45 @@ def _extract_mail_recipient(text: str) -> str:
     if m:
         return m.group(1)
     return ""
+
+
+def _extract_contact(text: str) -> tuple[str, str]:
+    """
+    Extract (alias, email) from Turkish contact-save phrases.
+
+    Patterns:
+      "iclaldgn@gmail.com mailinin ikincil mailim olarak kaydeder misin"
+         → ("ikincil", "iclaldgn@gmail.com")
+      "hocamı kaydet: prof@uni.edu"
+         → ("hocam", "prof@uni.edu")
+      "prof@uni.edu hocam olarak ekle"
+         → ("hocam", "prof@uni.edu")
+    """
+    # Extract email
+    em = re.search(r"(\S+@\S+)", text)
+    if not em:
+        return "", ""
+    email = em.group(1).rstrip("'\".,;:")
+
+    # Pattern 1: "X olarak kaydet/kayded/ekle"
+    m = re.search(r"(\S+?)(?:\s+mail\w*)?\s+olarak\s+(?:kaydet|kayded|ekle)", text, re.IGNORECASE)
+    if m:
+        alias = re.sub(r"[ıiüuae]$", "", m.group(1))
+        return alias, email
+
+    # Pattern 2: "alias kaydet/ekle: email" or "alias kaydet/ekle email"
+    m = re.search(r"(\S+)\s+(?:kaydet|ekle)[:\s]+\S+@", text, re.IGNORECASE)
+    if m:
+        alias = re.sub(r"[ıiüuae]$", "", m.group(1))
+        return alias, email
+
+    # Pattern 3: "email alias olarak ekle/kaydet"  (email comes first)
+    m = re.search(r"@\S+\s+(\S+)\s+olarak", text, re.IGNORECASE)
+    if m:
+        alias = re.sub(r"[ıiüuae]$", "", m.group(1))
+        return alias, email
+
+    return "", email
 
 
 def _extract_event_title(text: str) -> str:
