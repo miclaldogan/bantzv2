@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from bantz.config import config
 from bantz.core.time_context import time_ctx
 from bantz.core.memory import memory
+from bantz.core.profile import profile
 from bantz.core.router import route as _ollama_route
 from bantz.core.date_parser import resolve_date
 from bantz.llm.ollama import ollama
@@ -36,12 +37,14 @@ def strip_markdown(text: str) -> str:
 CHAT_SYSTEM = """\
 You are Bantz, a sharp personal terminal assistant on Linux.
 {time_hint}
+{profile_hint}
 Always respond in Turkish. Be concise. Plain text only — no markdown.\
 """
 
 FINALIZER_SYSTEM = """\
 You are Bantz. A tool just ran successfully.
 {time_hint}
+{profile_hint}
 Summarize the result in 1-3 plain sentences in Turkish.
 Be direct and specific. No markdown. No bullet points. Plain text only.\
 """
@@ -414,7 +417,8 @@ class Brain:
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
 
         messages = [
-            {"role": "system", "content": CHAT_SYSTEM.format(time_hint=tc["prompt_hint"])},
+            {"role": "system", "content": CHAT_SYSTEM.format(
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -437,7 +441,7 @@ class Brain:
         try:
             raw = await ollama.chat([
                 {"role": "system", "content": FINALIZER_SYSTEM.format(
-                    time_hint=tc["prompt_hint"])},
+                    time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
                 {"role": "user", "content": (
                     f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
                 )},
