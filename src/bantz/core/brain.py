@@ -150,59 +150,104 @@ class Brain:
                    "ip ", "ping ", "top", "htop", "mkdir", "touch",
                    "echo ", "head ", "tail ", "chmod ", "cp ", "mv ")
         for p in _DIRECT:
-            if o.startswith(p):
+            if o == p.rstrip() or o.startswith(p if p.endswith(" ") else p + " "):
                 return {"tool": "shell", "args": {"command": orig.strip()}}
 
-        # Disk
+        # System metrics
         if any(k in both for k in ("disk", "df -", "depolama", "storage", "space")):
             return {"tool": "shell", "args": {"command": "df -h"}}
-
-        # RAM
-        if any(k in both for k in ("ram", "bellek", "memory", "free -")):
+        if any(k in both for k in ("bellek", "memory", "free -")):
             return {"tool": "shell", "args": {"command": "free -h"}}
-
-        # CPU / uptime
         if any(k in both for k in ("cpu", "işlemci", "uptime")):
             return {"tool": "system", "args": {"metric": "all"}}
 
-        # Time / date
-        if any(k in both for k in ("saat kaç", "saat ne", "tarih", "what time", "what date")):
+        # Time
+        if any(k in both for k in ("saat kaç", "saat ne", "what time", "what date")):
             return {"tool": "shell", "args": {"command": "date '+%H:%M:%S  %A, %d %B %Y'"}}
 
-        # Processes
-        if any(k in both for k in ("süreç", "process listesi", "running process")):
-            return {"tool": "shell", "args": {"command": "ps aux --sort=-%mem | head -15"}}
-
-        # Weather — check for city name after "hava" keyword
-        _WEATHER = ("hava", "weather", "sıcaklık", "yağmur", "forecast", "derece", "nem")
-        if any(k in both for k in _WEATHER):
-            # Try to extract explicit city: "istanbul hava", "hava ankara"
-            city = _extract_city(o)
-            return {"tool": "weather", "args": {"city": city}}
+        # Weather
+        if any(k in both for k in ("hava", "weather", "sıcaklık", "yağmur", "forecast", "derece")):
+            return {"tool": "weather", "args": {"city": _extract_city(o)}}
 
         # News
-        _NEWS = ("haber", "gündem", "news", "manşet", "son dakika", "hacker news", "teknoloji haberi")
-        if any(k in both for k in _NEWS):
-            source = "hn" if any(k in both for k in ("hacker", "hn")) else "all"
+        if any(k in both for k in ("haber", "gündem", "news", "manşet", "son dakika")):
+            source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
             return {"tool": "news", "args": {"source": source, "limit": 5}}
+
+        # ── Contacts ──────────────────────────────────────────────────────
+        _CONTACTS = ("kişi ekle", "kaydet", "contact", "rehber")
+        if any(k in both for k in _CONTACTS):
+            # "hocamı kaydet: prof@uni.edu" or "kişi ekle"
+            m = re.search(r"(\S+)\s+(?:kaydet|ekle)[:\s]+(\S+@\S+)", both)
+            if m:
+                alias = re.sub(r"[ıiüuae]$", "", m.group(1))  # strip TR suffix
+                return {"tool": "gmail", "args": {
+                    "action": "contacts", "alias": alias, "email": m.group(2)
+                }}
+            return {"tool": "gmail", "args": {"action": "contacts"}}
 
         # ── Gmail ─────────────────────────────────────────────────────────
         _GMAIL = ("mail", "gmail", "gelen kutu", "inbox", "e-posta", "eposta", "mesaj")
         if any(k in both for k in _GMAIL):
-            # Filtered search: "X'ten mailler", "X'den mailler"
+            # Compose: "X'e mail at, şunu yaz" — natural language intent
+            if any(k in both for k in ("mail at", "mesaj at", "mail gönder", "mesaj gönder",
+                                        "mail yaz", "compose", "write mail", "send mail")):
+                # Extract recipient and intent
+                to_match = re.search(
+                    r"(\S+)[''e]?\s+(?:mail|mesaj)\s+(?:at|gönder|yaz)|"
+                    r"(?:mail|mesaj)\s+(?:at|gönder)\s+(\S+)",
+                    both,
+                )
+                to = ""
+                if to_match:
+                    to = (to_match.group(1) or to_match.group(2) or "").strip("'")
+                    to = re.sub(r"[ıiüuae]$", "", to)  # strip TR case suffix
+                return {"tool": "gmail", "args": {
+                    "action": "compose",
+                    "to": to,
+                    "intent": orig,
+                }}
+
+            # Reply: "bu maili yanıtla", "cevapla"
+            if any(k in both for k in ("yanıtla", "cevapla", "reply")):
+                return {"tool": "gmail", "args": {"action": "reply", "intent": orig}}
+
+            # Starred: "yıldızlı mailler"
+            if any(k in both for k in ("yıldız", "starred", "önemli işaret")):
+                return {"tool": "gmail", "args": {"action": "search", "starred": True}}
+
+            # Date filter: "bu haftaki", "3 günden eski"
+            days = 0
+            m_days = re.search(r"(\d+)\s*gün", both)
+            if m_days:
+                days = int(m_days.group(1))
+            elif any(k in both for k in ("bu hafta", "this week")):
+                days = 7
+            elif any(k in both for k in ("bugün", "today")):
+                days = 1
+            if days:
+                return {"tool": "gmail", "args": {"action": "search", "days_ago": days}}
+
+            # Label filter: "tanıtım mailleri", "sosyal mailler"
+            for label_tr in ("tanıtım", "sosyal", "güncelleme", "forum", "promosyon"):
+                if label_tr in both:
+                    return {"tool": "gmail", "args": {"action": "search", "label": label_tr}}
+
+            # Sender filter: "X'ten mailler", "X'den mailler"
             sender_match = re.search(
-                r"(?:from|gönderen|kimden)[:\s]+(\S+)|(\S+)['\s](?:ten|dan|den|tan)\s+(?:gel|mail|mesaj)",
+                r"(?:from|gönderen|kimden)[:\s]+(\S+)|(\S+)['']\s*(?:ten|dan|den|tan)\s+(?:gel|mail|mesaj)",
                 both,
             )
             if sender_match:
                 sender = (sender_match.group(1) or sender_match.group(2) or "").strip()
                 return {"tool": "gmail", "args": {"action": "search", "from_sender": sender}}
-            # Read specific / most recent
-            if any(k in both for k in ("oku", "read", "içerik", "content", "aç", "open")):
-                return {"tool": "gmail", "args": {"action": "read"}}
-            # Count only
+
+            # Count (before read — "kaç" contains "aç")
             if any(k in both for k in ("kaç", "count", "sayı", "how many")):
                 return {"tool": "gmail", "args": {"action": "count"}}
+            # Read
+            if any(k in both for k in ("oku", "read", "içerik", "maili aç", "open")):
+                return {"tool": "gmail", "args": {"action": "read"}}
             # Default: summary
             return {"tool": "gmail", "args": {"action": "summary"}}
 
@@ -349,13 +394,10 @@ class Brain:
         resp = await self._finalize(en_input, result, tc)
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
-    # ── Helpers ───────────────────────────────────────────────────────────
-
     async def _chat(self, en_input: str, tc: dict) -> str:
-        system = CHAT_SYSTEM.format(time_hint=tc["prompt_hint"])
         try:
             raw = await ollama.chat([
-                {"role": "system", "content": system},
+                {"role": "system", "content": CHAT_SYSTEM.format(time_hint=tc["prompt_hint"])},
                 {"role": "user", "content": en_input},
             ])
             return strip_markdown(raw)
@@ -365,20 +407,14 @@ class Brain:
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         if not result.success:
             return f"Hata: {result.error}"
-
         output = result.output.strip()
-
         if not output or output == "(command executed successfully, no output)":
             return "Tamam, işlem tamamlandı. ✓"
-
-        # Weather/news/gmail output is rich — show directly, no LLM summarization
         if len(output) < 800:
             return output
-
-        system = FINALIZER_SYSTEM.format(time_hint=tc["prompt_hint"])
         try:
             raw = await ollama.chat([
-                {"role": "system", "content": system},
+                {"role": "system", "content": FINALIZER_SYSTEM.format(time_hint=tc["prompt_hint"])},
                 {"role": "user", "content": f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"},
             ])
             return strip_markdown(raw)
