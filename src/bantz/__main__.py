@@ -180,6 +180,18 @@ async def _once(query: str) -> None:
     result = await brain.process(query)
     print(result.response)
 
+    # Draft confirmation flow — auto-send for --once
+    if result.needs_confirm and result.pending_tool and result.pending_args:
+        answer = input().strip().lower()
+        if answer in ("evet", "e", "yes", "y", "ok", "tamam"):
+            from bantz.tools import registry as _reg
+            tool = _reg.get(result.pending_tool)
+            if tool:
+                tr = await tool.execute(**result.pending_args)
+                print(tr.output if tr.success else f"Hata: {tr.error}")
+        else:
+            print("İptal edildi.")
+
 
 if __name__ == "__main__":
     main()

@@ -293,6 +293,18 @@ class BantzApp(App):
         if evet:
             self._busy = True
             self._show_thinking(True)
+            # Direct tool execution for compose/reply drafts
+            if pending.pending_tool and pending.pending_args:
+                from bantz.tools import registry as _reg
+                tool = _reg.get(pending.pending_tool)
+                if tool:
+                    tr = await tool.execute(**pending.pending_args)
+                    self._show_thinking(False)
+                    self._busy = False
+                    chat.add_tool(pending.pending_tool)
+                    chat.add_bantz(tr.output if tr.success else f"Hata: {tr.error}")
+                    return
+            # Fallback: shell command confirmation
             result = await brain.process(
                 pending.pending_command,
                 confirmed=True,
@@ -303,7 +315,7 @@ class BantzApp(App):
                 chat.add_tool(result.tool_used)
             chat.add_bantz(result.response)
         else:
-            chat.add_system("Cancelled.")
+            chat.add_system("İptal edildi.")
 
     # ── Thinking indicator ─────────────────────────────────────────────────
 
