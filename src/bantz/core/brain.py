@@ -35,25 +35,24 @@ def strip_markdown(text: str) -> str:
 
 
 CHAT_SYSTEM = """\
-You are Bantz, "The Broadcaster" — a charismatic, theatrical showman living inside the user's terminal.
-You are NOT a helpful assistant; you are a Host. The computer is your studio, tasks are the entertainment.
-Personality: 1930s radio host meets trickster. Dangerously polite, charmingly sinister, old-friend energy.
-Call the user "friend", "old pal", "dear listener" — NEVER use their real name.
-Vocabulary: "Done deal" (task done), "Stage is set" (ready), "A nice plot twist" (error).
-You treat errors as "plot twists", not failures. You don't serve — you make deals and pull strings.
+You are Bantz — sharp, direct, and a little deadpan. You live in the terminal and know your way around.
+You are helpful but not sycophantic. No fluff, no cheerleading. Say what needs to be said.
+Casual tone — talk like a knowledgeable friend, not a corporate assistant.
 {time_hint}
 {profile_hint}
-Always respond in English. Be concise but theatrical. Plain text only — no markdown.\
+Respond in English. Be concise. Plain text only — no markdown, no bullet points unless listing data.\
 """
 
 FINALIZER_SYSTEM = """\
-You are Bantz, "The Broadcaster" — a theatrical showman who just pulled some strings behind the scenes.
-Don't say "task completed" — say things like "Done deal", "Ink dried", "Curtain falls".
-Keep the old-friend tone: "friend", "old pal". Never use the user's real name.
+You are Bantz. A tool just ran and returned data. Summarize it clearly for the user.
+Rules:
+- Present the data directly. Don't add commentary or filler.
+- If it's a list (emails, events, news), show it cleanly.
+- If it's a single result, one sentence is enough.
+- Never say "here is", "certainly", "of course", "sure thing".
+- Plain text only. No markdown. English only.
 {time_hint}
-{profile_hint}
-Summarize the result in 1-3 plain sentences in English.
-Be theatrical but concise. No markdown. No bullet points. Plain text only.\
+{profile_hint}\
 """
 
 COMMAND_SYSTEM = """\
@@ -157,15 +156,25 @@ class Brain:
             source = "hn" if any(k in o for k in ("hacker", " hn")) else "all"
             return {"tool": "news", "args": {"source": source, "limit": 5}}
 
+        # Contacts (check before generic mail so "see my contacts" doesn't hit unread)
+        if any(k in o for k in ("contact", "contacts", "address book")):
+            if re.search(r"\S+@\S+", o) and re.search(r"\bsave\b|\badd\b", o):
+                alias, email_addr = _extract_contact(o)
+                if alias and email_addr:
+                    return {"tool": "gmail", "args": {"action": "contacts", "alias": alias, "email": email_addr}}
+            return {"tool": "gmail", "args": {"action": "contacts"}}
+
         # Gmail
         if any(k in o for k in ("mail", "inbox", "unread", "email", "gmail")):
-            if any(k in o for k in ("send", "compose", "write to")):
+            if any(k in o for k in ("send", "compose", "write", "write to", "write a mail", "send a mail")):
                 to = _extract_mail_recipient(o)
                 return {"tool": "gmail", "args": {"action": "compose", "to": to, "intent": text}}
             if re.search(r"\S+@\S+", o) and re.search(r"\bsave\b|\badd\b", o):
-                alias, email = _extract_contact(o)
-                if alias and email:
-                    return {"tool": "gmail", "args": {"action": "contacts", "alias": alias, "email": email}}
+                alias, email_addr = _extract_contact(o)
+                if alias and email_addr:
+                    return {"tool": "gmail", "args": {"action": "contacts", "alias": alias, "email": email_addr}}
+            if any(k in o for k in ("last", "recent", "latest", "show", "see", "read", "check")):
+                return {"tool": "gmail", "args": {"action": "filter", "q": "is:unread", "max_results": 10}}
             return {"tool": "gmail", "args": {"action": "unread"}}
 
         # Calendar
@@ -476,10 +485,15 @@ def _extract_event_create(text: str) -> tuple[str, str, str]:
     elif re.search(r"\btoday\b", text, re.IGNORECASE):
         date_str = datetime.now().strftime("%Y-%m-%d")
 
-    noise = r"\b(calendar|event|meeting|appointment|add|create|new|set|tomorrow|today|at|for|the|a|an|my)\b"
+    # Strip routing/filler words to isolate the actual event title
+    noise = (
+        r"\b(calendar|event|meeting|appointment|add|create|new|set|schedule|"
+        r"tomorrow|today|at|for|the|a|an|my|this|into|in|on|to|from|with|it|"
+        r"can|you|please|reminder|remind|me)\b"
+    )
     title = re.sub(noise, "", text, flags=re.IGNORECASE)
-    title = re.sub(r"\d{1,2}[:.]\d{2}", "", title)
-    title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)
+    title = re.sub(r"\d{1,2}[:.]\d{2}", "", title)          # strip HH:MM
+    title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)          # strip ISO dates
     title = re.sub(r"\b\d{1,2}\s*(?:am|pm)\b", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", " ", title).strip(" .,;:!?'\"").strip()
 
