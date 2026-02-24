@@ -75,26 +75,26 @@ def _setup_telegram() -> None:
 
     print("\n🦌 Telegram Bot Kurulumu")
     print("─" * 40)
-    print("1. @BotFather'a git → /newbot → token al")
-    print("2. Token'ı buraya yapıştır:")
+    print("1. Go to @BotFather → /newbot → get your token")
+    print("2. Paste your token here:")
     print()
 
     token = input("Bot token: ").strip()
     if not token:
-        print("Token gerekli. İptal edildi.")
+        print("Token required. Aborted.")
         return
 
     # Optionally get allowed user IDs
     print()
-    print("(Güvenlik) Sadece belirli kullanıcılar mı kullansın?")
-    print("Telegram user ID'lerini virgülle gir (boş=herkes):")
-    allowed = input("User ID'ler: ").strip()
+    print("(Security) Restrict to specific users?")
+    print("Enter Telegram user IDs, comma-separated (empty=anyone):")
+    allowed = input("User IDs: ").strip()
 
     # Proxy (Turkey blocks api.telegram.org)
     print()
-    print("(Proxy) Türkiye'den erişim için HTTPS proxy gerekebilir.")
-    print("Örnek: socks5://127.0.0.1:1080 veya http://proxy:8080")
-    proxy = input("Proxy URL (boş=geç): ").strip()
+    print("(Proxy) An HTTPS proxy may be required in some regions.")
+    print("Example: socks5://127.0.0.1:1080 or http://proxy:8080")
+    proxy = input("Proxy URL (empty=skip): ").strip()
 
     # Write to .env
     env_path = Path.cwd() / ".env"
@@ -116,7 +116,7 @@ def _setup_telegram() -> None:
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n✅ Token kaydedildi: {env_path}")
-    print("Başlatmak için: python -m bantz.integrations.telegram_bot")
+    print("To start: python -m bantz.integrations.telegram_bot")
 
 
 async def _setup_places() -> None:
@@ -147,19 +147,19 @@ async def _setup_places() -> None:
 
     data = dict(places.all_places())
     if data:
-        print("Mevcut konumlar:")
+        print("Existing locations:")
         for k, v in data.items():
             prim = " ★" if v.get("primary") else ""
             print(f"  {k}: {v.get('label', k)}  ({v.get('lat', 0):.4f}, {v.get('lon', 0):.4f}){prim}")
         print()
 
     # Get IP location for option 1
-    print("IP konumun alınıyor...")
+    print("Fetching IP location...")
     loc = await location_service.get()
     if loc.lat != 0.0 and loc.lon != 0.0:
         print(f"  📡 {loc.display}  ({loc.lat:.4f}, {loc.lon:.4f})  via {loc.source}")
     else:
-        print("  ⚠  IP konum alınamadı.")
+        print("  ⚠  Could not get IP location.")
     print()
 
     print("Konum ekle (örn: yurt, kampüs, ev). Bitirmek için boş bırak.\n")
@@ -168,7 +168,7 @@ async def _setup_places() -> None:
 
     while True:
         try:
-            key = input("Konum kodu (örn: yurt): ").strip().lower()
+            key = input("Location code (e.g.: dorm): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
         if not key:
@@ -178,14 +178,14 @@ async def _setup_places() -> None:
 
         # 3 options for coordinates
         print()
-        print("  Koordinat seçeneği:")
+        print("  Coordinate option:")
         if loc.lat != 0.0:
-            print(f"  [1] Otomatik (IP konumu: {loc.city}, {loc.lat:.4f}, {loc.lon:.4f})")
+            print(f"  [1] Auto (IP location: {loc.city}, {loc.lat:.4f}, {loc.lon:.4f})")
         else:
-            print("  [1] Otomatik (IP konumu alınamadı)")
-        print("  [2] Şehir/adres adı ile ara")
-        print("  [3] Manuel gir (lat, lon)")
-        choice = input("  Seçim [2]: ").strip() or "2"
+            print("  [1] Auto (IP location unavailable)")
+        print("  [2] Search by city/address name")
+        print("  [3] Enter manually (lat, lon)")
+        choice = input("  Choice [2]: ").strip() or "2"
 
         lat, lon = 0.0, 0.0
 
@@ -194,32 +194,32 @@ async def _setup_places() -> None:
             print(f"  → {loc.city}  ({lat:.4f}, {lon:.4f})")
 
         elif choice == "3":
-            raw = input("  Koordinat (lat, lon): ").strip()
+            raw = input("  Coordinates (lat, lon): ").strip()
             try:
                 parts = raw.replace(" ", "").split(",")
                 lat, lon = float(parts[0]), float(parts[1])
             except (ValueError, IndexError):
-                print("  ✗ Geçersiz koordinat, atlanıyor.")
+                print("  ✗ Invalid coordinates, skipping.")
                 continue
 
         else:  # default: option 2 — search
-            query = input("  Şehir/adres: ").strip()
+            query = input("  City/address: ").strip()
             if not query:
-                print("  ✗ Boş sorgu, atlanıyor.")
+                print("  ✗ Empty query, skipping.")
                 continue
             try:
                 results = _nominatim_search(query)
                 if not results:
-                    print("  ✗ Sonuç bulunamadı.")
+                    print("  ✗ No results found.")
                     continue
 
                 if len(results) == 1:
                     pick = results[0]
                 else:
-                    print("  Bulunan sonuçlar:")
+                    print("  Found results:")
                     for i, r in enumerate(results, 1):
                         print(f"    [{i}] {r['display_name'][:80]}")
-                    idx = input(f"  Seçim [1]: ").strip() or "1"
+                    idx = input(f"  Choice [1]: ").strip() or "1"
                     try:
                         pick = results[int(idx) - 1]
                     except (ValueError, IndexError):
@@ -228,15 +228,15 @@ async def _setup_places() -> None:
                 lat = float(pick["lat"])
                 lon = float(pick["lon"])
                 display = pick.get("display_name", "")[:60]
-                print(f"  → Bulunan: {lat:.4f}, {lon:.4f}  ({display})")
+                print(f"  → Found: {lat:.4f}, {lon:.4f}  ({display})")
 
-                confirm = input("  Doğru mu? [E/h]: ").strip().lower()
-                if confirm in ("h", "hayır", "n", "no"):
-                    print("  Atlanıyor.")
+                confirm = input("  Correct? [Y/n]: ").strip().lower()
+                if confirm in ("n", "no"):
+                    print("  Skipping.")
                     continue
 
             except Exception as e:
-                print(f"  ✗ Arama hatası: {e}")
+                print(f"  ✗ Search error: {e}")
                 continue
 
         data[key] = {"label": label, "lat": lat, "lon": lon}
@@ -244,8 +244,8 @@ async def _setup_places() -> None:
 
         # Ask if this is primary location
         if not primary_key:
-            is_primary = input("  Bu ana konumun mu? (hava durumu vs. için) [E/h]: ").strip().lower()
-            if is_primary in ("", "e", "evet", "y", "yes"):
+            is_primary = input("  Set as primary location? (for weather etc.) [Y/n]: ").strip().lower()
+            if is_primary in ("", "y", "yes"):
                 primary_key = key
                 data[key]["primary"] = True
         print()
@@ -256,7 +256,7 @@ async def _setup_places() -> None:
 
     places.save(data)
     print(f"\n✅ Konumlar kaydedildi: {places.setup_path()}")
-    print(f"  {len(data)} konum tanımlı")
+    print(f"  {len(data)} location(s) defined")
 
     # Write primary location to .env so location_service uses it
     pkey = primary_key
@@ -276,8 +276,8 @@ async def _setup_places() -> None:
             lat=place["lat"],
             lon=place["lon"],
         )
-        print(f"  📡 Ana konum .env'ye yazıldı: {place['label']} ({place['lat']:.4f}, {place['lon']:.4f})")
-        print("  → location_service artık bu koordinatları kullanacak")
+        print(f"  Primary location written to .env: {place['label']} ({place['lat']:.4f}, {place['lon']:.4f})")
+        print("  → location_service will use these coordinates")
 
 
 def _write_location_to_env(city: str, lat: float, lon: float) -> None:
@@ -312,30 +312,30 @@ def _setup_profile() -> None:
     print("\n👤 Kullanıcı Profili Kurulumu")
     print("─" * 40)
     if profile.is_configured():
-        print(f"Mevcut profil: {profile.get('name')} ({profile.get('tone')})")
+        print(f"Current profile: {profile.get('name')} ({profile.get('tone')})")
         print()
 
-    name = input("Adın: ").strip()
+    name = input("Your name: ").strip()
     if not name:
-        print("İsim gerekli. İptal edildi.")
+        print("Name required. Aborted.")
         return
 
-    university = input("Üniversite (boş=geç): ").strip()
-    department = input("Bölüm (boş=geç): ").strip()
-    year_raw = input("Sınıf (1-6, boş=geç): ").strip()
+    university = input("University (empty=skip): ").strip()
+    department = input("Department (empty=skip): ").strip()
+    year_raw = input("Year (1-6, empty=skip): ").strip()
     year = int(year_raw) if year_raw.isdigit() else 0
 
     print("\nHitap şekli:")
-    print("  1) sen (samimi)")
-    print("  2) siz (resmi)")
+    print("  1) informal (casual)")
+    print("  2) formal")
     pronoun_choice = input("Seçim [1]: ").strip()
-    pronoun = "siz" if pronoun_choice == "2" else "sen"
+    pronoun = "formal" if pronoun_choice == "2" else "informal"
 
     print("\nTon:")
-    print("  1) samimi")
-    print("  2) resmi")
+    print("  1) casual")
+    print("  2) formal")
     tone_choice = input("Seçim [1]: ").strip()
-    tone = "resmi" if tone_choice == "2" else "samimi"
+    tone = "formal" if tone_choice == "2" else "casual"
 
     profile.save({
         "name": name,
@@ -352,7 +352,7 @@ def _setup_profile() -> None:
 def _setup_schedule() -> None:
     """Interactive schedule setup — writes schedule.json."""
     import json
-    from bantz.core.schedule import Schedule, DAYS_EN, DAYS_TR
+    from bantz.core.schedule import Schedule, DAYS_EN, DAYS_DISPLAY
 
     path = Schedule.setup_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -362,23 +362,23 @@ def _setup_schedule() -> None:
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            print(f"Mevcut program yüklendi: {path}")
+            print(f"Existing schedule loaded: {path}")
         except Exception:
             pass
 
     print("\n📅 Ders Programı Kurulumu")
     print("─" * 40)
-    print("Dersleri gün gün gir. Bitirmek için boş bırak.")
-    print("Format: HH:MM  Ders Adı  Süre(dk)  Konum")
+    print("Enter classes day by day. Leave blank to finish.")
+    print("Format: HH:MM  Class Name  Duration(min)  Location")
     print()
 
     for day_en in DAYS_EN:
-        day_tr = DAYS_TR[day_en]
-        print(f"\n{day_tr}:")
+        day_display = DAYS_DISPLAY[day_en]
+        print(f"\n{day_display}:")
         existing = data.get(day_en, [])
         if existing:
             for c in existing:
-                print(f"  (mevcut) {c.get('time','')} {c.get('name','')} {c.get('location','')}")
+                print(f"  (existing) {c.get('time','')} {c.get('name','')} {c.get('location','')}")
 
         classes = list(existing)  # keep existing
         while True:
@@ -390,7 +390,7 @@ def _setup_schedule() -> None:
                 break
             parts = raw.split(None, 3)
             if len(parts) < 2:
-                print("  En az saat ve ders adı gir.")
+                print("  Provide at least time and class name.")
                 continue
             time_str = parts[0]
             name = parts[1]
@@ -401,14 +401,14 @@ def _setup_schedule() -> None:
             if location:
                 cls["location"] = location
             classes.append(cls)
-            print(f"  ✓ Eklendi: {time_str} {name}")
+            print(f"  ✓ Added: {time_str} {name}")
 
         if classes:
             data[day_en] = sorted(classes, key=lambda c: c.get("time", ""))
 
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n✅ Ders programı kaydedildi: {path}")
-    print("Test: bantz --once 'bugün derslerim'")
+    print("Test: bantz --once 'today classes'")
 
 
 async def _doctor() -> None:
@@ -442,14 +442,7 @@ async def _doctor() -> None:
     names = [t["name"] for t in registry.all_schemas()]
     print(f"✓ Tools ({len(names)}): {', '.join(names)}")
 
-    # Translation / Bridge
-    print(f"  translation_enabled: {config.translation_enabled}")
-    if config.translation_enabled and config.language == "tr":
-        try:
-            from transformers import AutoTokenizer  # noqa: F401
-            print("✓ MarianMT: available")
-        except ImportError:
-            print("✗ MarianMT: NOT installed  → pip install 'bantz[translation]'")
+    # Translation removed — English-first architecture
 
     # Location
     from bantz.core.location import location_service
@@ -471,7 +464,7 @@ async def _doctor() -> None:
     _mem.init(config.db_path)
     s = _mem.stats()
     print(f"✓ Memory DB: {s['db_path']}")
-    print(f"  {s['total_conversations']} konuşma  |  {s['total_messages']} toplam mesaj")
+    print(f"  {s['total_conversations']} conversation(s)  |  {s['total_messages']} total messages")
 
     # Profile
     from bantz.core.profile import profile as _prof
@@ -504,14 +497,14 @@ async def _once(query: str) -> None:
     # Draft confirmation flow — auto-send for --once
     if result.needs_confirm and result.pending_tool and result.pending_args:
         answer = input().strip().lower()
-        if answer in ("evet", "e", "yes", "y", "ok", "tamam"):
+        if answer in ("yes", "y", "ok"):
             from bantz.tools import registry as _reg
             tool = _reg.get(result.pending_tool)
             if tool:
                 tr = await tool.execute(**result.pending_args)
-                print(tr.output if tr.success else f"Hata: {tr.error}")
+                print(tr.output if tr.success else f"Error: {tr.error}")
         else:
-            print("İptal edildi.")
+            print("Aborted.")
 
 
 if __name__ == "__main__":

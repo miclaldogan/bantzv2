@@ -3,7 +3,7 @@ Bantz v2 — Google Classroom Tool
 Courses, assignments, announcements.
 Uses classroom_token.json (separate school account).
 
-Triggers: ödev, duyuru, classroom, teslim tarihi, hangi sınıflar, kurslarım
+Triggers: assignment, announcement, classroom, deadline, courses, due today
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from bantz.auth.token_store import token_store, TokenNotFoundError
 from bantz.tools import BaseTool, ToolResult, registry
 
 CLASSROOM_SUMMARY_PROMPT = """\
-You are Bantz. Summarize these assignments in Turkish.
+You are Bantz. Summarize these assignments in English.
 Focus on urgency — due today or tomorrow first, then upcoming.
 Write 2-4 plain sentences. No bullet points. No markdown.
 If something is overdue, mention it clearly.\
@@ -27,8 +27,8 @@ class ClassroomTool(BaseTool):
     name = "classroom"
     description = (
         "Fetches Google Classroom courses, assignments and announcements. "
-        "Use for: ödev, ödevlerim, duyuru, classroom, teslim tarihi, "
-        "hangi sınıflar, kurslarım, sınıf listesi, bugün teslim var mı."
+        "Use for: assignments, homework, announcements, classroom, deadline, "
+        "my courses, course list, due today."
     )
     risk_level = "safe"
 
@@ -59,7 +59,7 @@ class ClassroomTool(BaseTool):
             None, self._fetch_courses_sync, creds
         )
         if not courses:
-            return ToolResult(success=True, output="Aktif kurs bulunamadı.")
+            return ToolResult(success=True, output="No active courses found.")
 
         lines = []
         for c in courses:
@@ -69,7 +69,7 @@ class ClassroomTool(BaseTool):
 
         return ToolResult(
             success=True,
-            output=f"Kayıtlı olduğun {len(courses)} kurs:\n" + "\n".join(lines),
+            output=f"You are enrolled in {len(courses)} course(s):\n" + "\n".join(lines),
             data={"count": len(courses), "courses": courses},
         )
 
@@ -80,7 +80,7 @@ class ClassroomTool(BaseTool):
             None, self._fetch_assignments_sync, creds
         )
         if not assignments:
-            return ToolResult(success=True, output="Aktif ödev bulunamadı. 🎉", data={"count": 0})
+            return ToolResult(success=True, output="No active assignments. 🎉", data={"count": 0})
 
         now = datetime.now(timezone.utc)
         overdue, urgent, upcoming = [], [], []
@@ -88,19 +88,19 @@ class ClassroomTool(BaseTool):
         for a in assignments:
             due = a.get("due_dt")
             course = a.get("course", "")
-            title = a.get("title", "(başlıksız)")
+            title = a.get("title", "(untitled)")
             if due:
                 delta = (due - now).days
                 if delta < 0:
-                    overdue.append(f"  ⚠️  GECİKMİŞ: {title}  [{course}]")
+                    overdue.append(f"  ⚠️  OVERDUE: {title}  [{course}]")
                 elif delta == 0:
-                    urgent.append(f"  🔴 Bugün: {title}  [{course}]")
+                    urgent.append(f"  🔴 Today: {title}  [{course}]")
                 elif delta == 1:
-                    urgent.append(f"  🟡 Yarın: {title}  [{course}]")
+                    urgent.append(f"  🟡 Tomorrow: {title}  [{course}]")
                 else:
                     upcoming.append(f"  🟢 {due.strftime('%d %b')}: {title}  [{course}]")
             else:
-                upcoming.append(f"  ⬜ Tarihsiz: {title}  [{course}]")
+                upcoming.append(f"  ⬜ No deadline: {title}  [{course}]")
 
         all_lines = overdue + urgent + upcoming
         summary = await self._llm_summarize(all_lines)
@@ -117,11 +117,11 @@ class ClassroomTool(BaseTool):
         now = datetime.now(timezone.utc)
         today = [a for a in assignments if a.get("due_dt") and a["due_dt"].date() == now.date()]
         if not today:
-            return ToolResult(success=True, output="Bugün teslim edilecek ödev yok. ✓")
+            return ToolResult(success=True, output="No assignments due today. ✓")
         lines = [f"  🔴 {a['title']}  [{a.get('course','')}]" for a in today]
         return ToolResult(
             success=True,
-            output="Bugün teslim:\n" + "\n".join(lines),
+            output="Due today:\n" + "\n".join(lines),
             data={"count": len(today)},
         )
 
@@ -132,11 +132,11 @@ class ClassroomTool(BaseTool):
             None, self._fetch_announcements_sync, creds
         )
         if not announcements:
-            return ToolResult(success=True, output="Yeni duyuru yok.")
+            return ToolResult(success=True, output="No new announcements.")
         lines = [f"  [{a['course']}]  {a['text'][:120]}" for a in announcements[:5]]
         return ToolResult(
             success=True,
-            output="Duyurular:\n" + "\n".join(lines),
+            output="Announcements:\n" + "\n".join(lines),
             data={"count": len(announcements)},
         )
 

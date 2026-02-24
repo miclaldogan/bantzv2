@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bantz"
-version = "0.1.0"
+version = "3.0.0"
 description = "Local-first AI assistant — your terminal, your host."
 requires-python = ">=3.11"
 dependencies = [
@@ -16,14 +16,26 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "psutil>=5.9.0",
     "rich>=13.0.0",
+    # Graph memory
+    "neo4j>=5.0.0",
+    # Task scheduler
+    "apscheduler>=3.10.0",
+    "sqlalchemy>=2.0.0",
+    # Web search (DuckDuckGo HTML scraping — no API key)
+    "beautifulsoup4>=4.12.0",
+    # Google APIs (calendar / gmail)
+    "google-auth>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
+    "google-api-python-client>=2.0.0",
+    # Google Generative AI (Gemini finalizer)
+    "google-generativeai>=0.7.0",
+    # RSS feeds (news tool)
+    "feedparser>=6.0.0",
+    # VRAM stats (optional, soft dep)
+    "pynvml>=11.0.0",
 ]
 
 [project.optional-dependencies]
-translation = [
-    "transformers>=4.40.0",
-    "torch>=2.0.0",
-    "sentencepiece>=0.2.0",
-]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

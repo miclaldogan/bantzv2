@@ -6,7 +6,7 @@ No new tables — queries the existing messages table.
 
 Usage:
     from bantz.core.habits import habits
-    top = habits.top_tools_for_segment("sabah")
+    top = habits.top_tools_for_segment("morning")
     should = habits.should_add_to_briefing("weather")
 """
 from __future__ import annotations
@@ -20,11 +20,11 @@ from bantz.config import config
 
 # Time segment boundaries (hour ranges)
 _SEGMENTS: dict[str, tuple[int, int]] = {
-    "gece_erken": (0, 6),
-    "sabah": (6, 12),
-    "oglen": (12, 17),
-    "aksam": (17, 21),
-    "gece_gec": (21, 24),
+    "late_night": (0, 6),
+    "morning":    (6, 12),
+    "afternoon":  (12, 17),
+    "evening":    (17, 21),
+    "night":      (21, 24),
 }
 
 
@@ -100,7 +100,7 @@ class HabitEngine:
         """
         Full pattern analysis across all segments.
         Returns: {
-            "segments": {"sabah": [...], "oglen": [...], ...},
+            "segments": {"morning": [...], "afternoon": [...], ...},
             "briefing_candidates": ["weather", "news"],
             "top_overall": [...],
             "total_interactions": int,
@@ -111,7 +111,7 @@ class HabitEngine:
 
         # Per-segment breakdown
         segments = {}
-        for seg in ("sabah", "oglen", "aksam", "gece_gec"):
+        for seg in ("morning", "afternoon", "evening", "night"):
             segments[seg] = self.top_tools_for_segment(seg, n=5, days=days)
 
         # Briefing candidates: tools used 3+ morning days
@@ -203,13 +203,13 @@ class HabitEngine:
             total = data["total_interactions"]
             candidates = data["briefing_candidates"]
             if not total:
-                return "veri yetersiz (henüz kullanım yok)"
-            line = f"{total} etkileşim (7 gün)"
+                return "insufficient data (no usage yet)"
+            line = f"{total} interaction(s) (7 days)"
             if candidates:
-                line += f"  |  briefing önerisi: {', '.join(candidates)}"
+                line += f"  |  briefing candidates: {', '.join(candidates)}"
             return line
         except Exception:
-            return "analiz yapılamadı"
+            return "analysis unavailable"
 
 
 habits = HabitEngine()

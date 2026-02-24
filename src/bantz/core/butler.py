@@ -47,7 +47,7 @@ class Butler:
 
         return self._format(opener, mail_str, cal_str, class_str)
 
-    # ── Opener generation ─────────────────────────────────────────────────
+    # ── Opener generation ─────────────────────────────────────────────────────
 
     def _opener(
         self,
@@ -57,59 +57,56 @@ class Butler:
         segment: str,
     ) -> str:
         if is_first:
-            # Very first launch ever
             return (
-                "Sinyal güçlü, kahve acı, ve ben buradayım. "
-                "Selamlar eski dostum — yayın başlasın."
+                "Signal strong, coffee bitter, and I'm here. "
+                "Greetings, old friend — broadcast begins."
             )
 
         if absence_hours < 1:
-            return "Aa, tekrar sen! Sahneyi terk etmemişsin bile."
+            return "Oh, you again! Haven't even left the stage."
 
         if absence_hours < 6:
-            return "Hoş geldin dostum, sesin güzel geliyor bu frekanstan."
+            return "Welcome back, friend. Your signal comes in clear on this frequency."
 
         if absence_hours < 20:
-            # Same day, been away for a while
-            return "Eski arkadaşım, geri döndün! Stüdyo sensiz sessizdi."
+            return "Old friend, you're back! The studio was quiet without you."
 
         if absence_hours < 30:
-            # Closed last night, opened this morning
-            if segment == "sabah":
+            if segment == "morning":
                 return (
-                    "Günaydın dostum! Umarım rüyalar güzeldi — "
-                    "çünkü gerçeklik burada beni bekliyor."
+                    "Good morning, friend! Hope the dreams were good — "
+                    "reality's here waiting."
                 )
-            return "Dün gece kapattın perdeyi, ama şov devam ediyor."
+            return "You drew the curtain last night, but the show goes on."
 
         if absence_hours < 72:
             return (
-                "Eski arkadaşım! Birkaç gündür stüdyo karanlıktı. "
-                "Ama sinyal hiç kesilmedi."
+                "Old friend! The studio's been dark for a few days. "
+                "But the signal never cut out."
             )
 
         if absence_hours < 168:
             return (
-                "Dostum, bir haftadır yayında yoktun! "
-                "Frekanslar seni arıyordu."
+                "Friend, you've been off the air for a week! "
+                "The frequencies were looking for you."
             )
 
         return (
-            "Sevgili dinleyicim... uzun zamandır ses yoktu bu kanalda. "
-            "Ama Bantz her zaman burada, her zaman yayında."
+            "Dear listener... it's been quiet on this channel for a long time. "
+            "But Bantz is always here, always on air."
         )
 
     @staticmethod
     def _time_greeting(segment: str) -> str:
         return {
-            "gece_erken": "İyi geceler",
-            "sabah": "Günaydın",
-            "oglen": "İyi öğlenler",
-            "aksam": "İyi akşamlar",
-            "gece_gec": "İyi geceler",
-        }.get(segment, "Merhaba")
+            "late_night": "Good night",
+            "morning":    "Good morning",
+            "afternoon":  "Good afternoon",
+            "evening":    "Good evening",
+            "night":      "Good night",
+        }.get(segment, "Hello")
 
-    # ── Formatters ────────────────────────────────────────────────────────
+    # ── Formatters ────────────────────────────────────────────────────────────
 
     def _format(
         self,
@@ -133,7 +130,7 @@ class Butler:
 
         return " ".join(parts)
 
-    # ── Live data fetchers (isolated, never crash) ────────────────────────
+    # ── Live data fetchers (isolated, never crash) ────────────────────────────
 
     async def _mail_summary(self) -> Optional[str]:
         """Count unread messages if Gmail is configured."""
@@ -149,16 +146,15 @@ class Butler:
             if not result.success:
                 return None
             output = result.output.strip()
-            if not output or "sonuç yok" in output.lower() or "bulunamadı" in output.lower():
+            if not output or "no results" in output.lower() or "not found" in output.lower():
                 return None
-            # Count lines that look like mail entries (start with emoji or number)
             lines = [l for l in output.splitlines() if l.strip()]
             count = len(lines)
             if count == 0:
                 return None
             if count == 1:
-                return "Posta kutusunda 1 okunmamış mektup bekliyor."
-            return f"Posta kutusunda {count} okunmamış mektup birikmiş."
+                return "1 unread message waiting in your inbox."
+            return f"{count} unread messages in your inbox."
         except Exception:
             return None
 
@@ -176,17 +172,15 @@ class Butler:
             if not result.success:
                 return None
             output = result.output.strip()
-            if not output or "etkinlik yok" in output.lower() or "boş" in output.lower():
+            if not output or "no events" in output.lower() or "empty" in output.lower():
                 return None
-            # Find first meaningful event line (skip date headers like "Bugün:")
             import re
             for line in output.splitlines():
                 stripped = line.strip()
                 if stripped and not stripped.endswith(":") and len(stripped) > 5:
-                    # Remove [id:...] suffixes from calendar output
                     cleaned = re.sub(r"\s*\[id:[^\]]+\]", "", stripped).strip()
                     if cleaned:
-                        return f"Bugünün programında: {cleaned}."
+                        return f"On today's agenda: {cleaned}."
             return None
         except Exception:
             return None
@@ -205,13 +199,13 @@ class Butler:
             if not result.success:
                 return None
             output = result.output.strip()
-            if not output or "ödev yok" in output.lower() or "bulunamadı" in output.lower():
+            if not output or "no assignments" in output.lower() or "not found" in output.lower():
                 return None
             lines = [l for l in output.splitlines() if l.strip()]
             count = len(lines)
             if count == 0:
                 return None
-            return f"Sahne arkasında {count} ödev teslim bekliyor."
+            return f"{count} assignment(s) due soon."
         except Exception:
             return None
 

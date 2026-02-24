@@ -7,10 +7,10 @@ Schedule format:
 {
   "monday": [
     {
-      "name": "Makine Öğrenmesi",
+      "name": "Machine Learning",
       "time": "10:00",
       "duration": 90,
-      "location": "Mimarlık B2",
+      "location": "Architecture B2",
       "type": "lab"        // optional: "lecture" | "lab" | "seminar"
     }
   ],
@@ -28,20 +28,23 @@ from typing import Optional
 
 SCHEDULE_PATH = Path.home() / ".local" / "share" / "bantz" / "schedule.json"
 
-DAYS_TR = {
-    "monday":    "Pazartesi",
-    "tuesday":   "Salı",
-    "wednesday": "Çarşamba",
-    "thursday":  "Perşembe",
-    "friday":    "Cuma",
-    "saturday":  "Cumartesi",
-    "sunday":    "Pazar",
-}
-
 DAYS_EN = [
     "monday", "tuesday", "wednesday",
     "thursday", "friday", "saturday", "sunday",
 ]
+
+DAYS_DISPLAY = {
+    "monday":    "Monday",
+    "tuesday":   "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday":  "Thursday",
+    "friday":    "Friday",
+    "saturday":  "Saturday",
+    "sunday":    "Sunday",
+}
+
+# Keep DAYS_TR as alias for backwards compatibility with existing schedules
+DAYS_TR = DAYS_DISPLAY
 
 TYPE_EMOJI = {
     "lab":      "🔬",
@@ -111,7 +114,7 @@ class Schedule:
                         **cls,
                         "starts_in_minutes": delta_minutes,
                         "starts_today": day_offset == 0,
-                        "day_tr": DAYS_TR[key],
+                        "day_name": DAYS_DISPLAY[key],
                     }
         return None
 
@@ -120,8 +123,8 @@ class Schedule:
         now = now or datetime.now()
         classes = self.today(now)
         if not classes:
-            day_tr = DAYS_TR[self._day_key(now)]
-            return f"{day_tr} günü ders yok."
+            day_name = DAYS_DISPLAY[self._day_key(now)]
+            return f"No classes on {day_name}."
 
         lines = []
         for cls in classes:
@@ -135,8 +138,8 @@ class Schedule:
             loc_str = f"  📍 {location}" if location else ""
             lines.append(f"  {emoji} {time}–{end_str}  {name}{loc_str}")
 
-        day_tr = DAYS_TR[self._day_key(now)]
-        return f"{day_tr} derslerin:\n" + "\n".join(lines)
+        day_name = DAYS_DISPLAY[self._day_key(now)]
+        return f"{day_name} classes:\n" + "\n".join(lines)
 
     def format_for_date(self, target: datetime) -> str:
         """Return formatted string of classes for an arbitrary date."""
@@ -146,7 +149,6 @@ class Schedule:
         """Return formatted string for an entire week starting from Monday."""
         self._load()
         start = start or datetime.now()
-        # Find Monday of the given week
         monday = start - timedelta(days=start.weekday())
 
         sections: list[str] = []
@@ -161,18 +163,18 @@ class Schedule:
             if not classes:
                 continue
             total += len(classes)
-            day_tr = DAYS_TR[key]
+            day_name = DAYS_DISPLAY[key]
             lines = []
             for cls in classes:
                 emoji = TYPE_EMOJI.get(cls.get("type", ""), "📚")
                 name = cls.get("name", "")
                 time = cls.get("time", "")
                 lines.append(f"    {emoji} {time}  {name}")
-            sections.append(f"  {day_tr}:\n" + "\n".join(lines))
+            sections.append(f"  {day_name}:\n" + "\n".join(lines))
 
         if not sections:
-            return "Bu hafta ders yok."
-        header = f"Haftalık program ({total} ders):"
+            return "No classes this week."
+        header = f"Weekly schedule ({total} class(es)):"
         return header + "\n" + "\n".join(sections)
 
     def format_next(self, now: datetime | None = None) -> str:
@@ -180,7 +182,7 @@ class Schedule:
         now = now or datetime.now()
         cls = self.next_class(now)
         if not cls:
-            return "Bu hafta ders yok."
+            return "No classes this week."
 
         emoji = TYPE_EMOJI.get(cls.get("type", ""), "📚")
         name = cls.get("name", "")
@@ -191,16 +193,16 @@ class Schedule:
 
         if cls["starts_today"]:
             if mins <= 0:
-                when = "şu an devam ediyor"
+                when = "in progress now"
             elif mins < 60:
-                when = f"{mins} dakika sonra"
+                when = f"in {mins} min"
             else:
                 h, m = divmod(mins, 60)
-                when = f"{h} saat {m} dakika sonra" if m else f"{h} saat sonra"
+                when = f"in {h}h {m}m" if m else f"in {h}h"
         else:
-            when = f"{cls['day_tr']} {time}"
+            when = f"{cls['day_name']} {time}"
 
-        return f"Sıradaki ders: {emoji} {name}  {time}{loc_str}\n  ⏰ {when}"
+        return f"Next class: {emoji} {name}  {time}{loc_str}\n  ⏰ {when}"
 
     def is_configured(self) -> bool:
         return SCHEDULE_PATH.exists()

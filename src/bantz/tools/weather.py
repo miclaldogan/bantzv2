@@ -19,7 +19,7 @@ class WeatherTool(BaseTool):
     name = "weather"
     description = (
         "Fetches current weather conditions and forecast. "
-        "Use for: hava nasıl, hava durumu, yağmur var mı, sıcaklık, weather, forecast."
+        "Use for: weather, temperature, rain, forecast, degrees, conditions."
     )
     risk_level = "safe"
 

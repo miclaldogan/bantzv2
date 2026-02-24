@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-Segment = Literal["gece_erken", "sabah", "oglen", "aksam", "gece_gec"]
+Segment = Literal["late_night", "morning", "afternoon", "evening", "night"]
 
 
 def get_segment(hour: int | None = None) -> Segment:
@@ -16,31 +16,31 @@ def get_segment(hour: int | None = None) -> Segment:
     if hour is None:
         hour = datetime.now().hour
     if 0 <= hour < 6:
-        return "gece_erken"
+        return "late_night"
     elif 6 <= hour < 12:
-        return "sabah"
+        return "morning"
     elif 12 <= hour < 17:
-        return "oglen"
+        return "afternoon"
     elif 17 <= hour < 21:
-        return "aksam"
+        return "evening"
     else:
-        return "gece_gec"
+        return "night"
 
 
 _GREETINGS: dict[Segment, str] = {
-    "gece_erken": "Gece geç saatte çalışıyorsun",
-    "sabah":      "Günaydın",
-    "oglen":      "İyi öğlenler",
-    "aksam":      "İyi akşamlar",
-    "gece_gec":   "İyi geceler",
+    "late_night": "Working late tonight",
+    "morning":    "Good morning",
+    "afternoon":  "Good afternoon",
+    "evening":    "Good evening",
+    "night":      "Good night",
 }
 
 _SEGMENT_EN: dict[Segment, str] = {
-    "gece_erken": "late night",
-    "sabah":      "morning",
-    "oglen":      "afternoon",
-    "aksam":      "evening",
-    "gece_gec":   "night",
+    "late_night": "late night",
+    "morning":    "morning",
+    "afternoon":  "afternoon",
+    "evening":    "evening",
+    "night":      "night",
 }
 
 
@@ -49,7 +49,7 @@ class TimeContext:
     Usage:
         from bantz.core.time_context import time_ctx
         ctx = time_ctx.snapshot()
-        print(ctx["greeting"])       # "Günaydın"
+        print(ctx["greeting"])       # "Good morning"
         print(ctx["prompt_hint"])    # injected into LLM prompts
     """
 
@@ -77,11 +77,11 @@ class TimeContext:
         )
 
     def greeting_line(self) -> str:
-        """Ready-to-use greeting for startup or 'merhaba' responses."""
+        """Ready-to-use greeting for startup or 'hello' responses."""
         now = datetime.now()
         seg = get_segment(now.hour)
         greeting = _GREETINGS[seg]
-        return f"{greeting}! Saat {now.strftime('%H:%M')}."
+        return f"{greeting}! It's {now.strftime('%H:%M')}."
 
 
 # Singleton

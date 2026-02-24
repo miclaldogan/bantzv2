@@ -1,12 +1,12 @@
 """
-Bantz v2 — Turkish Date Parser
-Resolves relative and named dates from Turkish natural language.
+Bantz v3 — Date Parser
+Resolves relative and named dates from English natural language.
 
 Usage:
     from bantz.core.date_parser import resolve_date
-    dt = resolve_date("yarın derslerim")       # → tomorrow
-    dt = resolve_date("perşembe toplantım var") # → next Thursday
-    dt = resolve_date("dün ne yaptık")          # → yesterday
+    dt = resolve_date("tomorrow classes")       # → tomorrow
+    dt = resolve_date("thursday meeting")       # → next Thursday
+    dt = resolve_date("yesterday summary")      # → yesterday
 """
 from __future__ import annotations
 
@@ -15,43 +15,47 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-# Turkish weekday names → Python weekday index (Monday=0 .. Sunday=6)
-_TR_WEEKDAYS: dict[str, int] = {
-    "pazartesi": 0,
-    "salı":      1,
-    "salı":      1,
-    "çarşamba":  2,
-    "perşembe":  3,
-    "cuma":      4,
-    "cumartesi": 5,
-    "pazar":     6,
+# English weekday names → Python weekday index (Monday=0 .. Sunday=6)
+_EN_WEEKDAYS: dict[str, int] = {
+    "monday":    0,
+    "tuesday":   1,
+    "wednesday": 2,
+    "thursday":  3,
+    "friday":    4,
+    "saturday":  5,
+    "sunday":    6,
+    "mon":       0,
+    "tue":       1,
+    "wed":       2,
+    "thu":       3,
+    "fri":       4,
+    "sat":       5,
+    "sun":       6,
 }
 
 # Relative date tokens
 _RELATIVE: list[tuple[str, int]] = [
-    ("öbür gün",    2),
-    ("önceki gün", -2),
-    ("evvelsi gün",-2),
-    ("yarın",       1),
-    ("dün",        -1),
-    ("bugün",       0),
+    ("day after tomorrow", 2),
+    ("day before yesterday", -2),
+    ("tomorrow",  1),
+    ("yesterday", -1),
+    ("today",     0),
 ]
 
 # Week-based references
 _WEEK_REFS: list[tuple[str, str]] = [
-    ("gelecek hafta", "next"),
-    ("haftaya",       "next"),
-    ("geçen hafta",   "last"),
-    ("bu hafta",      "this"),
+    ("next week", "next"),
+    ("last week", "last"),
+    ("this week", "this"),
 ]
 
 
 def resolve_date(text: str, now: datetime | None = None) -> Optional[datetime]:
     """
-    Extract and resolve a date reference from Turkish text.
+    Extract and resolve a date reference from English text.
     Returns a datetime (date at 00:00) or None if no date found.
 
-    Priority: explicit relative ("yarın") > named weekday ("perşembe") > week ref.
+    Priority: explicit relative ("tomorrow") > named weekday ("thursday") > week ref.
     """
     now = now or datetime.now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -63,8 +67,8 @@ def resolve_date(text: str, now: datetime | None = None) -> Optional[datetime]:
             return today + timedelta(days=delta_days)
 
     # 2. Named weekdays — resolve to next occurrence (today if today is that day)
-    for day_name, weekday_idx in _TR_WEEKDAYS.items():
-        if day_name in t:
+    for day_name, weekday_idx in _EN_WEEKDAYS.items():
+        if re.search(rf"\b{day_name}\b", t):
             return _next_weekday(today, weekday_idx)
 
     # 3. Week-based references

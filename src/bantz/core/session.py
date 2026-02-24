@@ -62,18 +62,18 @@ class SessionTracker:
     @staticmethod
     def absence_label(hours: float) -> str:
         if hours < 1:
-            return "birkaç dakika"
+            return "a few minutes"
         if hours < 6:
-            return "birkaç saat"
+            return "a few hours"
         if hours < 20:
-            return "bugün daha önce"
+            return "earlier today"
         if hours < 30:
-            return "dün gece"
+            return "yesterday"
         if hours < 72:
-            return "birkaç gün"
+            return "a few days"
         if hours < 168:
-            return "bir hafta"
-        return "uzun süre"
+            return "a week"
+        return "a long time"
 
     # ── Persistence ───────────────────────────────────────────────────────
 

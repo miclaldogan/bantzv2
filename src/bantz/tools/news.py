@@ -40,7 +40,7 @@ _cache = _Cache()
 # News summarizer prompt — called from brain._finalize via tool output flag
 NEWS_SUMMARY_PROMPT = """\
 You are Bantz. Below are today's top headlines.
-Write a 3-4 sentence natural summary in Turkish: what are the main themes today?
+Write a 3-4 sentence natural summary in English: what are the main themes today?
 Be conversational, no bullet points, no markdown.
 Finish with one sentence about what stands out most.\
 """
@@ -50,7 +50,7 @@ class NewsTool(BaseTool):
     name = "news"
     description = (
         "Fetches and summarizes latest news headlines. "
-        "Use for: haberler, gündem, news, hacker news, teknoloji haberleri, son dakika."
+        "Use for: news, headlines, hacker news, tech news, breaking news, top stories."
     )
     risk_level = "safe"
 
@@ -72,8 +72,8 @@ class NewsTool(BaseTool):
 
         if source in ("google", "all"):
             loc = await location_service.get()
-            gl = "tr" if loc.is_turkey else "us"
-            hl = "tr" if loc.is_turkey else "en"
+            gl = "us"
+            hl = "en"
             google = await self._fetch_google(limit, gl=gl, hl=hl)
             if google:
                 sections.append("🔵 Google News\n" + "\n".join(f"  • {h}" for h in google))

@@ -68,10 +68,10 @@ class Briefing:
     ) -> str:
         lines = []
 
-        # Header — Broadcaster style
+        # Header
         time_str = tc["time_str"]
         date_str = now.strftime("%A, %d %B %Y")
-        lines.append(f"🦌 Yayın açık, saat {time_str} — {date_str}")
+        lines.append(f"BANTZ ONLINE — {time_str} · {date_str}")
         lines.append("")
 
         # Schedule (always show if configured)
@@ -104,7 +104,7 @@ class Briefing:
 
         # Footer if everything failed
         if not any([weather, calendar, gmail, classroom]):
-            lines.append("(Servisler yanıt vermedi — internet bağlantısını kontrol et)")
+            lines.append("(Services unavailable — check your internet connection)")
 
         return "\n".join(lines).strip()
 
@@ -116,9 +116,7 @@ class Briefing:
             w = WeatherTool()
             result = await w.execute(city="")
             if result.success:
-                # Extract first line only: "📍 Samsun  🌡 8°C — Light rain"
                 lines = result.output.splitlines()
-                # Combine location + temp lines
                 short = "  ".join(l.strip() for l in lines[:2] if l.strip())
                 return short
         except Exception:
@@ -132,10 +130,9 @@ class Briefing:
             result = await c.execute(action="today")
             if result.success:
                 output = result.output.strip()
-                if "etkinlik yok" in output.lower():
-                    return "Bugün takvimde etkinlik yok"
-                # Strip "Bugün:" header, keep event lines
-                lines = [l for l in output.splitlines() if l.strip() and "Bugün:" not in l]
+                if "no events" in output.lower():
+                    return "No events on the calendar today"
+                lines = [l for l in output.splitlines() if l.strip() and "Today:" not in l]
                 return "\n    ".join(lines[:3])  # max 3 events
         except Exception:
             pass
@@ -149,8 +146,8 @@ class Briefing:
             if result.success:
                 count = result.data.get("count", 0)
                 if count == 0:
-                    return "Gelen kutu temiz"
-                return f"{count} okunmamış mail"
+                    return "Inbox clear"
+                return f"{count} unread mail(s)"
         except Exception:
             pass
         return None
@@ -162,19 +159,18 @@ class Briefing:
             result = await c.execute(action="due_today")
             if result.success:
                 output = result.output.strip()
-                if "ödev yok" in output.lower():
-                    # Check tomorrow too
+                if "no assignments" in output.lower():
                     result2 = await c.execute(action="assignments")
-                    if result2.success and "🟡 Yarın" in result2.output:
-                        yarın_lines = [
+                    if result2.success and "Tomorrow:" in result2.output:
+                        tomorrow_lines = [
                             l.strip() for l in result2.output.splitlines()
-                            if "Yarın" in l
+                            if "Tomorrow:" in l
                         ]
-                        return "Yarın teslim: " + ", ".join(
-                            l.replace("🟡 Yarın:", "").strip() for l in yarın_lines[:2]
+                        return "Due tomorrow: " + ", ".join(
+                            l.replace("Tomorrow:", "").strip() for l in tomorrow_lines[:2]
                         )
-                    return None  # No urgent assignments → skip from briefing
-                return output.replace("Bugün teslim:\n", "Bugün teslim: ")
+                    return None
+                return output.replace("Due today:\n", "Due today: ")
         except Exception:
             pass
         return None
@@ -208,20 +204,20 @@ class Briefing:
         try:
             hour = now.hour
             if 6 <= hour < 12:
-                segment = "sabah"
+                segment = "morning"
             elif 12 <= hour < 17:
-                segment = "oglen"
+                segment = "afternoon"
             elif 17 <= hour < 21:
-                segment = "aksam"
+                segment = "evening"
             else:
-                segment = "gece_gec"
+                segment = "night"
 
             top = _habits.top_tools_for_segment(segment, n=3, days=14)
             if not top:
                 return None
 
             names = ", ".join(t["tool"] for t in top)
-            return f"Bu saatlerde sık kullandıkların: {names}"
+            return f"Tools you typically use around this time: {names}"
         except Exception:
             return None
 

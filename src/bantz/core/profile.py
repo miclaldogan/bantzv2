@@ -7,11 +7,11 @@ Used by brain.py for personalized system prompts and briefing.py for greetings.
 Schema:
     {
         "name": "Ali",
-        "university": "OMÜ",
-        "department": "Bilgisayar Mühendisliği",
+        "university": "Firat University",
+        "department": "Computer Engineering",
         "year": 2,
-        "pronoun": "sen",       # sen | siz
-        "tone": "samimi"        # samimi | resmi
+        "pronoun": "informal",  # informal | formal
+        "tone": "casual"        # casual | formal
     }
 """
 from __future__ import annotations
@@ -28,8 +28,8 @@ _DEFAULTS: dict[str, Any] = {
     "university": "",
     "department": "",
     "year": 0,
-    "pronoun": "sen",
-    "tone": "samimi",
+    "pronoun": "informal",
+    "tone": "casual",
 }
 
 
@@ -75,26 +75,28 @@ class Profile:
         """One-line hint injected into brain system prompts."""
         if not self.is_configured():
             return ""
-        parts: list[str] = [f"Kullanıcının adı {self._data['name']} ama ismini kullanma — 'dostum', 'eski arkadaşım' de."]
+        parts: list[str] = [
+            f"The user's name is {self._data['name']} but never use it — call them 'friend', 'old pal'."
+        ]
         uni = self._data.get("university")
         dept = self._data.get("department")
         year = self._data.get("year")
         if uni:
             edu = uni
             if dept:
-                edu += f" {dept}"
+                edu += f" — {dept}"
             if year:
-                edu += f" {year}. sınıf"
-            parts.append(f"Eğitim: {edu}.")
-        parts.append("Kullanıcıya sen diye hitap et, eski arkadaş gibi samimi ol.")
+                edu += f", year {year}"
+            parts.append(f"Education: {edu}.")
+        parts.append("Address the user informally, like an old friend.")
         return " ".join(parts)
 
     def status_line(self) -> str:
         """Short status for --doctor output."""
         if not self.is_configured():
-            return "yapılandırılmamış  → bantz --setup profile"
+            return "not configured  → bantz --setup profile"
         name = self._data.get("name", "?")
-        tone = self._data.get("tone", "samimi")
+        tone = self._data.get("tone", "casual")
         return f"{name} ({tone})"
 
 
