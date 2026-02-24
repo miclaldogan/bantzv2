@@ -20,6 +20,7 @@ from bantz.core.memory import memory
 from bantz.core.profile import profile
 from bantz.core.router import route as _ollama_route
 from bantz.llm.ollama import ollama
+from bantz.llm.gemini import gemini
 from bantz.tools import registry, ToolResult
 
 
@@ -97,16 +98,29 @@ class Brain:
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
+        import bantz.tools.web_search   # noqa: F401
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
         self._memory_ready = False
+        self._graph_ready = False
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
             memory.init(config.db_path)
             memory.new_session()
             self._memory_ready = True
+
+    def _ensure_graph(self) -> None:
+        if not self._graph_ready:
+            self._graph_ready = True  # attempt once only
+            if config.neo4j_enabled:
+                from bantz.memory.graph import graph_memory
+                graph_memory.connect(
+                    config.neo4j_uri,
+                    config.neo4j_user,
+                    config.neo4j_password,
+                )
 
     @staticmethod
     def _quick_route(text: str) -> dict | None:
@@ -216,6 +230,7 @@ class Brain:
 
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
         self._ensure_memory()
+        self._ensure_graph()
         tc = time_ctx.snapshot()
 
         # Save user message ONCE
@@ -320,13 +335,25 @@ class Brain:
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
     async def _chat(self, user_input: str, tc: dict) -> str:
-        """Chat mode with conversation history."""
+        """Chat mode with conversation history + optional graph context."""
         history = memory.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
 
+        # Inject graph memory context when Neo4j is available
+        graph_ctx = ""
+        try:
+            from bantz.memory.context_builder import context_builder
+            raw_ctx = context_builder.for_query(user_input)
+            graph_ctx = context_builder.format_for_llm(raw_ctx)
+        except Exception:
+            pass
+
+        system = CHAT_SYSTEM.format(
+            time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint()
+        ) + graph_ctx
+
         messages = [
-            {"role": "system", "content": CHAT_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
+            {"role": "system", "content": system},
             *prior,
             {"role": "user", "content": user_input},
         ]
@@ -339,6 +366,11 @@ class Brain:
             return f"(Ollama error: {exc})"
 
     async def _finalize(self, user_input: str, result: ToolResult, tc: dict) -> str:
+        """
+        Synthesize tool output into a readable response.
+        Short outputs are returned as-is.
+        Long outputs use Gemini Flash 2.0 when enabled, Ollama otherwise.
+        """
         if not result.success:
             return f"Error: {result.error}"
         output = result.output.strip()
@@ -346,13 +378,24 @@ class Brain:
             return "Done. ✓"
         if len(output) < 800:
             return output
+
+        system = FINALIZER_SYSTEM.format(
+            time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint()
+        )
+        user_prompt = f"User asked: {user_input}\n\nTool output:\n{output[:6000]}"
+
+        # Prefer Gemini for long-context reasoning
+        if gemini.is_available:
+            try:
+                raw = await gemini.chat(system, user_prompt)
+                return strip_markdown(raw)
+            except Exception:
+                pass  # fall through to Ollama
+
         try:
             raw = await ollama.chat([
-                {"role": "system", "content": FINALIZER_SYSTEM.format(
-                    time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
-                {"role": "user", "content": (
-                    f"User asked: {user_input}\n\nTool output:\n{output[:3000]}"
-                )},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_prompt[:3000]},
             ])
             return strip_markdown(raw)
         except Exception:
