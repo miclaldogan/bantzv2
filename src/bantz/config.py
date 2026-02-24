@@ -42,9 +42,9 @@ class Config(BaseSettings):
     data_dir: str = Field("", alias="BANTZ_DATA_DIR")
 
     # ── Telegram ──────────────────────────────────────────────────────────
-    telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
-    telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
-    telegram_proxy: str = Field("", alias="TELEGRAM_PROXY")
+    telegram_bot_token: str = Field("", alias="BANTZ_TELEGRAM_BOT_TOKEN")
+    telegram_allowed_users: str = Field("", alias="BANTZ_TELEGRAM_ALLOWED_USERS")
+    telegram_proxy: str = Field("", alias="BANTZ_TELEGRAM_PROXY")
 
     @property
     def db_path(self) -> Path:
