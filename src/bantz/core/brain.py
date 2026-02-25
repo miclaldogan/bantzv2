@@ -40,17 +40,20 @@ You are helpful but not sycophantic. No fluff, no cheerleading. Say what needs t
 Casual tone — talk like a knowledgeable friend, not a corporate assistant.
 {time_hint}
 {profile_hint}
+CRITICAL: You have NO access to real emails, calendar events, live news, or any external data.
+If the user asks about specific emails, contacts, or external info you don't have, say something like
+"I'd need to fetch that — try asking me to check your mail/calendar" and STOP. Never fabricate data.
 Respond in English. Be concise. Plain text only — no markdown, no bullet points unless listing data.\
 """
 
 FINALIZER_SYSTEM = """\
-You are Bantz. A tool just ran and returned data. Summarize it clearly for the user.
-Rules:
-- Present the data directly. Don't add commentary or filler.
-- If it's a list (emails, events, news), show it cleanly.
-- If it's a single result, one sentence is enough.
-- Never say "here is", "certainly", "of course", "sure thing".
-- Plain text only. No markdown. English only.
+You are Bantz — a sharp personal host. A tool just returned real data. Present it the way a smart assistant would:
+- Lead with a brief count or label: "3 unread", "5 news items", "2 events today"
+- Highlight what's notable or urgent in one line each
+- End with a short offer: "Want me to read any?" / "Which one?" / "Anything to act on?"
+- Do NOT dump raw data — give a human-readable scan
+- Never say "here is", "certainly", "of course", "sure thing", "great"
+- Max 5 sentences. English only. Plain text, no markdown.
 {time_hint}
 {profile_hint}\
 """
@@ -156,6 +159,32 @@ class Brain:
             source = "hn" if any(k in o for k in ("hacker", " hn")) else "all"
             return {"tool": "news", "args": {"source": source, "limit": 5}}
 
+        # Mail: search by sender/subject ("read akademi iletişim", "any mail from TÜBİTAK")
+        _MAIL_READ_EXCL = frozenset((
+            "file", "article", "page", "code", "doc", "news", "book",
+            "schedule", "class", "lesson", "calendar", "text", "pdf",
+            "script", "readme", "output", "log",
+        ))
+        _m_sndr = re.search(
+            r"(?:mails?|emails?)\s+from\s+([\w\s\u00C0-\u024F]{2,30}?)(?:\?|$|\.|please)",
+            o, re.IGNORECASE,
+        )
+        if not _m_sndr:
+            _m_sndr = re.search(
+                r"\bdo (?:we|i|you) have\b.{0,25}\bfrom\s+([\w\s\u00C0-\u024F]{2,30}?)(?:\?|$|\.)",
+                o, re.IGNORECASE,
+            )
+        if not _m_sndr:
+            # "read akademi iletişim for me" — exclude non-email reads
+            _m_sndr = re.search(
+                r"\bread\s+([\w\s\u00C0-\u024F]{3,40}?)(?:\s+(?:for me|mail|email|mails?)|\s*$)",
+                o, re.IGNORECASE,
+            )
+        if _m_sndr and not any(k in o for k in _MAIL_READ_EXCL):
+            _sndr = _m_sndr.group(1).strip().rstrip("?.,;:")
+            if _sndr and len(_sndr) > 2:
+                return {"tool": "gmail", "args": {"action": "search", "from_sender": _sndr}}
+
         # Contacts (check before generic mail so "see my contacts" doesn't hit unread)
         if any(k in o for k in ("contact", "contacts", "address book")):
             if re.search(r"\S+@\S+", o) and re.search(r"\bsave\b|\badd\b", o):
@@ -169,12 +198,16 @@ class Brain:
             if any(k in o for k in ("send", "compose", "write", "write to", "write a mail", "send a mail")):
                 to = _extract_mail_recipient(o)
                 return {"tool": "gmail", "args": {"action": "compose", "to": to, "intent": text}}
+            if any(k in o for k in ("starred", "star", "flagged")):
+                return {"tool": "gmail", "args": {"action": "filter", "raw_query": "is:starred"}}
+            if any(k in o for k in ("important", "urgent", "action required", "need to reply", "critical")):
+                return {"tool": "gmail", "args": {"action": "search", "label": "important"}}
             if re.search(r"\S+@\S+", o) and re.search(r"\bsave\b|\badd\b", o):
                 alias, email_addr = _extract_contact(o)
                 if alias and email_addr:
                     return {"tool": "gmail", "args": {"action": "contacts", "alias": alias, "email": email_addr}}
             if any(k in o for k in ("last", "recent", "latest", "show", "see", "read", "check")):
-                return {"tool": "gmail", "args": {"action": "filter", "q": "is:unread", "max_results": 10}}
+                return {"tool": "gmail", "args": {"action": "filter", "raw_query": "is:unread"}}
             return {"tool": "gmail", "args": {"action": "unread"}}
 
         # Calendar
@@ -191,8 +224,13 @@ class Brain:
                 return {"tool": "calendar", "args": {
                     "action": "delete", "title": _extract_event_title(text)
                 }}
-            if any(k in o for k in ("update", "move", "change", "reschedule")):
-                return {"tool": "calendar", "args": {"action": "update"}}
+            if any(k in o for k in ("update", "move", "change", "reschedule", "rename")):
+                old_title, new_title = _extract_event_update(text)
+                return {"tool": "calendar", "args": {
+                    "action": "update",
+                    "title": old_title,
+                    "new_title": new_title,
+                }}
             if any(k in o for k in ("this week", "weekly")):
                 return {"tool": "calendar", "args": {"action": "week"}}
             return {"tool": "calendar", "args": {"action": "today"}}
@@ -496,8 +534,31 @@ def _extract_event_create(text: str) -> tuple[str, str, str]:
     title = re.sub(r"\d{4}-\d{2}-\d{2}", "", title)          # strip ISO dates
     title = re.sub(r"\b\d{1,2}\s*(?:am|pm)\b", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", " ", title).strip(" .,;:!?'\"").strip()
+    # Strip leading non-alphanumeric noise (e.g. "hahh...." or "ahem, ")
+    title = re.sub(r"^[\W_]+", "", title, flags=re.UNICODE).strip()
 
     return title or "New Event", date_str, time_str
+
+
+def _extract_event_update(text: str) -> tuple[str, str]:
+    """Return (old_title, new_title) from an update/rename request."""
+    o = text.lower()
+    # New title: "just write X", "call it X", "name it X", "rename to X", "write X event"
+    m_new = re.search(
+        r"(?:just\s+)?(?:write|call it|name it|rename\s+to|change\s+(?:the\s+)?name\s+to|"
+        r"it\s+should\s+be)\s+(.+?)(?:\s*$|[?.!])",
+        o, re.IGNORECASE,
+    )
+    new_title = m_new.group(1).strip() if m_new else ""
+
+    # Old title: "rename 'foo'", "change foo to", explicit quoted name
+    m_old = re.search(
+        r"(?:rename|change|update)\s+['\"]?(.+?)['\"]?\s+(?:to|name|title)",
+        o, re.IGNORECASE,
+    )
+    old_title = m_old.group(1).strip() if m_old else ""
+
+    return old_title, new_title
 
 
 brain = Brain()

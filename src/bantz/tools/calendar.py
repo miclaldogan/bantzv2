@@ -177,6 +177,23 @@ class CalendarTool(BaseTool):
             event_id = matches[0]["id"]
             title = matches[0]["summary"]
 
+        # No title given — fall back to today's only event (helpful for "change its name")
+        if not event_id and not title:
+            events_today = await asyncio.get_event_loop().run_in_executor(
+                None, self._fetch_events_sync, creds, tz_name, 1
+            )
+            if len(events_today) == 1:
+                event_id = events_today[0]["id"]
+                title = events_today[0]["summary"]
+            elif len(events_today) > 1:
+                lines = [f"  {e['start_local']}  {e['summary']}" for e in events_today]
+                return ToolResult(
+                    success=False, output="",
+                    error="Multiple events today — which one do you mean?\n" + "\n".join(lines),
+                )
+            else:
+                return ToolResult(success=False, output="", error="No events found to update.")
+
         if not event_id:
             return ToolResult(success=False, output="", error="No event specified for update.")
 

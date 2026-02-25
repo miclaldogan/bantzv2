@@ -133,10 +133,12 @@ class Schedule:
             time = cls.get("time", "")
             duration = cls.get("duration", 60)
             location = cls.get("location", "")
+            instructor = cls.get("instructor", "")
             end_h = int(time.split(":")[0]) * 60 + int(time.split(":")[1]) + duration
             end_str = f"{end_h // 60:02d}:{end_h % 60:02d}"
             loc_str = f"  📍 {location}" if location else ""
-            lines.append(f"  {emoji} {time}–{end_str}  {name}{loc_str}")
+            instr_str = f"  ({instructor})" if instructor else ""
+            lines.append(f"  {emoji} {time}–{end_str}  {name}{instr_str}{loc_str}")
 
         day_name = DAYS_DISPLAY[self._day_key(now)]
         return f"{day_name} classes:\n" + "\n".join(lines)
@@ -188,7 +190,9 @@ class Schedule:
         name = cls.get("name", "")
         time = cls.get("time", "")
         location = cls.get("location", "")
+        instructor = cls.get("instructor", "")
         loc_str = f"  📍 {location}" if location else ""
+        instr_str = f" ({instructor})" if instructor else ""
         mins = cls["starts_in_minutes"]
 
         if cls["starts_today"]:
@@ -202,7 +206,7 @@ class Schedule:
         else:
             when = f"{cls['day_name']} {time}"
 
-        return f"Next class: {emoji} {name}  {time}{loc_str}\n  ⏰ {when}"
+        return f"Next class: {emoji} {name}{instr_str}  {time}{loc_str}\n  ⏰ {when}"
 
     def is_configured(self) -> bool:
         return SCHEDULE_PATH.exists()

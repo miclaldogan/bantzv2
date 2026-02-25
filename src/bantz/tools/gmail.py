@@ -33,16 +33,18 @@ MAX_EMAILS = 10
 CONTACTS_PATH = Path.home() / ".local" / "share" / "bantz" / "contacts.json"
 
 GMAIL_SUMMARY_PROMPT = """\
-You are Bantz. Summarize these unread emails in English.
-Group by importance: urgent/action-required first, then FYI, then newsletters/promos last.
-Write 3-5 plain sentences. Mention specific senders and subjects that stand out.
-No bullet points. No markdown.\
+You are Bantz — a sharp personal assistant. Summarize these emails the way a smart host would.
+- Open with the count: "X emails" or "X unread"
+- For each notable one: one line — who sent it and what they want
+- Flag urgent/action-required ones first; skip LinkedIn invites and newsletters unless notable
+- End with "Which one do you want to read?" if there are multiple
+Plain English. No markdown. Max 5 sentences.\
 """
 
 GMAIL_CONTENT_PROMPT = """\
-You are Bantz. Summarize this email content in English in 2-4 sentences.
-Include: who sent it, what they want or say, any action required.
-Be direct. No bullet points. No markdown.\
+You are Bantz. Read this email and tell the user what it says in 2-3 direct sentences.
+Who sent it, what they want or say, any action required. Be specific — no vague summaries.
+No filler phrases. No markdown.\
 """
 
 GMAIL_COMPOSE_PROMPT = """\
@@ -348,15 +350,28 @@ class GmailTool(BaseTool):
         """
         q_parts: list[str] = []
 
-        # Sender: "emails from X"
+        # Sender — English: "emails from X" / "mail from X" / "from X"
         m = re.search(
-            r"(\S+?)[''\u2019]?(?:den|dan|tan|ten|ndan|nden)\s+(?:mailler?|mail|gelen)",
+            r"(?:mails?|emails?|messages?)\s+from\s+([\w\s\u00C0-\u024F]{2,40}?)(?:\?|$|\.|please)",
             text, re.IGNORECASE,
         )
+        if not m:
+            m = re.search(r"\bfrom[:\s]+([\w.\-\u00C0-\u024F]{2,40})", text, re.IGNORECASE)
         if m:
-            sender = m.group(1)
+            sender = m.group(1).strip().rstrip("?.,;:")
             email = contacts.resolve(sender)
             q_parts.append(f"from:{email}")
+
+        # Sender — Turkish: "X'den gelen mailler"
+        elif not m:
+            m_tr = re.search(
+                r"(\S+?)[''\u2019]?(?:den|dan|tan|ten|ndan|nden)\s+(?:mailler?|mail|gelen)",
+                text, re.IGNORECASE,
+            )
+            if m_tr:
+                sender = m_tr.group(1)
+                email = contacts.resolve(sender)
+                q_parts.append(f"from:{email}")
 
         # Stars / importance / attachment / unread
         if re.search(r"starred|star", text, re.IGNORECASE):
