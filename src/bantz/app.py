@@ -4,6 +4,7 @@ Left: chat panel. Right: system status + clock.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from textual.app import App, ComposeResult
@@ -187,9 +188,14 @@ class BantzApp(App):
         chat.add_system("Bantz v2 started.")
         chat.add_system(f"Model: {config.ollama_model}")
         chat.add_system("─" * 38)
+
+        # Show immediate time-based greeting before Google API calls
+        from bantz.core.time_context import time_ctx
+        chat.add_bantz(time_ctx.greeting_line())
+
         self._check_ollama()
         self._warm_up_ollama()
-        self._show_butler_greeting()
+        self._enrich_butler_greeting()
         self.query_one("#chat-input", Input).focus()
 
     @work(exclusive=False)
@@ -202,25 +208,31 @@ class BantzApp(App):
             pass
 
     @work(exclusive=False)
-    async def _show_butler_greeting(self) -> None:
-        """Butler-style context-aware greeting on app launch."""
-        from bantz.core.session import session_tracker
-        from bantz.core.butler import butler
+    async def _enrich_butler_greeting(self) -> None:
+        """Try to get a richer butler greeting with live data (mail, calendar, etc.)."""
         from bantz.core.memory import memory
-
         try:
+            from bantz.core.session import session_tracker
+            from bantz.core.butler import butler
+
             session_info = session_tracker.on_launch()
-            text = await butler.greet(session_info)
-        except Exception:
-            from bantz.core.time_context import time_ctx
-            text = time_ctx.greeting_line()
 
-        chat = self.query_one("#chat-log", ChatLog)
-        chat.add_bantz(text)
+            def _run_greet():
+                return asyncio.run(butler.greet(session_info))
 
-        try:
-            memory.add("assistant", text, tool_used="startup")
-        except Exception:
+            loop = asyncio.get_event_loop()
+            text = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_greet), timeout=8
+            )
+            if text:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(text)
+                chat.scroll_end()
+                try:
+                    memory.add("assistant", text, tool_used="startup")
+                except Exception:
+                    pass
+        except (asyncio.CancelledError, Exception):
             pass
 
     @work(exclusive=False)

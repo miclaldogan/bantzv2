@@ -34,12 +34,18 @@ class Butler:
             segment=seg,
         )
 
-        # Fire live data fetchers in parallel (each isolated)
+        # Fire live data fetchers in parallel (each with individual timeout)
+        async def _with_timeout(coro, secs=5):
+            try:
+                return await asyncio.wait_for(coro, timeout=secs)
+            except (asyncio.TimeoutError, Exception):
+                return None
+
         summaries = await asyncio.gather(
-            self._mail_summary(),
-            self._calendar_summary(now),
-            self._classroom_summary(),
-            self._schedule_summary(now),
+            _with_timeout(self._mail_summary()),
+            _with_timeout(self._calendar_summary(now)),
+            _with_timeout(self._classroom_summary()),
+            _with_timeout(self._schedule_summary(now)),
             return_exceptions=True,
         )
         mail_str, cal_str, class_str, sched_str = [
@@ -190,7 +196,7 @@ class Butler:
             if not result.success:
                 return None
             output = result.output.strip()
-            if not output or "yok" in output.lower():
+            if not output or "no" in output.lower() or output.strip() == "":
                 return None
             lines = [l for l in output.splitlines() if l.strip()]
             count = len(lines)
@@ -214,7 +220,7 @@ class Butler:
             count = len(classes)
             first = classes[0]
             name = first.get("name", "class")
-            time = first.get("start", "")
+            time = first.get("time", "")
             if count == 1:
                 return f"You have 1 class today: {name} at {time}."
             return f"You have {count} classes today — first: {name} at {time}."
