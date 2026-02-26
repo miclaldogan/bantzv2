@@ -1,8 +1,8 @@
 """
-Bantz v2 — Broadcaster Greeting
+Bantz v2 — Butler Greeting
 
-Context-aware theatrical greeting on app launch.
-Bantz is "The Broadcaster" — a 1930s radio showman who treats the terminal as his studio.
+Context-aware proactive greeting on app launch.
+Bantz is an Operations Director — direct, specific, data-driven.
 Combines absence awareness, time-of-day, and live service summaries.
 """
 from __future__ import annotations
@@ -19,10 +19,10 @@ class Butler:
 
     async def greet(self, session_info: dict[str, Any]) -> str:
         """
-        Compose a butler-style greeting:
+        Compose a proactive greeting:
         1. Time-of-day + absence-aware opener
-        2. Live data summaries (mail, calendar, classroom)
-        3. Return 2-4 natural sentences
+        2. Live data summaries (mail count, next event, schedule)
+        3. Return 2-4 natural sentences — direct and specific
         """
         now = datetime.now()
         seg = get_segment(now.hour)
@@ -39,13 +39,14 @@ class Butler:
             self._mail_summary(),
             self._calendar_summary(now),
             self._classroom_summary(),
+            self._schedule_summary(now),
             return_exceptions=True,
         )
-        mail_str, cal_str, class_str = [
+        mail_str, cal_str, class_str, sched_str = [
             r if isinstance(r, str) else None for r in summaries
         ]
 
-        return self._format(opener, mail_str, cal_str, class_str)
+        return self._format(opener, mail_str, cal_str, class_str, sched_str)
 
     # ── Opener generation ─────────────────────────────────────────────────
 
@@ -56,58 +57,42 @@ class Butler:
         is_first: bool,
         segment: str,
     ) -> str:
+        greeting = self._time_greeting(segment)
+
         if is_first:
-            # Very first launch ever
-            return (
-                "Sinyal güçlü, kahve acı, ve ben buradayım. "
-                "Selamlar eski dostum — yayın başlasın."
-            )
+            return f"{greeting}, ma'am. Bantz here — ready to go."
 
         if absence_hours < 1:
-            return "Aa, tekrar sen! Sahneyi terk etmemişsin bile."
+            return f"Welcome back, ma'am."
 
         if absence_hours < 6:
-            return "Hoş geldin dostum, sesin güzel geliyor bu frekanstan."
+            return f"{greeting}, ma'am. Been a few hours."
 
         if absence_hours < 20:
-            # Same day, been away for a while
-            return "Eski arkadaşım, geri döndün! Stüdyo sensiz sessizdi."
+            return f"{greeting}, boss. Here's what's going on."
 
         if absence_hours < 30:
-            # Closed last night, opened this morning
             if segment == "sabah":
-                return (
-                    "Günaydın dostum! Umarım rüyalar güzeldi — "
-                    "çünkü gerçeklik burada beni bekliyor."
-                )
-            return "Dün gece kapattın perdeyi, ama şov devam ediyor."
+                return "Good morning, ma'am. Let me catch you up."
+            return f"{greeting}, ma'am. Here's your status."
 
         if absence_hours < 72:
-            return (
-                "Eski arkadaşım! Birkaç gündür stüdyo karanlıktı. "
-                "Ama sinyal hiç kesilmedi."
-            )
+            return f"{greeting}, boss. It's been a couple days — here's the rundown."
 
         if absence_hours < 168:
-            return (
-                "Dostum, bir haftadır yayında yoktun! "
-                "Frekanslar seni arıyordu."
-            )
+            return f"{greeting}, ma'am. Been about a week. Let me brief you."
 
-        return (
-            "Sevgili dinleyicim... uzun zamandır ses yoktu bu kanalda. "
-            "Ama Bantz her zaman burada, her zaman yayında."
-        )
+        return f"{greeting}, boss. Long time no see. Here's what you've missed."
 
     @staticmethod
     def _time_greeting(segment: str) -> str:
         return {
-            "gece_erken": "İyi geceler",
-            "sabah": "Günaydın",
-            "oglen": "İyi öğlenler",
-            "aksam": "İyi akşamlar",
-            "gece_gec": "İyi geceler",
-        }.get(segment, "Merhaba")
+            "gece_erken": "Good evening",
+            "sabah": "Good morning",
+            "oglen": "Good afternoon",
+            "aksam": "Good evening",
+            "gece_gec": "Good evening",
+        }.get(segment, "Hello")
 
     # ── Formatters ────────────────────────────────────────────────────────
 
@@ -117,10 +102,13 @@ class Butler:
         mail: Optional[str],
         calendar: Optional[str],
         classroom: Optional[str],
+        schedule: Optional[str],
     ) -> str:
         parts = [opener]
 
         details: list[str] = []
+        if schedule:
+            details.append(schedule)
         if calendar:
             details.append(calendar)
         if mail:
@@ -130,6 +118,8 @@ class Butler:
 
         if details:
             parts.append(" ".join(details))
+        elif not any([mail, calendar, classroom, schedule]):
+            parts.append("All clear — nothing urgent right now.")
 
         return " ".join(parts)
 
@@ -145,25 +135,20 @@ class Butler:
 
             from bantz.tools.gmail import GmailTool
             g = GmailTool()
-            result = await g.execute(action="filter", q="is:unread", max_results=10)
+            result = await g.execute(action="count")
             if not result.success:
                 return None
-            output = result.output.strip()
-            if not output or "sonuç yok" in output.lower() or "bulunamadı" in output.lower():
-                return None
-            # Count lines that look like mail entries (start with emoji or number)
-            lines = [l for l in output.splitlines() if l.strip()]
-            count = len(lines)
+            count = result.data.get("count", 0)
             if count == 0:
-                return None
+                return "Inbox is clean."
             if count == 1:
-                return "Posta kutusunda 1 okunmamış mektup bekliyor."
-            return f"Posta kutusunda {count} okunmamış mektup birikmiş."
+                return "You have 1 unread email."
+            return f"You have {count} unread emails."
         except Exception:
             return None
 
     async def _calendar_summary(self, now: datetime) -> Optional[str]:
-        """Get next calendar event if configured."""
+        """Get today's calendar events if configured."""
         try:
             from bantz.auth.token_store import token_store
             status = token_store.status()
@@ -175,19 +160,19 @@ class Butler:
             result = await c.execute(action="today")
             if not result.success:
                 return None
-            output = result.output.strip()
-            if not output or "etkinlik yok" in output.lower() or "boş" in output.lower():
-                return None
-            # Find first meaningful event line (skip date headers like "Bugün:")
-            import re
-            for line in output.splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.endswith(":") and len(stripped) > 5:
-                    # Remove [id:...] suffixes from calendar output
-                    cleaned = re.sub(r"\s*\[id:[^\]]+\]", "", stripped).strip()
-                    if cleaned:
-                        return f"Bugünün programında: {cleaned}."
-            return None
+            data = result.data or {}
+            count = data.get("count", 0)
+            if count == 0:
+                return "Calendar is clear today."
+            events = data.get("events", [])
+            if events:
+                first = events[0]
+                name = first.get("summary", "event")
+                time = first.get("start_local", "")
+                if count == 1:
+                    return f"You have 1 event today: {name} at {time}."
+                return f"You have {count} events today — first one: {name} at {time}."
+            return f"You have {count} events today."
         except Exception:
             return None
 
@@ -201,17 +186,38 @@ class Butler:
 
             from bantz.tools.classroom import ClassroomTool
             c = ClassroomTool()
-            result = await c.execute(action="upcoming")
+            result = await c.execute(action="due_today")
             if not result.success:
                 return None
             output = result.output.strip()
-            if not output or "ödev yok" in output.lower() or "bulunamadı" in output.lower():
+            if not output or "yok" in output.lower():
                 return None
             lines = [l for l in output.splitlines() if l.strip()]
             count = len(lines)
             if count == 0:
                 return None
-            return f"Sahne arkasında {count} ödev teslim bekliyor."
+            if count == 1:
+                return "1 assignment due."
+            return f"{count} assignments due."
+        except Exception:
+            return None
+
+    async def _schedule_summary(self, now: datetime) -> Optional[str]:
+        """Get today's class schedule."""
+        try:
+            from bantz.core.schedule import schedule as _sched
+            if not _sched.is_configured():
+                return None
+            classes = _sched.today(now)
+            if not classes:
+                return "No classes today."
+            count = len(classes)
+            first = classes[0]
+            name = first.get("name", "class")
+            time = first.get("start", "")
+            if count == 1:
+                return f"You have 1 class today: {name} at {time}."
+            return f"You have {count} classes today — first: {name} at {time}."
         except Exception:
             return None
 

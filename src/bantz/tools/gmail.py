@@ -33,21 +33,21 @@ MAX_EMAILS = 10
 CONTACTS_PATH = Path.home() / ".local" / "share" / "bantz" / "contacts.json"
 
 GMAIL_SUMMARY_PROMPT = """\
-You are Bantz. Summarize these unread emails in Turkish.
+You are Bantz. Summarize these unread emails.
 Group by importance: urgent/action-required first, then FYI, then newsletters/promos last.
 Write 3-5 plain sentences. Mention specific senders and subjects that stand out.
 No bullet points. No markdown.\
 """
 
 GMAIL_CONTENT_PROMPT = """\
-You are Bantz. Summarize this email content in Turkish in 2-4 sentences.
+You are Bantz. Summarize this email content in 2-4 sentences.
 Include: who sent it, what they want or say, any action required.
 Be direct. No bullet points. No markdown.\
 """
 
 GMAIL_COMPOSE_PROMPT = """\
-You are Bantz helping compose a professional email in Turkish.
-Write ONLY the email body — no subject line, no greeting header, no "Sayın X" unless specified.
+You are Bantz helping compose a professional email.
+Write ONLY the email body — no subject line, no greeting header, no "Dear X" unless specified.
 Be natural, concise, and appropriate for the context.
 End with a polite closing if appropriate.\
 """
@@ -57,7 +57,7 @@ End with a polite closing if appropriate.\
 
 class Contacts:
     """
-    Simple takma ad → email resolver.
+    Simple alias → email resolver.
     ~/.local/share/bantz/contacts.json:
     {
       "hocam": "professor@university.edu",
@@ -139,9 +139,9 @@ class GmailTool(BaseTool):
     name = "gmail"
     description = (
         "Reads, filters, composes and sends Gmail messages. "
-        "Use for: mail, gmail, gelen kutusu, mailleri özetle, "
-        "X'ten mailler, yıldızlı mailler, bu haftaki mailler, "
-        "mail gönder, hocama mail at, maili yanıtla, kaç mail var."
+        "Use for: mail, gmail, inbox, summarize emails, "
+        "emails from X, starred emails, this week's emails, "
+        "send email, email my professor, reply to email, how many emails."
     )
     risk_level = "safe"
 
@@ -158,8 +158,8 @@ class GmailTool(BaseTool):
         to: str = "",
         subject: str = "",
         body: str = "",
-        intent: str = "",        # for compose: "yarın teslim edemeyeceğimi söyle"
-        raw_query: str = "",     # for filter/compose: full original Turkish text
+        intent: str = "",        # for compose: "tell them I can't submit tomorrow"
+        raw_query: str = "",     # for filter/compose: full original query text
         alias: str = "",         # for contacts: add alias
         email: str = "",         # for contacts: add email
         limit: int = 5,
@@ -198,7 +198,7 @@ class GmailTool(BaseTool):
         )
         return ToolResult(
             success=True,
-            output=f"Gelen kutusunda {count} okunmamış mail var.",
+            output=f"You have {count} unread emails in your inbox.",
             data={"count": count},
         )
 
@@ -211,7 +211,7 @@ class GmailTool(BaseTool):
         if not messages:
             return ToolResult(
                 success=True,
-                output="Gelen kutun temiz — okunmamış mail yok. ✓",
+                output="Your inbox is clean — no unread emails. ✓",
                 data={"count": 0},
             )
         lines = [
@@ -233,22 +233,22 @@ class GmailTool(BaseTool):
                 None, self._fetch_messages_sync, creds, build_query(), 1
             )
             if not messages:
-                return ToolResult(success=True, output="Okunmamış mail yok.")
+                return ToolResult(success=True, output="No unread emails.")
             message_id = messages[0]["id"]
 
         content = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_content_sync, creds, message_id
         )
         if not content:
-            return ToolResult(success=False, output="", error="Mail içeriği okunamadı.")
+            return ToolResult(success=False, output="", error="Could not read email content.")
 
         summary = await self._llm_summarize(
             f"From: {content['from']}\nSubject: {content['subject']}\n\n{content['body'][:3000]}",
             GMAIL_CONTENT_PROMPT,
         )
         output = summary or (
-            f"Gönderen: {content['from']}\n"
-            f"Konu: {content['subject']}\n\n"
+            f"From: {content['from']}\n"
+            f"Subject: {content['subject']}\n\n"
             f"{content['body'][:800]}"
         )
         return ToolResult(
@@ -282,19 +282,19 @@ class GmailTool(BaseTool):
 
         filter_parts = []
         if from_sender:
-            filter_parts.append(f"gönderen: {contacts.resolve(from_sender)}")
+            filter_parts.append(f"from: {contacts.resolve(from_sender)}")
         if days_ago:
-            filter_parts.append(f"son {days_ago} gün")
+            filter_parts.append(f"last {days_ago} days")
         if starred:
-            filter_parts.append("yıldızlı")
+            filter_parts.append("starred")
         if label:
-            filter_parts.append(f"etiket: {label}")
-        filter_desc = ", ".join(filter_parts) or "bu kriter"
+            filter_parts.append(f"label: {label}")
+        filter_desc = ", ".join(filter_parts) or "these criteria"
 
         if not messages:
             return ToolResult(
                 success=True,
-                output=f"'{filter_desc}' için mail bulunamadı.",
+                output=f"No emails found for '{filter_desc}'.",
             )
 
         lines = [
@@ -319,7 +319,7 @@ class GmailTool(BaseTool):
         if not messages:
             return ToolResult(
                 success=True,
-                output=f"'{raw_query}' için mail bulunamadı.",
+                output=f"No emails found for '{raw_query}'.",
                 data={"query": q},
             )
         lines = [
@@ -330,13 +330,13 @@ class GmailTool(BaseTool):
         summary = await self._llm_summarize("\n".join(lines), GMAIL_SUMMARY_PROMPT)
         return ToolResult(
             success=True,
-            output=f"🔍 Filtre ({q}):\n{summary}",
+            output=f"🔍 Filter ({q}):\n{summary}",
             data={"count": len(messages), "messages": messages, "query": q},
         )
 
     def _build_gmail_query(self, text: str) -> str:
         """
-        Convert Turkish natural language to Gmail query syntax.
+        Convert natural language to Gmail query syntax.
 
         Examples:
           "github'dan mailler"           → "from:noreply@github.com"
@@ -417,7 +417,7 @@ class GmailTool(BaseTool):
         if not to or not subject or not body:
             return ToolResult(
                 success=False, output="",
-                error="Göndermek için: to, subject ve body gerekli."
+                error="To send: to, subject and body are required."
             )
         to_resolved = contacts.resolve(to)
         ok = await asyncio.get_event_loop().run_in_executor(
@@ -426,23 +426,23 @@ class GmailTool(BaseTool):
         if ok:
             return ToolResult(
                 success=True,
-                output=f"Mail gönderildi → {to_resolved}  [{subject}] ✓",
+                output=f"Email sent → {to_resolved}  [{subject}] ✓",
             )
-        return ToolResult(success=False, output="", error="Mail gönderilemedi.")
+        return ToolResult(success=False, output="", error="Failed to send email.")
 
     # ── Compose (LLM generates body) ──────────────────────────────────────
 
     async def _compose(self, creds, to: str, subject: str, intent: str) -> ToolResult:
         """LLM generates email body from intent, returns draft for confirmation."""
         if not to:
-            return ToolResult(success=False, output="", error="Kime gönderileceği belirtilmedi.")
+            return ToolResult(success=False, output="", error="Recipient not specified.")
 
         to_resolved = contacts.resolve(to)
 
         # LLM generates body from user intent
         body = await self._llm_compose(to_resolved, subject, intent)
         if not body:
-            return ToolResult(success=False, output="", error="Mail içeriği oluşturulamadı.")
+            return ToolResult(success=False, output="", error="Could not generate email content.")
 
         # Auto-generate subject if not provided
         if not subject:
@@ -450,13 +450,13 @@ class GmailTool(BaseTool):
 
         # Return draft — brain will show confirmation
         preview = (
-            f"📧 Taslak mail:\n"
-            f"  Kime: {to_resolved}\n"
-            f"  Konu: {subject or '(konu yok)'}\n"
+            f"📧 Draft email:\n"
+            f"  To: {to_resolved}\n"
+            f"  Subject: {subject or '(no subject)'}\n"
             f"  ─────\n"
             f"{body}\n"
             f"  ─────\n"
-            f"Göndereceğim, onaylıyor musun? (evet/hayır)"
+            f"Shall I send it? (yes/no)"
         )
         return ToolResult(
             success=True,
@@ -479,14 +479,14 @@ class GmailTool(BaseTool):
                 None, self._fetch_messages_sync, creds, build_query(), 1
             )
             if not messages:
-                return ToolResult(success=True, output="Yanıtlanacak mail bulunamadı.")
+                return ToolResult(success=True, output="No email found to reply to.")
             message_id = messages[0]["id"]
 
         content = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_content_sync, creds, message_id
         )
         if not content:
-            return ToolResult(success=False, output="", error="Mail okunamadı.")
+            return ToolResult(success=False, output="", error="Could not read email.")
 
         # Generate reply body
         context = f"Original email from {content['from']}:\nSubject: {content['subject']}\n\n{content['body'][:1000]}"
@@ -494,16 +494,16 @@ class GmailTool(BaseTool):
 
         body = await self._llm_compose(content["from"], content["subject"], intent, context=context)
         if not body:
-            return ToolResult(success=False, output="", error="Yanıt oluşturulamadı.")
+            return ToolResult(success=False, output="", error="Could not generate reply.")
 
         preview = (
-            f"📧 Yanıt taslağı:\n"
-            f"  Kime: {content['from']}\n"
-            f"  Konu: Re: {content['subject']}\n"
+            f"📧 Reply draft:\n"
+            f"  To: {content['from']}\n"
+            f"  Subject: Re: {content['subject']}\n"
             f"  ─────\n"
             f"{body}\n"
             f"  ─────\n"
-            f"Göndereceğim, onaylıyor musun? (evet/hayır)"
+            f"Shall I send it? (yes/no)"
         )
         return ToolResult(
             success=True,
@@ -525,19 +525,19 @@ class GmailTool(BaseTool):
             contacts.add(alias, email)
             return ToolResult(
                 success=True,
-                output=f"Kişi eklendi: '{alias}' → {email} ✓",
+                output=f"Contact added: '{alias}' → {email} ✓",
             )
         # List contacts
         all_contacts = contacts.all()
         if not all_contacts:
             return ToolResult(
                 success=True,
-                output="Kayıtlı kişi yok.\nEklemek için: 'hocamı kaydet: prof@uni.edu'",
+                output="No saved contacts.\nTo add: 'save my professor: prof@uni.edu'",
             )
         lines = [f"  {alias}: {email}" for alias, email in all_contacts.items()]
         return ToolResult(
             success=True,
-            output="Kayıtlı kişiler:\n" + "\n".join(lines),
+            output="Saved contacts:\n" + "\n".join(lines),
         )
 
     # ── Sync helpers ──────────────────────────────────────────────────────
@@ -635,7 +635,7 @@ class GmailTool(BaseTool):
             from bantz.llm.ollama import ollama
             raw = await ollama.chat([
                 {"role": "system", "content":
-                 "Generate a short, natural Turkish email subject line (max 8 words). "
+                 "Generate a short, natural email subject line (max 8 words). "
                  "Return ONLY the subject. No quotes, no prefix."},
                 {"role": "user", "content": body[:300]},
             ])

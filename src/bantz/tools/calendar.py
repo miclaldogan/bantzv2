@@ -3,7 +3,7 @@ Bantz v2 — Google Calendar Tool
 Today/week view, create, update, delete events.
 Shares gmail_token.json.
 
-Triggers: takvim, toplantı, etkinlik, bugün ne var, randevu ekle/sil/güncelle
+Triggers: calendar, meeting, event, what's today, add/delete/update appointment
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ class CalendarTool(BaseTool):
     name = "calendar"
     description = (
         "Shows, creates, updates and deletes Google Calendar events. "
-        "Use for: takvim, toplantı, etkinlik, bugün ne var, bu hafta, "
-        "randevu ekle, etkinlik sil, toplantı güncelle, randevu taşı."
+        "Use for: calendar, meeting, event, what's today, this week, "
+        "add appointment, delete event, update meeting, move appointment."
     )
     risk_level = "safe"
 
@@ -68,7 +68,7 @@ class CalendarTool(BaseTool):
         )
         if not events:
             label = self._period_label(days, anchor)
-            return ToolResult(success=True, output=f"{label} için takviminde etkinlik yok.")
+            return ToolResult(success=True, output=f"No events on your calendar for {label}.")
 
         lines = []
         for ev in events:
@@ -86,21 +86,21 @@ class CalendarTool(BaseTool):
     @staticmethod
     def _period_label(days: int, anchor: str) -> str:
         if not anchor:
-            return "Bugün" if days == 1 else f"Önümüzdeki {days} gün"
+            return "Today" if days == 1 else f"Next {days} days"
         try:
             dt = datetime.strptime(anchor, "%Y-%m-%d")
             today = datetime.now().date()
             delta = (dt.date() - today).days
             if delta == 0:
-                return "Bugün"
+                return "Today"
             elif delta == 1:
-                return "Yarın"
+                return "Tomorrow"
             elif delta == -1:
-                return "Dün"
+                return "Yesterday"
             else:
                 return dt.strftime("%d %b %A")
         except Exception:
-            return "Bugün"
+            return "Today"
 
     # ── Create ────────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ class CalendarTool(BaseTool):
         title: str, date: str, time: str, duration: int,
     ) -> ToolResult:
         if not title:
-            return ToolResult(success=False, output="", error="Etkinlik başlığı gerekli.")
+            return ToolResult(success=False, output="", error="Event title is required.")
         if not date:
             date = datetime.now().strftime("%Y-%m-%d")
         if not time:
@@ -121,9 +121,9 @@ class CalendarTool(BaseTool):
         if ok:
             return ToolResult(
                 success=True,
-                output=f"Etkinlik eklendi ✓\n  📅 {title}  {date} {time} ({duration} dk)",
+                output=f"Event added ✓\n  📅 {title}  {date} {time} ({duration} min)",
             )
-        return ToolResult(success=False, output="", error="Etkinlik eklenemedi.")
+        return ToolResult(success=False, output="", error="Could not add event.")
 
     # ── Delete ────────────────────────────────────────────────────────────
 
@@ -137,27 +137,27 @@ class CalendarTool(BaseTool):
             if not matches:
                 return ToolResult(
                     success=False, output="",
-                    error=f"'{title}' adlı etkinlik bulunamadı."
+                    error=f"No event found named '{title}'."
                 )
             if len(matches) > 1:
                 lines = [f"  [{e['id'][:8]}] {e['start_local']}  {e['summary']}" for e in matches]
                 return ToolResult(
                     success=False, output="",
-                    error=f"Birden fazla eşleşme:\n" + "\n".join(lines) +
-                          "\n\nHangisini silmek istediğini belirt."
+                    error=f"Multiple matches:\n" + "\n".join(lines) +
+                          "\n\nPlease specify which one to delete."
                 )
             event_id = matches[0]["id"]
             title = matches[0]["summary"]
 
         if not event_id:
-            return ToolResult(success=False, output="", error="Silinecek etkinlik belirtilmedi.")
+            return ToolResult(success=False, output="", error="No event specified for deletion.")
 
         ok = await asyncio.get_event_loop().run_in_executor(
             None, self._delete_sync, creds, event_id
         )
         if ok:
-            return ToolResult(success=True, output=f"Etkinlik silindi ✓  [{title or event_id[:8]}]")
-        return ToolResult(success=False, output="", error="Etkinlik silinemedi.")
+            return ToolResult(success=True, output=f"Event deleted ✓  [{title or event_id[:8]}]")
+        return ToolResult(success=False, output="", error="Could not delete event.")
 
     # ── Update ────────────────────────────────────────────────────────────
 
@@ -173,26 +173,26 @@ class CalendarTool(BaseTool):
             )
             matches = [e for e in events if title.lower() in e["summary"].lower()]
             if not matches:
-                return ToolResult(success=False, output="", error=f"'{title}' bulunamadı.")
+                return ToolResult(success=False, output="", error=f"'{title}' not found.")
             event_id = matches[0]["id"]
             title = matches[0]["summary"]
 
         if not event_id:
-            return ToolResult(success=False, output="", error="Güncellenecek etkinlik belirtilmedi.")
+            return ToolResult(success=False, output="", error="No event specified for update.")
 
         ok = await asyncio.get_event_loop().run_in_executor(
             None, self._update_sync, creds, tz_name, event_id, new_title, new_date, new_time
         )
         if ok:
             changes = []
-            if new_title: changes.append(f"başlık → {new_title}")
-            if new_date:  changes.append(f"tarih → {new_date}")
-            if new_time:  changes.append(f"saat → {new_time}")
+            if new_title: changes.append(f"title → {new_title}")
+            if new_date:  changes.append(f"date → {new_date}")
+            if new_time:  changes.append(f"time → {new_time}")
             return ToolResult(
                 success=True,
-                output=f"Etkinlik güncellendi ✓  [{title}]\n  " + ", ".join(changes),
+                output=f"Event updated ✓  [{title}]\n  " + ", ".join(changes),
             )
-        return ToolResult(success=False, output="", error="Etkinlik güncellenemedi.")
+        return ToolResult(success=False, output="", error="Could not update event.")
 
     # ── Sync helpers ──────────────────────────────────────────────────────
 
@@ -236,7 +236,7 @@ class CalendarTool(BaseTool):
 
             events.append({
                 "id": ev.get("id", ""),
-                "summary": ev.get("summary", "(başlıksız)"),
+                "summary": ev.get("summary", "(untitled)"),
                 "start_local": start_local,
                 "location": ev.get("location", ""),
             })

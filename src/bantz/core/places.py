@@ -122,18 +122,18 @@ class PlaceService:
             )
             walk_min = round(dist / 80)  # ~80 m/min walking speed ≈ 4.8 km/h
             return (
-                f"{label}'dasın, derse {minutes_until} dk var"
-                f" — {dest_place.get('label', destination)}'a ~{walk_min} dk yürüyüş"
+                f"You're at {label}, class in {minutes_until} min"
+                f" — ~{walk_min} min walk to {dest_place.get('label', destination)}"
             )
         else:
             # Generic — we know where user is, but not the destination
             if minutes_until <= 15:
-                urgency = "⚠️ acele et"
+                urgency = "⚠️ hurry up"
             elif minutes_until <= 30:
-                urgency = "yola çık"
+                urgency = "time to go"
             else:
-                urgency = "rahat ol"
-            return f"{label}'dasın, derse {minutes_until} dk var — {urgency}"
+                urgency = "no rush"
+            return f"You're at {label}, class in {minutes_until} min — {urgency}"
 
     def _find_place_by_label(self, text: str) -> Optional[dict]:
         """Find a known place whose label appears in the text (fuzzy)."""
@@ -166,12 +166,12 @@ class PlaceService:
         """Short summary for --doctor."""
         self._load()
         if not self._data:
-            return "yapılandırılmadı  → bantz --setup places"
+            return "not configured  → bantz --setup places"
         n = len(self._data)
         names = ", ".join(p.get("label", k) for k, p in list(self._data.items())[:3])
         if n > 3:
             names += f" +{n - 3}"
-        return f"{n} konum: {names}"
+        return f"{n} locations: {names}"
 
     @staticmethod
     def setup_path() -> Path:

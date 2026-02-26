@@ -71,7 +71,7 @@ class Briefing:
         # Header — Broadcaster style
         time_str = tc["time_str"]
         date_str = now.strftime("%A, %d %B %Y")
-        lines.append(f"🦌 Yayın açık, saat {time_str} — {date_str}")
+        lines.append(f"🦌 Briefing at {time_str} — {date_str}")
         lines.append("")
 
         # Schedule (always show if configured)
@@ -104,7 +104,7 @@ class Briefing:
 
         # Footer if everything failed
         if not any([weather, calendar, gmail, classroom]):
-            lines.append("(Servisler yanıt vermedi — internet bağlantısını kontrol et)")
+            lines.append("(Services not responding — check your internet connection)")
 
         return "\n".join(lines).strip()
 
@@ -132,8 +132,8 @@ class Briefing:
             result = await c.execute(action="today")
             if result.success:
                 output = result.output.strip()
-                if "etkinlik yok" in output.lower():
-                    return "Bugün takvimde etkinlik yok"
+                if "no events" in output.lower():
+                    return "No events on the calendar today"
                 # Strip "Bugün:" header, keep event lines
                 lines = [l for l in output.splitlines() if l.strip() and "Bugün:" not in l]
                 return "\n    ".join(lines[:3])  # max 3 events
@@ -149,8 +149,8 @@ class Briefing:
             if result.success:
                 count = result.data.get("count", 0)
                 if count == 0:
-                    return "Gelen kutu temiz"
-                return f"{count} okunmamış mail"
+                    return "Inbox is clean"
+                return f"{count} unread emails"
         except Exception:
             pass
         return None
@@ -162,19 +162,19 @@ class Briefing:
             result = await c.execute(action="due_today")
             if result.success:
                 output = result.output.strip()
-                if "ödev yok" in output.lower():
+                if "ödev yok" in output.lower() or "no assignments" in output.lower():
                     # Check tomorrow too
                     result2 = await c.execute(action="assignments")
-                    if result2.success and "🟡 Yarın" in result2.output:
+                    if result2.success and ("🟡 Tomorrow" in result2.output or "🟡 Yarın" in result2.output):
                         yarın_lines = [
                             l.strip() for l in result2.output.splitlines()
-                            if "Yarın" in l
+                            if "Tomorrow" in l or "Yarın" in l
                         ]
-                        return "Yarın teslim: " + ", ".join(
-                            l.replace("🟡 Yarın:", "").strip() for l in yarın_lines[:2]
+                        return "Due tomorrow: " + ", ".join(
+                            l.replace("🟡 Tomorrow:", "").replace("🟡 Yarın:", "").strip() for l in yarın_lines[:2]
                         )
                     return None  # No urgent assignments → skip from briefing
-                return output.replace("Bugün teslim:\n", "Bugün teslim: ")
+                return output.replace("Due today:\n", "Due today: ").replace("Bugün teslim:\n", "Due today: ")
         except Exception:
             pass
         return None
@@ -221,7 +221,7 @@ class Briefing:
                 return None
 
             names = ", ".join(t["tool"] for t in top)
-            return f"Bu saatlerde sık kullandıkların: {names}"
+            return f"Frequently used at this hour: {names}"
         except Exception:
             return None
 

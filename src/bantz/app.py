@@ -156,10 +156,10 @@ class BantzApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Çıkış"),
-        Binding("ctrl+l", "clear_chat", "Temizle"),
-        Binding("ctrl+c", "copy_selection", "Kopyala"),
-        Binding("escape", "focus_input", "Odaklan"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+l", "clear_chat", "Clear"),
+        Binding("ctrl+c", "copy_selection", "Copy"),
+        Binding("escape", "focus_input", "Focus"),
     ]
 
     def __init__(self) -> None:
@@ -184,7 +184,7 @@ class BantzApp(App):
 
     def on_mount(self) -> None:
         chat = self.query_one("#chat-log", ChatLog)
-        chat.add_system("Bantz v2 başlatıldı.")
+        chat.add_system("Bantz v2 started.")
         chat.add_system(f"Model: {config.ollama_model}")
         chat.add_system("─" * 38)
         self._check_ollama()
@@ -229,10 +229,10 @@ class BantzApp(App):
         chat = self.query_one("#chat-log", ChatLog)
         ok = await ollama.is_available()
         if ok:
-            chat.add_system(f"✓ Ollama bağlı → {config.ollama_model}")
+            chat.add_system(f"✓ Ollama connected → {config.ollama_model}")
         else:
-            chat.add_error(f"Ollama bağlanamadı: {config.ollama_base_url}")
-            chat.add_system("  → `ollama serve` çalışıyor mu?")
+            chat.add_error(f"Ollama unreachable: {config.ollama_base_url}")
+            chat.add_system("  → Is `ollama serve` running?")
 
     # ── Input handler ──────────────────────────────────────────────────────
 
@@ -286,7 +286,7 @@ class BantzApp(App):
                     self._show_thinking(False)
                     self._busy = False
                     chat.add_tool(pending.pending_tool)
-                    chat.add_bantz(tr.output if tr.success else f"Hata: {tr.error}")
+                    chat.add_bantz(tr.output if tr.success else f"Error: {tr.error}")
                     return
             # Fallback: shell command confirmation
             result = await brain.process(
@@ -299,7 +299,7 @@ class BantzApp(App):
                 chat.add_tool(result.tool_used)
             chat.add_bantz(result.response)
         else:
-            chat.add_system("İptal edildi.")
+            chat.add_system("Cancelled.")
 
     # ── Thinking indicator ─────────────────────────────────────────────────
 
@@ -328,7 +328,7 @@ class BantzApp(App):
                 if 'Bantz' in text or '◆' in text:
                     clean = text.replace('◆ Bantz', '').strip()
                     pyperclip.copy(clean)
-                    chat.add_system('Kopyalandı ✓')
+                    chat.add_system('Copied ✓')
                     return
         except Exception:
             pass
