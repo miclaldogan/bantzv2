@@ -203,13 +203,13 @@ class HabitEngine:
             total = data["total_interactions"]
             candidates = data["briefing_candidates"]
             if not total:
-                return "veri yetersiz (henüz kullanım yok)"
-            line = f"{total} etkileşim (7 gün)"
+                return "insufficient data (no usage yet)"
+            line = f"{total} interactions (7 days)"
             if candidates:
-                line += f"  |  briefing önerisi: {', '.join(candidates)}"
+                line += f"  |  briefing candidates: {', '.join(candidates)}"
             return line
         except Exception:
-            return "analiz yapılamadı"
+            return "analysis unavailable"
 
 
 habits = HabitEngine()

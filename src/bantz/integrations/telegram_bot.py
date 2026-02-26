@@ -66,7 +66,7 @@ def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: reject messages from non-whitelisted users."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if _ALLOWED and update.effective_user and update.effective_user.id not in _ALLOWED:
-            await update.message.reply_text("⛔ Yetkisiz erişim.")
+            await update.message.reply_text("⛔ Unauthorized access.")
             return
         return await func(update, context)
     return wrapper
@@ -88,16 +88,16 @@ async def _safe_reply(update: Update, text: str) -> None:
 @_authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🦌 Bantz yayında!\n\n"
-        "Komutlar:\n"
-        "/briefing — günlük özet\n"
-        "/hava — hava durumu\n"
-        "/mail — okunmamış mailler\n"
-        "/takvim — bugünün takvimi\n"
-        "/odev — yaklaşan ödevler\n"
-        "/ders — bugünün ders programı\n"
-        "/siradaki — sıradaki ders\n"
-        "/haber — son haberler"
+        "🦌 Bantz is live!\n\n"
+        "Commands:\n"
+        "/briefing — daily summary\n"
+        "/hava — weather report\n"
+        "/mail — unread emails\n"
+        "/takvim — today's calendar\n"
+        "/odev — upcoming assignments\n"
+        "/ders — today's schedule\n"
+        "/siradaki — next class\n"
+        "/haber — latest news"
     )
 
 
@@ -108,7 +108,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text = await briefing.generate()
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Briefing hatası: {exc}")
+        await update.message.reply_text(f"Briefing error: {exc}")
 
 
 @_authorized
@@ -116,9 +116,9 @@ async def cmd_hava(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.tools.weather import WeatherTool
         result = await WeatherTool().execute(city="")
-        await _safe_reply(update, result.output if result.success else f"Hata: {result.error}")
+        await _safe_reply(update, result.output if result.success else f"Error: {result.error}")
     except Exception as exc:
-        await update.message.reply_text(f"Hava hatası: {exc}")
+        await update.message.reply_text(f"Weather error: {exc}")
 
 
 @_authorized
@@ -127,12 +127,12 @@ async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from bantz.tools.gmail import GmailTool
         result = await GmailTool().execute(action="filter", q="is:unread", max_results=10)
         if result.success:
-            text = result.output.strip() or "Okunmamış mail yok ✓"
+            text = result.output.strip() or "No unread emails ✓"
         else:
-            text = f"Hata: {result.error}"
+            text = f"Error: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Mail hatası: {exc}")
+        await update.message.reply_text(f"Mail error: {exc}")
 
 
 @_authorized
@@ -141,12 +141,12 @@ async def cmd_takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         from bantz.tools.calendar import CalendarTool
         result = await CalendarTool().execute(action="today")
         if result.success:
-            text = result.output.strip() or "Bugün etkinlik yok ✓"
+            text = result.output.strip() or "No events today ✓"
         else:
-            text = f"Hata: {result.error}"
+            text = f"Error: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Takvim hatası: {exc}")
+        await update.message.reply_text(f"Calendar error: {exc}")
 
 
 @_authorized
@@ -155,12 +155,12 @@ async def cmd_odev(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from bantz.tools.classroom import ClassroomTool
         result = await ClassroomTool().execute(action="upcoming")
         if result.success:
-            text = result.output.strip() or "Yaklaşan ödev yok ✓"
+            text = result.output.strip() or "No upcoming assignments ✓"
         else:
-            text = f"Hata: {result.error}"
+            text = f"Error: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Ödev hatası: {exc}")
+        await update.message.reply_text(f"Assignment error: {exc}")
 
 
 @_authorized
@@ -168,9 +168,9 @@ async def cmd_ders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.core.schedule import schedule
         text = schedule.format_today()
-        await _safe_reply(update, text or "Bugün ders yok ✓")
+        await _safe_reply(update, text or "No classes today ✓")
     except Exception as exc:
-        await update.message.reply_text(f"Ders hatası: {exc}")
+        await update.message.reply_text(f"Schedule error: {exc}")
 
 
 @_authorized
@@ -178,9 +178,9 @@ async def cmd_siradaki(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         from bantz.core.schedule import schedule
         text = schedule.format_next()
-        await _safe_reply(update, text or "Sırada ders yok ✓")
+        await _safe_reply(update, text or "No upcoming classes ✓")
     except Exception as exc:
-        await update.message.reply_text(f"Ders hatası: {exc}")
+        await update.message.reply_text(f"Schedule error: {exc}")
 
 
 @_authorized
@@ -189,12 +189,12 @@ async def cmd_haber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from bantz.tools.news import NewsTool
         result = await NewsTool().execute(source="all", limit=5)
         if result.success:
-            text = result.output.strip() or "Haber bulunamadı"
+            text = result.output.strip() or "No news found"
         else:
-            text = f"Hata: {result.error}"
+            text = f"Error: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Haber hatası: {exc}")
+        await update.message.reply_text(f"News error: {exc}")
 
 
 # ── Bot runner ────────────────────────────────────────────────────────────────

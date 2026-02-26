@@ -103,12 +103,18 @@ class Brain:
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
-        import bantz.tools.web_search   # noqa: F401
+        try:
+            import bantz.tools.web_search   # noqa: F401
+        except (ImportError, ModuleNotFoundError):
+            pass  # web_search module not yet created
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
         self._bridge = None
         self._memory_ready = False
+        # Session state: stores last tool results for contextual follow-ups
+        self._last_messages: list[dict] = []   # last listed emails [{id, from, subject, ...}]
+        self._last_events: list[dict] = []     # last listed calendar events
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
@@ -133,6 +139,43 @@ class Brain:
             except Exception:
                 pass
         return text
+
+    def _resolve_message_ref(self, text: str) -> str | None:
+        """Resolve contextual email references like 'the first one', 'the linkedin one'."""
+        if not self._last_messages:
+            return None
+
+        t = text.lower().strip()
+
+        # Ordinals
+        _ORDINALS = {
+            "first": 0, "1st": 0, "second": 1, "2nd": 1,
+            "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+            "fifth": 4, "5th": 4, "last": -1,
+        }
+        for word, idx in _ORDINALS.items():
+            if word in t:
+                try:
+                    return self._last_messages[idx]["id"]
+                except (IndexError, KeyError):
+                    return None
+
+        # Keyword match against sender/subject
+        # "the linkedin one", "the google cloud one", "read the mail from ali"
+        for msg in self._last_messages:
+            sender = (msg.get("from") or "").lower()
+            subject = (msg.get("subject") or "").lower()
+            # Check if any significant word from user input appears in sender or subject
+            words = re.findall(r"[a-zA-Z0-9]{3,}", t)
+            skip = {"read", "that", "this", "the", "one", "email", "mail", "from", "about",
+                    "please", "can", "you", "want", "open", "show", "check"}
+            keywords = [w for w in words if w not in skip]
+            for kw in keywords:
+                if kw in sender or kw in subject:
+                    return msg["id"]
+
+        # No match — return first message as fallback
+        return self._last_messages[0]["id"] if self._last_messages else None
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
@@ -204,13 +247,13 @@ class Brain:
                     return {"tool": "_schedule_week", "args": {}}
                 return {"tool": "_schedule_today", "args": {}}
 
-        # Gmail — "read me that email" fix: exclude "read me" patterns from sender search
+        # Gmail — "read me that email" fix: resolve from context
         _READ_ME_PATTERN = re.search(
             r"\bread\s+me\s+(?:that|this|the|it)", both, re.IGNORECASE
         )
         if _READ_ME_PATTERN:
-            # User wants to read a specific mail, not search by sender
-            return {"tool": "gmail", "args": {"action": "read"}}
+            # User wants to read a specific mail — will be resolved in process()
+            return {"tool": "gmail", "args": {"action": "read"}, "_context_read": True}
 
         # Contacts
         _has_email = bool(re.search(r"\S+@\S+", both))
@@ -363,6 +406,12 @@ class Brain:
                     "tool_args": {"command": cmd}, "risk_level": "moderate"}
 
         elif quick:
+            # Resolve contextual email reads (#56)
+            if quick.get("_context_read") and quick["tool"] == "gmail":
+                msg_id = self._resolve_message_ref(user_input)
+                if msg_id:
+                    quick["args"]["message_id"] = msg_id
+
             plan = {"route": "tool", "tool_name": quick["tool"],
                     "tool_args": quick["args"], "risk_level": "safe"}
 
@@ -407,6 +456,13 @@ class Brain:
 
         result = await tool.execute(**tool_args)
 
+        # ── Store tool results for contextual follow-ups (#56) ──
+        if result.success and result.data:
+            if result.data.get("messages"):
+                self._last_messages = result.data["messages"]
+            if result.data.get("events"):
+                self._last_events = result.data["events"]
+
         # ── Compose/reply draft → confirmation flow ──
         if result.success and result.data and result.data.get("draft"):
             d = result.data
@@ -443,6 +499,17 @@ class Brain:
             *prior,
             {"role": "user", "content": en_input},
         ]
+
+        # Prefer Gemini for chat if available (#58)
+        try:
+            from bantz.llm.gemini import gemini
+            if gemini.is_enabled():
+                raw = await gemini.chat(messages)
+                if not _is_refusal(raw):
+                    return strip_markdown(raw)
+        except Exception:
+            pass  # fall through to Ollama
+
         try:
             raw = await ollama.chat(messages)
             if _is_refusal(raw):
@@ -459,17 +526,67 @@ class Brain:
             return "Done. ✓"
         if len(output) < 800:
             return output
+
+        messages = [
+            {"role": "system", "content": FINALIZER_SYSTEM.format(
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
+            {"role": "user", "content": (
+                f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
+            )},
+        ]
+
+        # Prefer Gemini Flash for finalization if available (#58)
+        raw = None
         try:
-            raw = await ollama.chat([
-                {"role": "system", "content": FINALIZER_SYSTEM.format(
-                    time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
-                {"role": "user", "content": (
-                    f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
-                )},
-            ])
-            return strip_markdown(raw)
+            from bantz.llm.gemini import gemini
+            if gemini.is_enabled():
+                raw = await gemini.chat(messages, temperature=0.2)
         except Exception:
-            return output[:1500]
+            pass  # fall through to Ollama
+
+        if raw is None:
+            try:
+                raw = await ollama.chat(messages)
+            except Exception:
+                return output[:1500]
+
+        cleaned = strip_markdown(raw)
+
+        # Anti-hallucination guard (#63): verify finalizer didn't fabricate data
+        cleaned = self._hallucination_check(cleaned, output)
+
+        return cleaned
+
+    @staticmethod
+    def _hallucination_check(response: str, tool_output: str) -> str:
+        """
+        Compare finalizer response against tool output.
+        If the response contains email addresses, numbers, or specific data points
+        that don't appear in the tool output, append a warning.
+        """
+        import re
+
+        # Extract emails mentioned in response
+        resp_emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.\w+", response))
+        tool_emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.\w+", tool_output))
+
+        # Check for fabricated emails
+        fabricated_emails = resp_emails - tool_emails
+        if fabricated_emails:
+            response += "\n⚠ (Some details may be inaccurate — check original data)"
+
+        # Check for fabricated large numbers (file sizes, counts > what tool reported)
+        resp_numbers = set(re.findall(r"\b(\d{3,})\b", response))
+        tool_numbers = set(re.findall(r"\b(\d{3,})\b", tool_output))
+        fabricated_numbers = resp_numbers - tool_numbers
+        if fabricated_numbers:
+            # Only warn if the fabricated numbers are significantly different
+            for n in fabricated_numbers:
+                if int(n) > 100 and n not in tool_output:
+                    response += "\n⚠ (Verify numbers against actual data)"
+                    break
+
+        return response
 
 
 def _extract_city(text: str) -> str:

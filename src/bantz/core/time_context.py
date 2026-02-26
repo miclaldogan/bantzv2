@@ -28,11 +28,11 @@ def get_segment(hour: int | None = None) -> Segment:
 
 
 _GREETINGS: dict[Segment, str] = {
-    "gece_erken": "Gece geç saatte çalışıyorsun",
-    "sabah":      "Günaydın",
-    "oglen":      "İyi öğlenler",
-    "aksam":      "İyi akşamlar",
-    "gece_gec":   "İyi geceler",
+    "gece_erken": "Working late at night",
+    "sabah":      "Good morning",
+    "oglen":      "Good afternoon",
+    "aksam":      "Good evening",
+    "gece_gec":   "Good night",
 }
 
 _SEGMENT_EN: dict[Segment, str] = {
@@ -49,7 +49,7 @@ class TimeContext:
     Usage:
         from bantz.core.time_context import time_ctx
         ctx = time_ctx.snapshot()
-        print(ctx["greeting"])       # "Günaydın"
+        print(ctx["greeting"])       # "Good morning"
         print(ctx["prompt_hint"])    # injected into LLM prompts
     """
 
@@ -77,11 +77,11 @@ class TimeContext:
         )
 
     def greeting_line(self) -> str:
-        """Ready-to-use greeting for startup or 'merhaba' responses."""
+        """Ready-to-use greeting for startup or hello responses."""
         now = datetime.now()
         seg = get_segment(now.hour)
         greeting = _GREETINGS[seg]
-        return f"{greeting}! Saat {now.strftime('%H:%M')}."
+        return f"{greeting}! It's {now.strftime('%H:%M')}."
 
 
 # Singleton
