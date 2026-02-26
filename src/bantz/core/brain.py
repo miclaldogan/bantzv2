@@ -11,6 +11,7 @@ Fixes vs previous version:
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 
@@ -135,8 +136,8 @@ class Brain:
         b = self._get_bridge()
         if b and b.is_enabled():
             try:
-                return await b.to_english(text)
-            except Exception:
+                return await asyncio.wait_for(b.to_english(text), timeout=10)
+            except (asyncio.TimeoutError, Exception):
                 pass
         return text
 
