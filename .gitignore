@@ -6,3 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Google OAuth secrets
+client_secret*.json
+credentials.json

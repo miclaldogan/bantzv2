@@ -66,7 +66,7 @@ class SystemTool(BaseTool):
                 uptime_s = int(time.time() - boot)
                 h, remainder = divmod(uptime_s, 3600)
                 m, s = divmod(remainder, 60)
-                uptime_str = f"{h}s {m}d {s}sn"
+                uptime_str = f"{h}h {m}m {s}s"
                 data["uptime_seconds"] = uptime_s
                 data["uptime_str"] = uptime_str
                 lines.append(f"Uptime: {uptime_str}")
