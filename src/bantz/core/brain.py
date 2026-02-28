@@ -373,6 +373,14 @@ class Brain:
         # Save user message ONCE — before any branching
         memory.add("user", user_input)
 
+        # ── Workflow detection: multi-tool chained commands (#34) ──
+        from bantz.core.workflow import workflow_engine
+        steps = workflow_engine.detect(user_input, en_input)
+        if steps:
+            resp = await workflow_engine.execute(steps, self, en_input, tc)
+            memory.add("assistant", resp, tool_used="workflow")
+            return BrainResult(response=resp, tool_used="workflow")
+
         quick = self._quick_route(user_input, en_input)
 
         if quick and quick["tool"] == "_briefing":
