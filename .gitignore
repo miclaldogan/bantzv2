@@ -11,3 +11,4 @@ build/
 client_secret*.json
 credentials.json
 iclaldogancv.docx.pdf
+memory.db

@@ -122,9 +122,16 @@ class Profile:
             return ""
         name = self._data["name"]
         style = self.response_style
+        # Preferred address: explicit field > pronoun-based > default
+        address = self._data.get("preferred_address", "")
+        pronoun = self._data.get("pronoun", "casual")
+        if not address:
+            if pronoun in ("siz", "formal", "ma'am", "madam"):
+                address = "ma'am"
+            else:
+                address = "boss"
         parts: list[str] = [
-            f"User's name is {name} — call them 'boss', 'chief', or 'dude' casually, "
-            f"don't overuse the actual name."
+            f"User's name is {name}. Address them as '{address}'."
         ]
         uni = self._data.get("university")
         dept = self._data.get("department")
@@ -136,7 +143,8 @@ class Profile:
             if year:
                 edu += f", year {year}"
             parts.append(f"Studies at {edu}.")
-        if style == "formal":
+        tone = self._data.get("tone", "casual")
+        if style == "formal" or tone == "formal":
             parts.append("Use a professional, respectful tone.")
         else:
             parts.append("Keep it casual and friendly — like an old friend.")

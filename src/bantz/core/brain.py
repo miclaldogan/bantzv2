@@ -41,11 +41,18 @@ def strip_markdown(text: str) -> str:
 
 
 def _style_hint() -> str:
-    """Return a style instruction based on profile response_style."""
+    """Return a style instruction based on profile response_style and pronoun."""
     style = profile.response_style
-    if style == "formal":
-        return "Tone: professional, respectful. Address the user formally."
-    return 'Tone: casual, friendly. Call the user "boss", "chief", or "dude".'
+    pronoun = profile.get("pronoun", "casual")
+    address = profile.get("preferred_address", "")
+    if not address:
+        if pronoun in ("siz", "formal", "ma'am", "madam"):
+            address = "ma'am"
+        else:
+            address = "boss"
+    if style == "formal" or pronoun in ("siz", "formal"):
+        return f"Tone: professional, respectful. Address the user as '{address}'."
+    return f'Tone: casual, friendly. Address the user as \'{address}\'.'
 
 
 CHAT_SYSTEM = """\
@@ -55,11 +62,14 @@ You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs
 {time_hint}
 {profile_hint}
 {graph_hint}
-CRITICAL: You have NO access to real emails, calendar events, live news, or any external data.
-If the user asks about specific emails, contacts, or external info you don't have, say something like
-"I'd need to fetch that — try asking me to check your mail/calendar" and STOP. Never fabricate data.
-NEVER make up file sizes, folder contents, email subjects, or any factual data.
-If unsure, say you don't know. Respond in English. Plain text only.\
+CRITICAL RULES — FOLLOW STRICTLY:
+1. You have NO access to emails, calendar events, schedule/timetable, live news, or any external data.
+2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
+3. If the user asks about their schedule, classes, or timetable — say "Let me check your schedule" and STOP.
+   Do NOT invent class names. Do NOT guess what classes they have.
+4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
+5. If unsure, say you don't know. NEVER guess or make up data.
+Respond in English. Plain text only.\
 """
 
 FINALIZER_SYSTEM = """\
@@ -135,6 +145,7 @@ class Brain:
         # Session state: stores last tool results for contextual follow-ups
         self._last_messages: list[dict] = []   # last listed emails [{id, from, subject, ...}]
         self._last_events: list[dict] = []     # last listed calendar events
+        self._last_draft: dict | None = None   # last email draft {to, subject, body}
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
@@ -266,7 +277,7 @@ class Brain:
             return {"tool": "weather", "args": {"city": _extract_city(o)}}
 
         # Location / GPS
-        if re.search(r"where\s+am\s+i|my\s+location|gps|current\s+location", both):
+        if re.search(r"where\s+(?:am|was|are)\s+i|my\s+location|gps|current\s+(?:location|place)|where\s+i\s+am", both):
             return {"tool": "_location", "args": {}}
 
         # Named Places — save current location
@@ -307,10 +318,23 @@ class Brain:
             return {"tool": "news", "args": {"source": source, "limit": 5}}
 
         # Schedule — user's class timetable (BEFORE calendar and mail)
-        if any(k in both for k in ("my schedule", "class schedule", "my classes",
-                                    "today classes", "tomorrow classes", "next class",
-                                    "this week classes", "do you have my schedule",
-                                    "schedule", "what classes")):
+        _is_schedule = any(k in both for k in (
+            "my schedule", "class schedule", "my classes",
+            "today classes", "tomorrow classes", "next class",
+            "this week classes", "do you have my schedule",
+            "schedule", "what classes",
+        ))
+        # Bare day names like "monday?", "yeah monday?", "what about tuesday"
+        _day_match = re.search(
+            r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", both
+        )
+        if _day_match and not any(k in both for k in (
+            "add", "create", "delete", "remove", "calendar", "event", "meeting",
+            "mail", "email", "send",
+        )):
+            _is_schedule = True
+
+        if _is_schedule:
             # don't match "schedule" if it's clearly calendar context
             if not any(k in both for k in ("add", "create", "delete", "remove",
                                             "calendar", "event", "meeting")):
@@ -318,7 +342,21 @@ class Brain:
                     return {"tool": "_schedule_next", "args": {}}
                 if any(k in both for k in ("this week", "weekly", "week")):
                     return {"tool": "_schedule_week", "args": {}}
+                # Check for specific day name → route to that day's schedule
+                if _day_match:
+                    from bantz.core.date_parser import resolve_date as _rd
+                    target = _rd(_day_match.group(1))
+                    if target:
+                        return {"tool": "_schedule_date", "args": {"date_iso": target.isoformat()}}
+                if "tomorrow" in both:
+                    from datetime import datetime as _dt, timedelta as _td
+                    tmrw = _dt.now() + _td(days=1)
+                    return {"tool": "_schedule_date", "args": {"date_iso": tmrw.isoformat()}}
                 return {"tool": "_schedule_today", "args": {}}
+
+        # Gmail — "send that mail/draft" — resolve from last draft context
+        if re.search(r"\bsend\s+(?:that|the|this)\s+(?:mail|email|draft|message)\b", both, re.IGNORECASE):
+            return {"tool": "gmail", "args": {"action": "send"}, "_send_draft": True}
 
         # Gmail — "read me that email" fix: resolve from context
         _READ_ME_PATTERN = re.search(
@@ -370,7 +408,13 @@ class Brain:
             return {"tool": "gmail", "args": {"action": "unread"}}
 
         # Calendar
-        if any(k in both for k in ("calendar", "event", "meeting", "appointment")):
+        _is_calendar = any(k in both for k in ("calendar", "event", "meeting", "appointment"))
+        # Catch "add X at Ypm" even without "calendar" keyword
+        if not _is_calendar and re.search(
+            r"\badd\b.+\bat\s+\d{1,2}\s*(?:am|pm|:\d{2})", both, re.IGNORECASE
+        ):
+            _is_calendar = True
+        if _is_calendar:
             if any(k in both for k in ("add", "create", "new", "set")):
                 title, date_iso, time_hhmm = _extract_event_create(orig)
                 args: dict = {"action": "create", "title": title}
@@ -448,13 +492,32 @@ class Brain:
         """Handle 'where am i' queries — show GPS/location info."""
         from bantz.core.location import location_service
         from bantz.core.places import places as _places
+
+        # Check phone GPS first — it's the most accurate source
+        gps_loc = None
+        try:
+            from bantz.core.gps_server import gps_server
+            gps_loc = gps_server.latest
+        except Exception:
+            pass
+
         try:
             loc = await location_service.get()
         except Exception:
             loc = None
 
         lines: list[str] = []
-        if loc:
+
+        # Show current named place first if any
+        cur_label = _places.current_place_label()
+        if cur_label:
+            lines.append(f"📌 You're at: {cur_label}")
+
+        # Prefer phone GPS as primary when available
+        if gps_loc:
+            acc = round(gps_loc.get("accuracy", 0))
+            lines.append(f"📍 Phone GPS: {gps_loc['lat']:.6f}, {gps_loc['lon']:.6f} (±{acc}m)")
+        elif loc:
             lines.append(f"📍 {loc.display}")
             if loc.lat and loc.lon:
                 lines.append(f"   Coordinates: {loc.lat:.6f}, {loc.lon:.6f}")
@@ -462,22 +525,12 @@ class Brain:
         else:
             lines.append("📍 Location unknown")
 
-        # Show current named place if any
-        cur_label = _places.current_place_label()
-        if cur_label:
-            lines.append(f"   📌 Currently at: {cur_label}")
-
-        # Show GPS server status
-        try:
-            from bantz.core.gps_server import gps_server
-            gps_loc = gps_server.latest
-            if gps_loc:
-                acc = round(gps_loc.get("accuracy", 0))
-                lines.append(f"   Phone GPS: {gps_loc['lat']:.6f}, {gps_loc['lon']:.6f} (±{acc}m)")
-            else:
+        if not gps_loc:
+            try:
+                from bantz.core.gps_server import gps_server
                 lines.append(f"   Phone GPS: not connected — open {gps_server.url} on phone")
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         return "\n".join(lines)
 
@@ -532,6 +585,15 @@ class Brain:
         steps = workflow_engine.detect(user_input, en_input)
         if steps:
             resp = await workflow_engine.execute(steps, self, en_input, tc)
+            # Check if any step produced a draft → store for "send that" follow-up
+            for s in steps:
+                if s.result and s.result.data and s.result.data.get("draft"):
+                    d = s.result.data
+                    self._last_draft = {
+                        "to": d["to"],
+                        "subject": d.get("subject", ""),
+                        "body": d["body"],
+                    }
             memory.add("assistant", resp, tool_used="workflow")
             await self._graph_store(user_input, resp, "workflow")
             return BrainResult(response=resp, tool_used="workflow")
@@ -603,16 +665,39 @@ class Brain:
                 if msg_id:
                     quick["args"]["message_id"] = msg_id
 
+            # Resolve "send that mail/draft" from last draft context
+            if quick.get("_send_draft") and quick["tool"] == "gmail":
+                if self._last_draft:
+                    quick["args"] = {
+                        "action": "send",
+                        "to": self._last_draft["to"],
+                        "subject": self._last_draft.get("subject", ""),
+                        "body": self._last_draft["body"],
+                    }
+                else:
+                    text = "No draft to send. Compose a mail first."
+                    memory.add("assistant", text)
+                    return BrainResult(response=text, tool_used=None)
+
             plan = {"route": "tool", "tool_name": quick["tool"],
                     "tool_args": quick["args"], "risk_level": "safe"}
 
         else:
-            plan = await _ollama_route(en_input, registry.all_schemas())
-            if plan is None:
-                resp = await self._chat(en_input, tc)
-                memory.add("assistant", resp)
-                await self._graph_store(user_input, resp)
-                return BrainResult(response=resp, tool_used=None)
+            # Short ambiguous input with recent email context?
+            # e.g. "medium" after listing emails → probably "emails from medium"
+            _words = en_input.strip().split()
+            if len(_words) <= 2 and self._last_messages:
+                # Treat as a contextual email follow-up (search by keyword)
+                plan = {"route": "tool", "tool_name": "gmail",
+                        "tool_args": {"action": "search", "from_sender": en_input.strip()},
+                        "risk_level": "safe"}
+            else:
+                plan = await _ollama_route(en_input, registry.all_schemas())
+                if plan is None:
+                    resp = await self._chat(en_input, tc)
+                    memory.add("assistant", resp)
+                    await self._graph_store(user_input, resp)
+                    return BrainResult(response=resp, tool_used=None)
 
         route     = plan.get("route", "chat")
         tool_name = plan.get("tool_name") or ""
@@ -659,6 +744,11 @@ class Brain:
         # ── Compose/reply draft → confirmation flow ──
         if result.success and result.data and result.data.get("draft"):
             d = result.data
+            self._last_draft = {
+                "to": d["to"],
+                "subject": d.get("subject", ""),
+                "body": d["body"],
+            }
             memory.add("assistant", result.output, tool_used=tool_name)
             return BrainResult(
                 response=result.output,
@@ -834,37 +924,39 @@ def _extract_event_create(text: str) -> tuple[str, str, str]:
     from datetime import datetime, timedelta
 
     time_str = ""
+    # HH:MM or HH.MM format
     tm = re.search(r"(\d{1,2})[:\.](\d{2})", text)
     if tm:
         time_str = f"{int(tm.group(1)):02d}:{tm.group(2)}"
     else:
-        tm2 = re.search(r"(?:at|to)\s+(\d{1,2})\s*(am|pm)?", text, re.IGNORECASE)
-        if tm2:
-            h = int(tm2.group(1))
-            meridiem = (tm2.group(2) or "").lower()
+        # Bare number with am/pm attached: "5pm", "10am", "3PM" — check FIRST
+        tm3 = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
+        if tm3:
+            h = int(tm3.group(1))
+            meridiem = tm3.group(2).lower()
             if meridiem == "pm" and h < 12:
                 h += 12
             elif meridiem == "am" and h == 12:
                 h = 0
-            elif not meridiem and h < 7:
-                # Ambiguous "to 10" without am/pm — assume PM for small hours
-                h += 12
             time_str = f"{h:02d}:00"
-        elif re.search(r"\bnoon\b", text, re.IGNORECASE):
-            time_str = "12:00"
-        elif re.search(r"\bmidnight\b", text, re.IGNORECASE):
-            time_str = "00:00"
         else:
-            # Bare number with pm/am: "10pm", "3am"
-            tm3 = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
-            if tm3:
-                h = int(tm3.group(1))
-                meridiem = tm3.group(2).lower()
+            # "at 5 pm", "to 3" patterns
+            tm2 = re.search(r"(?:at|to)\s+(\d{1,2})\s*(am|pm)?", text, re.IGNORECASE)
+            if tm2:
+                h = int(tm2.group(1))
+                meridiem = (tm2.group(2) or "").lower()
                 if meridiem == "pm" and h < 12:
                     h += 12
                 elif meridiem == "am" and h == 12:
                     h = 0
+                elif not meridiem and h < 7:
+                    # Ambiguous "to 10" without am/pm — assume PM for small hours
+                    h += 12
                 time_str = f"{h:02d}:00"
+            elif re.search(r"\bnoon\b", text, re.IGNORECASE):
+                time_str = "12:00"
+            elif re.search(r"\bmidnight\b", text, re.IGNORECASE):
+                time_str = "00:00"
 
     date_str = ""
     dm = re.search(r"(\d{4}-\d{2}-\d{2})", text)
