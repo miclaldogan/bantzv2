@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import httpx
+from typing import AsyncIterator
 
 from bantz.config import config
 
@@ -90,6 +91,70 @@ class GeminiClient:
             return parts[0]["text"]
         except (KeyError, IndexError) as e:
             raise RuntimeError(f"Unexpected Gemini response format: {e}") from e
+
+    async def chat_stream(self, messages: list[dict], temperature: float = 0.3) -> AsyncIterator[str]:
+        """
+        Stream tokens from Gemini via streamGenerateContent SSE endpoint.
+        Yields text chunks as they arrive.
+        """
+        if not self._enabled:
+            raise RuntimeError("Gemini is not enabled")
+
+        system_instruction = ""
+        contents = []
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                system_instruction += content + "\n"
+            elif role == "user":
+                contents.append({"role": "user", "parts": [{"text": content}]})
+            elif role == "assistant":
+                contents.append({"role": "model", "parts": [{"text": content}]})
+
+        payload: dict = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": 1024,
+            },
+        }
+
+        if system_instruction:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction.strip()}]
+            }
+
+        url = (
+            f"{self._base_url}/models/{self._model}:streamGenerateContent"
+            f"?key={self._api_key}&alt=sse"
+        )
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST", url, json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    json_str = line[6:]  # strip "data: " prefix
+                    if json_str == "[DONE]":
+                        return
+                    try:
+                        data = json.loads(json_str)
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            for part in parts:
+                                text = part.get("text", "")
+                                if text:
+                                    yield text
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
 
     async def is_available(self) -> bool:
         """Quick health check — list models."""
