@@ -206,7 +206,7 @@ class Memory:
     def search_by_date(self, date: "datetime", limit: int = 20) -> list[dict]:
         """
         Return messages from a specific date (all conversations).
-        Useful for "dün ne yaptık" type queries.
+        Useful for "what did we do yesterday" type queries.
         """
         date_str = date.strftime("%Y-%m-%d")
         rows = self._conn.execute(

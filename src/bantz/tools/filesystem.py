@@ -13,7 +13,7 @@ from bantz.tools import BaseTool, ToolResult, registry
 
 # Safe root — default is home directory
 SAFE_ROOT = Path.home()
-MAX_READ_BYTES = 50_000   # 50KB üstü dosyaları kırparak okur
+MAX_READ_BYTES = 50_000   # truncates files larger than 50KB
 
 
 def _safe_path(raw: str) -> Path | None:

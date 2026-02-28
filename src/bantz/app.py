@@ -289,7 +289,7 @@ class BantzApp(App):
         chat = self.query_one("#chat-log", ChatLog)
         chat.add_user(text)
 
-        # Onay akışı
+        # Confirmation flow
         if self._pending is not None:
             await self._handle_confirm(text, chat)
             return

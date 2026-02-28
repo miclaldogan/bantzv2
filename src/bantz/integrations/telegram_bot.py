@@ -202,9 +202,9 @@ async def cmd_haber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def run_bot() -> None:
     token = config.telegram_bot_token
     if not token:
-        print("❌ TELEGRAM_BOT_TOKEN ayarlanmamış!")
-        print("   → .env dosyasına TELEGRAM_BOT_TOKEN=... ekle")
-        print("   → ya da: bantz --setup telegram")
+        print("❌ TELEGRAM_BOT_TOKEN not set!")
+        print("   → Add TELEGRAM_BOT_TOKEN=... to .env")
+        print("   → or run: bantz --setup telegram")
         return
 
     app = Application.builder().token(token).build()
@@ -220,13 +220,13 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("siradaki", cmd_siradaki))
     app.add_handler(CommandHandler("haber", cmd_haber))
 
-    log.info("🦌 Bantz Telegram bot başlatılıyor...")
+    log.info("🦌 Bantz Telegram bot starting...")
     if _PROXY:
         log.info(f"   Proxy: {_PROXY}")
     if _ALLOWED:
-        log.info(f"   İzinli kullanıcılar: {_ALLOWED}")
+        log.info(f"   Allowed users: {_ALLOWED}")
     else:
-        log.info("   ⚠ Kullanıcı kısıtlaması yok — herkes kullanabilir")
+        log.info("   ⚠ No user restriction — anyone can use it")
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

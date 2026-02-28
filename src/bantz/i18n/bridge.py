@@ -1,9 +1,9 @@
 """
 Bantz v2 — Language Bridge
-MarianMT ile TR↔EN çeviri. Lazy-load — ilk kullanımda yüklenir.
-CPU'da ~100ms, GPU varsa daha hızlı.
+TR↔EN translation via MarianMT. Lazy-loaded on first use.
+~100ms on CPU, faster with GPU.
 
-Modeller:
+Models:
   TR→EN: Helsinki-NLP/opus-mt-tr-en
   EN→TR: Helsinki-NLP/opus-mt-tc-big-en-tr
 """
