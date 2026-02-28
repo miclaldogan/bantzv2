@@ -118,6 +118,10 @@ class Brain:
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
+        try:
+            import bantz.tools.document     # noqa: F401
+        except (ImportError, ModuleNotFoundError):
+            pass  # PDF/DOCX deps may not be installed
         self._bridge = None
         self._memory_ready = False
         # Session state: stores last tool results for contextual follow-ups
@@ -338,6 +342,20 @@ class Brain:
             if any(k in both for k in ("today", "upcoming")):
                 return {"tool": "classroom", "args": {"action": "due_today"}}
             return {"tool": "classroom", "args": {"action": "assignments"}}
+
+        # Document — summarize/read PDF, TXT, MD, DOCX
+        _DOC_KEYWORDS = ("summarize", "summary", "read pdf", "read document",
+                         "read the file", "open pdf", "open document",
+                         "what's in this", "explain this", ".pdf", ".docx",
+                         "analyze document", "review this file", "review my")
+        if any(k in both for k in _DOC_KEYWORDS):
+            path_match = re.search(r'([~/][\w.\-/]+\.(?:pdf|docx|txt|md|csv|json|yaml|yml|log))', both)
+            path = path_match.group(1) if path_match else ""
+            if "ask" in both or "question" in both or "what" in both:
+                return {"tool": "document", "args": {"path": path, "action": "ask", "question": orig}}
+            if any(k in both for k in ("read", "open", "show")):
+                return {"tool": "document", "args": {"path": path, "action": "read"}}
+            return {"tool": "document", "args": {"path": path, "action": "summarize"}}
 
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",

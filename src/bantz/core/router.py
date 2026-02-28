@@ -27,6 +27,7 @@ RULES (strict):
 - calendar:   calendar, events, meetings, schedule add/delete
 - classroom:  assignments, deadlines, courses, announcements
 - filesystem: read or write a specific file's content
+- document:   summarize, read, or analyze PDF/TXT/MD/DOCX files
 - chat:       ONLY for general conversation, jokes, questions no tool covers
 
 NOTE: Multi-tool requests ("send mail and add to calendar") are handled upstream.
