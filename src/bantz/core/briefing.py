@@ -24,13 +24,19 @@ class Briefing:
     async def generate(self) -> str:
         now = datetime.now()
         tc = time_ctx.snapshot()
+        sections = _profile.briefing_sections  # user-selected sections
 
-        # Fire all external calls in parallel
+        # Fire all external calls in parallel (skip disabled sections)
+        weather_coro = self._get_weather() if "weather" in sections else asyncio.sleep(0)
+        calendar_coro = self._get_calendar(now) if "calendar" in sections else asyncio.sleep(0)
+        gmail_coro = self._get_gmail() if "mail" in sections else asyncio.sleep(0)
+        classroom_coro = self._get_classroom() if "classroom" in sections else asyncio.sleep(0)
+
         results = await asyncio.gather(
-            self._get_weather(),
-            self._get_calendar(now),
-            self._get_gmail(),
-            self._get_classroom(),
+            weather_coro,
+            calendar_coro,
+            gmail_coro,
+            classroom_coro,
             return_exceptions=True,
         )
         weather_str, calendar_str, gmail_str, classroom_str = [
@@ -38,9 +44,9 @@ class Briefing:
         ]
 
         # Schedule is local — no network, no failure
-        schedule_str = self._get_schedule(now)
-        next_class_str = await self._get_next_class(now)
-        habit_str = self._get_habit_hint(now)
+        schedule_str = self._get_schedule(now) if "schedule" in sections else None
+        next_class_str = await self._get_next_class(now) if "schedule" in sections else None
+        habit_str = self._get_habit_hint(now) if "habits" in sections else None
 
         return self._format(
             tc=tc,

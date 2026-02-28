@@ -349,12 +349,12 @@ def _write_location_to_env(city: str, lat: float, lon: float) -> None:
 
 def _setup_profile() -> None:
     """Interactive profile setup — writes profile.json."""
-    from bantz.core.profile import profile
+    from bantz.core.profile import profile, ALL_BRIEFING_SECTIONS, ALL_NEWS_SOURCES
 
     print("\n👤 User Profile Setup")
     print("─" * 40)
     if profile.is_configured():
-        print(f"Current profile: {profile.get('name')} ({profile.get('tone')})")
+        print(f"Current profile: {profile.get('name')} ({profile.response_style})")
         print()
 
     name = input("Name: ").strip()
@@ -367,25 +367,56 @@ def _setup_profile() -> None:
     year_raw = input("Year (1-6, blank=skip): ").strip()
     year = int(year_raw) if year_raw.isdigit() else 0
 
-    print("\nAddress style:")
-    print("  1) casual")
-    print("  2) formal")
-    pronoun_choice = input("Choice [1]: ").strip()
-    pronoun = "formal" if pronoun_choice == "2" else "casual"
+    print("\nResponse style:")
+    print("  1) casual  — friendly, like an old friend")
+    print("  2) formal  — professional, respectful")
+    style_choice = input("Choice [1]: ").strip()
+    response_style = "formal" if style_choice == "2" else "casual"
 
-    print("\nTone:")
-    print("  1) casual")
-    print("  2) formal")
-    tone_choice = input("Choice [1]: ").strip()
-    tone = "formal" if tone_choice == "2" else "casual"
+    # Briefing sections
+    print("\nBriefing sections (comma-separated numbers, or Enter for all):")
+    for i, sec in enumerate(ALL_BRIEFING_SECTIONS, 1):
+        print(f"  {i}) {sec}")
+    sec_input = input(f"Sections [1-{len(ALL_BRIEFING_SECTIONS)}, default=all]: ").strip()
+    if sec_input:
+        indices = [int(x.strip()) - 1 for x in sec_input.split(",") if x.strip().isdigit()]
+        briefing_sections = [
+            ALL_BRIEFING_SECTIONS[i] for i in indices
+            if 0 <= i < len(ALL_BRIEFING_SECTIONS)
+        ]
+        if not briefing_sections:
+            briefing_sections = list(ALL_BRIEFING_SECTIONS)
+    else:
+        briefing_sections = list(ALL_BRIEFING_SECTIONS)
+
+    # News sources
+    print("\nNews sources (comma-separated numbers, or Enter for all):")
+    for i, src in enumerate(ALL_NEWS_SOURCES, 1):
+        print(f"  {i}) {src}")
+    src_input = input(f"Sources [1-{len(ALL_NEWS_SOURCES)}, default=all]: ").strip()
+    if src_input:
+        indices = [int(x.strip()) - 1 for x in src_input.split(",") if x.strip().isdigit()]
+        news_sources = [
+            ALL_NEWS_SOURCES[i] for i in indices
+            if 0 <= i < len(ALL_NEWS_SOURCES)
+        ]
+        if not news_sources:
+            news_sources = list(ALL_NEWS_SOURCES)
+    else:
+        news_sources = list(ALL_NEWS_SOURCES)
 
     profile.save({
         "name": name,
         "university": university,
         "department": department,
         "year": year,
-        "pronoun": pronoun,
-        "tone": tone,
+        "pronoun": response_style,
+        "tone": response_style,
+        "preferences": {
+            "briefing_sections": briefing_sections,
+            "news_sources": news_sources,
+            "response_style": response_style,
+        },
     })
     print(f"\n✅ Profile saved: {profile.path}")
     print(f"  → {profile.prompt_hint()}")

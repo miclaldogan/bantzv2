@@ -78,9 +78,13 @@ class TimeContext:
 
     def greeting_line(self) -> str:
         """Ready-to-use greeting for startup or hello responses."""
+        from bantz.core.profile import profile
         now = datetime.now()
         seg = get_segment(now.hour)
         greeting = _GREETINGS[seg]
+        name = profile.name
+        if name:
+            return f"{greeting}, {name}! It's {now.strftime('%H:%M')}."
         return f"{greeting}! It's {now.strftime('%H:%M')}."
 
 

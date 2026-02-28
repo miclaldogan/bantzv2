@@ -1,17 +1,23 @@
 """
 Bantz v2 — User Profile
 
-Stores user preferences in ~/.local/share/bantz/profile.json.
-Used by brain.py for personalized system prompts and briefing.py for greetings.
+Stores user identity and preferences in ~/.local/share/bantz/profile.json.
+Used by brain.py for personalized prompts, briefing.py for section filtering,
+time_context.py / butler.py for named greetings.
 
 Schema:
     {
-        "name": "Ali",
-        "university": "OMÜ",
-        "department": "Bilgisayar Mühendisliği",
+        "name": "Iclal",
+        "university": "OMU",
+        "department": "Computer Engineering",
         "year": 2,
-        "pronoun": "sen",       # sen | siz
-        "tone": "samimi"        # samimi | resmi
+        "pronoun": "casual",
+        "tone": "casual",
+        "preferences": {
+            "briefing_sections": ["schedule", "weather", "mail", "calendar", "classroom"],
+            "news_sources": ["hn", "google"],
+            "response_style": "casual"
+        }
     }
 """
 from __future__ import annotations
@@ -23,14 +29,24 @@ from typing import Any
 
 _PROFILE_PATH = Path.home() / ".local" / "share" / "bantz" / "profile.json"
 
+_DEFAULT_PREFERENCES: dict[str, Any] = {
+    "briefing_sections": ["schedule", "weather", "mail", "calendar", "classroom"],
+    "news_sources": ["hn", "google"],
+    "response_style": "casual",
+}
+
 _DEFAULTS: dict[str, Any] = {
     "name": "",
     "university": "",
     "department": "",
     "year": 0,
-    "pronoun": "sen",
-    "tone": "samimi",
+    "pronoun": "casual",
+    "tone": "casual",
+    "preferences": dict(_DEFAULT_PREFERENCES),
 }
+
+ALL_BRIEFING_SECTIONS = ["schedule", "weather", "mail", "calendar", "classroom", "habits"]
+ALL_NEWS_SOURCES = ["hn", "google"]
 
 
 class Profile:
@@ -51,11 +67,20 @@ class Profile:
 
     def save(self, data: dict[str, Any]) -> None:
         _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self._data = {**_DEFAULTS, **data}
+        merged = {**_DEFAULTS, **data}
+        # Merge preferences sub-dict properly
+        merged["preferences"] = {
+            **_DEFAULT_PREFERENCES,
+            **data.get("preferences", {}),
+        }
+        self._data = merged
         _PROFILE_PATH.write_text(
             json.dumps(self._data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def reload(self) -> None:
+        self._load()
 
     # ── Query ─────────────────────────────────────────────────────────────
 
@@ -64,6 +89,26 @@ class Profile:
 
     def is_configured(self) -> bool:
         return bool(self._data.get("name"))
+
+    @property
+    def name(self) -> str:
+        return self._data.get("name", "")
+
+    @property
+    def preferences(self) -> dict[str, Any]:
+        return self._data.get("preferences", dict(_DEFAULT_PREFERENCES))
+
+    @property
+    def response_style(self) -> str:
+        return self.preferences.get("response_style", "casual")
+
+    @property
+    def briefing_sections(self) -> list[str]:
+        return self.preferences.get("briefing_sections", ALL_BRIEFING_SECTIONS)
+
+    @property
+    def news_sources(self) -> list[str]:
+        return self.preferences.get("news_sources", ALL_NEWS_SOURCES)
 
     @property
     def path(self) -> Path:
@@ -75,27 +120,35 @@ class Profile:
         """One-line hint injected into brain system prompts."""
         if not self.is_configured():
             return ""
-        parts: list[str] = [f"Kullanıcının adı {self._data['name']} ama ismini kullanma — 'dostum', 'eski arkadaşım' de."]
+        name = self._data["name"]
+        style = self.response_style
+        parts: list[str] = [
+            f"User's name is {name} — call them 'boss', 'chief', or 'dude' casually, "
+            f"don't overuse the actual name."
+        ]
         uni = self._data.get("university")
         dept = self._data.get("department")
         year = self._data.get("year")
         if uni:
             edu = uni
             if dept:
-                edu += f" {dept}"
+                edu += f" — {dept}"
             if year:
-                edu += f" {year}. sınıf"
-            parts.append(f"Eğitim: {edu}.")
-        parts.append("Kullanıcıya sen diye hitap et, eski arkadaş gibi samimi ol.")
+                edu += f", year {year}"
+            parts.append(f"Studies at {edu}.")
+        if style == "formal":
+            parts.append("Use a professional, respectful tone.")
+        else:
+            parts.append("Keep it casual and friendly — like an old friend.")
         return " ".join(parts)
 
     def status_line(self) -> str:
         """Short status for --doctor output."""
         if not self.is_configured():
-            return "yapılandırılmamış  → bantz --setup profile"
+            return "not configured  → bantz --setup profile"
         name = self._data.get("name", "?")
-        tone = self._data.get("tone", "samimi")
-        return f"{name} ({tone})"
+        style = self.response_style
+        return f"{name} ({style})"
 
 
 profile = Profile()

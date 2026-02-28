@@ -35,10 +35,18 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 
+def _style_hint() -> str:
+    """Return a style instruction based on profile response_style."""
+    style = profile.response_style
+    if style == "formal":
+        return "Tone: professional, respectful. Address the user formally."
+    return 'Tone: casual, friendly. Call the user "boss", "chief", or "dude".'
+
+
 CHAT_SYSTEM = """\
 You are Bantz — a sharp, proactive personal host. You live in the terminal and manage the user's digital life.
 You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs to be said.
-Call the user "ma'am" or "boss". Casual but professional.
+{style_hint}
 {time_hint}
 {profile_hint}
 CRITICAL: You have NO access to real emails, calendar events, live news, or any external data.
@@ -57,8 +65,7 @@ RULES:
 - Flag urgent items first. Skip noise unless notable.
 - End with: "Want me to read any?" / "Which one?" / "Need anything else?"
 - If tool returned an error, say that honestly. Never claim success on failure.
-- Max 5 sentences. English only. Plain text, no markdown.
-{time_hint}
+- Max 5 sentences. English only. Plain text, no markdown.{style_hint}{time_hint}
 {profile_hint}\
 """
 
@@ -496,7 +503,8 @@ class Brain:
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
+                style_hint=_style_hint())},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -530,7 +538,8 @@ class Brain:
 
         messages = [
             {"role": "system", "content": FINALIZER_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint())},
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
+                style_hint=_style_hint())},
             {"role": "user", "content": (
                 f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
             )},
