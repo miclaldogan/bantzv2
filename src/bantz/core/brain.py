@@ -22,7 +22,7 @@ from bantz.config import config
 from bantz.core.time_context import time_ctx
 from bantz.core.memory import memory
 from bantz.core.profile import profile
-from bantz.core.router import route as _ollama_route
+from bantz.core.intent import cot_route
 from bantz.core.date_parser import resolve_date
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
@@ -695,7 +695,7 @@ class Brain:
                         "tool_args": {"action": "search", "from_sender": en_input.strip()},
                         "risk_level": "safe"}
             else:
-                plan = await _ollama_route(en_input, registry.all_schemas())
+                plan = await cot_route(en_input, registry.all_schemas())
                 if plan is None:
                     # Stream chat responses for lower perceived latency (#67)
                     stream = self._chat_stream(en_input, tc)
