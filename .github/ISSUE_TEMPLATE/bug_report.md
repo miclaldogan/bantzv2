@@ -23,7 +23,7 @@ What actually happened.
 ## Environment
 - OS: (e.g., Linux Mint 21.3)
 - Python: (e.g., 3.11)
-- Ollama model: (e.g., qwen2.5-coder:7b)
+- Ollama model: (e.g., qwen2.5:7b)
 - Bantz version: (e.g., v2.0)
 
 ## Logs / Screenshots
