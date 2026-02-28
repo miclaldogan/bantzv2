@@ -136,7 +136,10 @@ _HTML_PAGE_TEMPLATE = """\
   <button class="btn-sec" onclick="location.href='/app'">
     &#x1F4F2; Download Phone App
   </button>
-  <p class="hint">Standalone app &mdash; works from any network, no server needed</p>
+  <button class="btn-sec" style="margin-top:6px" onclick="location.href='/pwa'">
+    &#x1F4F1; Open as PWA (installable)
+  </button>
+  <p class="hint">PWA: install on home screen for background tracking &amp; auto-start</p>
 
   <div class="conn">
     <div><span class="dot dg" id="dd"></span>
@@ -219,6 +222,7 @@ function toggleAuto() {
 """
 
 # ── Standalone phone app (downloaded as .html file) ──────────────────────
+# v2: adaptive interval, battery indicator, PWA-ready, auto-start/stop (#74)
 
 _PHONE_APP_TEMPLATE = """\
 <!DOCTYPE html>
@@ -228,6 +232,7 @@ _PHONE_APP_TEMPLATE = """\
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0d1117">
+<link rel="manifest" href="/manifest.json">
 <title>Bantz GPS Tracker</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -261,43 +266,96 @@ border-bottom:1px solid #161b22}
 .ok{background:#0d1f0d;border:1px solid #238636;color:#3fb950}
 .er{background:#1f0d0d;border:1px solid #da3633;color:#f85149}
 .in{background:#0d1520;border:1px solid #1f6feb;color:#58a6ff}
+.warn{background:#1f1a0d;border:1px solid #d29922;color:#e3b341}
 .md{color:#6e7681;font-size:11px;margin-top:14px;line-height:1.4}
 .cnt{font-size:32px;font-weight:700;color:#3fb950;margin:8px 0}
+.batt{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:10px}
+.batt-bar{width:36px;height:16px;border:2px solid #8b949e;border-radius:3px;position:relative;
+display:inline-block}
+.batt-bar::after{content:'';position:absolute;right:-5px;top:3px;width:3px;height:8px;
+background:#8b949e;border-radius:0 2px 2px 0}
+.batt-fill{height:100%;border-radius:1px;transition:width 0.5s,background 0.5s}
+.batt-text{font-size:12px;color:#8b949e;font-family:monospace}
+.mode-tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;
+font-weight:600;margin-left:8px}
+.mode-moving{background:#0d2818;color:#3fb950;border:1px solid #238636}
+.mode-stationary{background:#0d1520;color:#58a6ff;border:1px solid #1f6feb}
 </style>
 </head><body>
 <div class="c">
 <div style="font-size:44px;margin-bottom:12px">&#x1F4CD;</div>
 <h1>Bantz GPS Tracker</h1>
-<p class="sub">Continuous location tracking</p>
+<p class="sub">Adaptive location tracking</p>
 
 <button class="btn btn-start" id="btn" onclick="toggle()">Start Tracking</button>
 
 <div id="s"></div>
 
 <div class="live" id="live">
-  <div><span class="pulse"></span><span style="color:#3fb950;font-weight:600">LIVE TRACKING</span></div>
+  <div>
+    <span class="pulse"></span>
+    <span style="color:#3fb950;font-weight:600">LIVE TRACKING</span>
+    <span class="mode-tag mode-stationary" id="modeTag">stationary</span>
+  </div>
   <div class="cnt" id="cnt">0</div>
   <div style="color:#8b949e;font-size:12px">updates sent</div>
+
+  <div class="batt" id="battRow" style="display:none">
+    <div class="batt-bar"><div class="batt-fill" id="battFill" style="width:100%;background:#3fb950"></div></div>
+    <span class="batt-text" id="battText">--%%</span>
+  </div>
 
   <div class="stats">
     <div class="row"><span class="lbl">Latitude</span><span class="val" id="lat">-</span></div>
     <div class="row"><span class="lbl">Longitude</span><span class="val" id="lon">-</span></div>
     <div class="row"><span class="lbl">Accuracy</span><span class="val" id="acc">-</span></div>
     <div class="row"><span class="lbl">Speed</span><span class="val" id="spd">-</span></div>
+    <div class="row"><span class="lbl">Interval</span><span class="val" id="ivl">-</span></div>
     <div class="row"><span class="lbl">Last sent</span><span class="val" id="ts">-</span></div>
     <div class="row"><span class="lbl">Next in</span><span class="val" id="nxt">-</span></div>
   </div>
 </div>
 
 <p class="md">Channel: %%RELAY_TOPIC%%<br>
-Screen stays awake while tracking</p>
+Adaptive: 30s moving · 5min stationary</p>
 </div>
 
 <script>
 var T='%%RELAY_TOPIC%%', N='https://ntfy.sh';
-var watchId=null, sendIv=null, wakeLock=null, countdownIv=null;
-var lastPos=null, sendCount=0, SEND_INTERVAL=60;
-var secondsLeft=0;
+var watchId=null, sendIv=null, wakeLock=null, countdownIv=null, cmdIv=null;
+var lastPos=null, sendCount=0;
+var secondsLeft=0, currentInterval=60;
+var batteryRef=null;
+
+// Adaptive intervals: moving (speed > 1 m/s ≈ 3.6 km/h) vs stationary
+var INTERVAL_MOVING=30, INTERVAL_STATIONARY=300;
+var SPEED_THRESHOLD=1.0; // m/s
+
+function isMoving(){
+  if(!lastPos) return false;
+  var sp=lastPos.coords.speed;
+  return sp!==null && sp>=SPEED_THRESHOLD;
+}
+
+function adaptInterval(){
+  var moving=isMoving();
+  var ideal=moving?INTERVAL_MOVING:INTERVAL_STATIONARY;
+  var tag=document.getElementById('modeTag');
+  if(moving){
+    tag.textContent='moving';
+    tag.className='mode-tag mode-moving';
+  } else {
+    tag.textContent='stationary';
+    tag.className='mode-tag mode-stationary';
+  }
+  document.getElementById('ivl').textContent=ideal+'s';
+  if(ideal!==currentInterval){
+    currentInterval=ideal;
+    if(sendIv){clearInterval(sendIv);sendIv=null;}
+    sendIv=setInterval(function(){if(lastPos) doSend();},currentInterval*1000);
+    secondsLeft=Math.min(secondsLeft,currentInterval);
+  }
+}
 
 function toggle(){
   if(watchId!==null) stopTracking();
@@ -313,12 +371,13 @@ function startTracking(){
   b.textContent='Starting...'; b.disabled=true;
   s.innerHTML='<div class="st in">Requesting GPS permission...</div>';
 
-  // Start continuous watching
+  currentInterval=INTERVAL_STATIONARY;
+
   watchId=navigator.geolocation.watchPosition(
     function(pos){
       lastPos=pos;
       updateDisplay(pos);
-      // First fix: send immediately
+      adaptInterval();
       if(sendCount===0) doSend();
     },
     function(err){
@@ -329,24 +388,24 @@ function startTracking(){
     {enableHighAccuracy:true, timeout:20000, maximumAge:5000}
   );
 
-  // Send every SEND_INTERVAL seconds
   sendIv=setInterval(function(){
     if(lastPos) doSend();
-  }, SEND_INTERVAL*1000);
+  }, currentInterval*1000);
 
-  // Countdown timer
-  secondsLeft=SEND_INTERVAL;
+  secondsLeft=currentInterval;
   countdownIv=setInterval(function(){
     secondsLeft--;
-    if(secondsLeft<=0) secondsLeft=SEND_INTERVAL;
+    if(secondsLeft<=0) secondsLeft=currentInterval;
     document.getElementById('nxt').textContent=secondsLeft+'s';
   },1000);
 
-  // Keep screen awake
   acquireWake();
   document.addEventListener('visibilitychange',function(){
     if(document.visibilityState==='visible' && watchId!==null) acquireWake();
   });
+
+  initBattery();
+  startCommandListener();
 
   b.disabled=false;
   b.textContent='Stop Tracking';
@@ -360,6 +419,7 @@ function stopTracking(){
   if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
   if(sendIv){clearInterval(sendIv);sendIv=null;}
   if(countdownIv){clearInterval(countdownIv);countdownIv=null;}
+  stopCommandListener();
   releaseWake();
   b.textContent='Start Tracking';
   b.className='btn btn-start';
@@ -379,18 +439,74 @@ function doSend(){
   if(!lastPos) return;
   var c=lastPos.coords;
   var d={lat:c.latitude,lon:c.longitude,accuracy:c.accuracy,
-    altitude:c.altitude,speed:c.speed,timestamp:new Date().toISOString()};
+    altitude:c.altitude,speed:c.speed,timestamp:new Date().toISOString(),
+    battery:batteryRef?Math.round(batteryRef.level*100):null,
+    interval:currentInterval};
   fetch(N+'/'+T,{method:'POST',body:JSON.stringify(d)})
   .then(function(r){
     if(r.ok){
       sendCount++;
       document.getElementById('cnt').textContent=sendCount;
       document.getElementById('ts').textContent=new Date().toLocaleTimeString();
-      secondsLeft=SEND_INTERVAL;
+      secondsLeft=currentInterval;
     }
   }).catch(function(){});
 }
 
+// ── Battery API ──
+function initBattery(){
+  if(!navigator.getBattery) return;
+  navigator.getBattery().then(function(batt){
+    batteryRef=batt;
+    updateBatteryUI();
+    batt.addEventListener('levelchange',updateBatteryUI);
+    batt.addEventListener('chargingchange',updateBatteryUI);
+  }).catch(function(){});
+}
+
+function updateBatteryUI(){
+  if(!batteryRef) return;
+  var pct=Math.round(batteryRef.level*100);
+  var charging=batteryRef.charging;
+  document.getElementById('battRow').style.display='flex';
+  document.getElementById('battText').textContent=pct+'%%'+(charging?' \\u26A1':'');
+  var fill=document.getElementById('battFill');
+  fill.style.width=pct+'%%';
+  fill.style.background=pct>50?'#3fb950':pct>20?'#d29922':'#da3633';
+  // Warn if low battery
+  if(pct<=15 && !charging && watchId!==null){
+    var s=document.getElementById('s');
+    s.innerHTML='<div class="st warn">\\u26A0 Battery low ('+pct+'%%) — consider stopping</div>';
+  }
+}
+
+// ── Command listener (auto-start/stop from Bantz) ──
+function startCommandListener(){
+  cmdIv=setInterval(pollCommands,30000);
+  pollCommands();
+}
+function stopCommandListener(){
+  if(cmdIv){clearInterval(cmdIv);cmdIv=null;}
+}
+function pollCommands(){
+  fetch(N+'/'+T+'-cmd/json?poll=1',{headers:{'Accept':'application/json'}})
+  .then(function(r){return r.text();})
+  .then(function(txt){
+    if(!txt.trim()) return;
+    var lines=txt.trim().split('\\n');
+    for(var i=0;i<lines.length;i++){
+      try{
+        var msg=JSON.parse(lines[i]);
+        if(msg.event==='message'){
+          var cmd=JSON.parse(msg.message||'{}');
+          if(cmd.command==='stop' && watchId!==null) stopTracking();
+        }
+      }catch(e){}
+    }
+  }).catch(function(){});
+}
+
+// ── Wake Lock ──
 async function acquireWake(){
   try{
     if('wakeLock' in navigator){
@@ -401,6 +517,33 @@ async function acquireWake(){
 function releaseWake(){
   try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}
 }
+
+// ── PWA Service Worker ──
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(function(){});
+}
+
+// ── Auto-start: check for pending start command on page load ──
+(function(){
+  fetch(N+'/'+T+'-cmd/json?poll=1',{headers:{'Accept':'application/json'}})
+  .then(function(r){return r.text();})
+  .then(function(txt){
+    if(!txt.trim()) return;
+    var lines=txt.trim().split('\\n');
+    for(var i=lines.length-1;i>=0;i--){
+      try{
+        var msg=JSON.parse(lines[i]);
+        if(msg.event==='message'){
+          var cmd=JSON.parse(msg.message||'{}');
+          if(cmd.command==='start' && watchId===null){
+            startTracking();
+            return;
+          }
+        }
+      }catch(e){}
+    }
+  }).catch(function(){});
+})();
 </script>
 </body></html>
 """
@@ -418,6 +561,12 @@ class _GPSHandler(BaseHTTPRequestHandler):
             self._serve_main_page()
         elif self.path == "/app":
             self._serve_phone_app()
+        elif self.path == "/pwa":
+            self._serve_pwa()
+        elif self.path == "/manifest.json":
+            self._serve_manifest()
+        elif self.path == "/sw.js":
+            self._serve_sw()
         elif self.path == "/status":
             loc = self.server.gps_server.latest
             self._json_response(loc or {"status": "no location"})
@@ -447,6 +596,64 @@ class _GPSHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
         self.wfile.write(html.encode())
+
+    def _serve_pwa(self):
+        """Serve phone app as a normal page (PWA-installable, not download)."""
+        srv = self.server.gps_server
+        html = _PHONE_APP_TEMPLATE.replace("%%RELAY_TOPIC%%", srv.relay_topic)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(html.encode())
+
+    def _serve_manifest(self):
+        """PWA manifest for installability."""
+        manifest = json.dumps({
+            "name": "Bantz GPS Tracker",
+            "short_name": "Bantz GPS",
+            "description": "Adaptive GPS tracker for Bantz",
+            "start_url": "/pwa",
+            "display": "standalone",
+            "background_color": "#0d1117",
+            "theme_color": "#0d1117",
+            "icons": [{
+                "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>",
+                "sizes": "any",
+                "type": "image/svg+xml",
+            }],
+        })
+        self.send_response(200)
+        self.send_header("Content-Type", "application/manifest+json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(manifest.encode())
+
+    def _serve_sw(self):
+        """Minimal service worker for PWA offline + background sync."""
+        sw_js = (
+            "// Bantz GPS Service Worker\n"
+            "const CACHE = 'bantz-gps-v1';\n"
+            "self.addEventListener('install', e => {\n"
+            "  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/pwa'])));\n"
+            "  self.skipWaiting();\n"
+            "});\n"
+            "self.addEventListener('activate', e => {\n"
+            "  e.waitUntil(self.clients.claim());\n"
+            "});\n"
+            "self.addEventListener('fetch', e => {\n"
+            "  if(e.request.url.includes('ntfy.sh')) return;\n"
+            "  e.respondWith(\n"
+            "    caches.match(e.request).then(r => r || fetch(e.request))\n"
+            "  );\n"
+            "});\n"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "application/javascript")
+        self.send_header("Service-Worker-Allowed", "/")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(sw_js.encode())
 
     def _json_response(self, data: dict, code: int = 200):
         self.send_response(code)
@@ -608,16 +815,36 @@ class GPSServer:
         # Start relay listener
         self._start_relay_listener()
         log.info("Relay topic: %s", self.relay_topic)
+
+        # Signal phone app to start tracking (#74)
+        self._send_command("start")
         return True
 
     async def stop(self) -> None:
         """Stop HTTP server and relay listener."""
+        # Signal phone app to stop tracking (#74)
+        self._send_command("stop")
         self._relay_running = False
         if self._server:
             self._server.shutdown()
             self._server = None
         self._thread = None
         self._relay_thread = None
+
+    def _send_command(self, command: str) -> None:
+        """Publish a command to the phone app via ntfy.sh (#74)."""
+        topic = f"{self.relay_topic}-cmd"
+        url = f"{NTFY_BASE}/{topic}"
+        data = json.dumps({"command": command}).encode()
+        try:
+            req = urllib.request.Request(
+                url, data=data, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=5)
+            log.info("Sent GPS command: %s → %s", command, topic)
+        except Exception as exc:
+            log.debug("GPS command send failed: %s", exc)
 
     # ── Relay listener ───────────────────────────────────────────────
 
