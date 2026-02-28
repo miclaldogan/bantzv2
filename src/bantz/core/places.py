@@ -1,7 +1,7 @@
 """
 Bantz v2 — Place Service
 
-Known locations with labels — "yurt", "kampüs", "ev", etc.
+Known locations with labels — "dorm", "campus", "home", etc.
 Compare current GPS to known places.  Travel hints for schedule.
 Geofence detection, stationary tracking, proactive place-learning.
 
@@ -11,8 +11,8 @@ Setup: bantz --setup places
 Usage:
     from bantz.core.places import places
     p = await places.current_place()
-    hint = await places.travel_hint("Mimarlık B2", 20)
-    places.save_here("yurt")                      # save current GPS as "yurt"
+    hint = await places.travel_hint("Architecture B2", 20)
+    places.save_here("dorm")                      # save current GPS as "dorm"
     places.update_gps(lat, lon)                    # feed GPS tick
     notice = places.check_stationary()             # ask about unknown spot
 """
@@ -291,7 +291,7 @@ class PlaceService:
     ) -> Optional[str]:
         """
         Contextual travel hint:
-          "yurttasın, derse 20 dk var — kampüse 15 dk yürüyüş"
+          "You're at dorm, class in 20 min — 15 min walk to campus"
         Returns None if place unknown or not meaningful.
         """
         place = await self.current_place()

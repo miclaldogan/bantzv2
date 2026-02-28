@@ -273,7 +273,7 @@ async def _setup_places() -> None:
                 print(f"  → Found: {lat:.4f}, {lon:.4f}  ({display})")
 
                 confirm = input("  Correct? [Y/n]: ").strip().lower()
-                if confirm in ("h", "hayır", "n", "no"):
+                if confirm in ("n", "no"):
                     print("  Skipping.")
                     continue
 
@@ -287,7 +287,7 @@ async def _setup_places() -> None:
         # Ask if this is primary location
         if not primary_key:
             is_primary = input("  Is this your primary location? (for weather etc.) [Y/n]: ").strip().lower()
-            if is_primary in ("", "e", "evet", "y", "yes"):
+            if is_primary in ("", "y", "yes"):
                 primary_key = key
                 data[key]["primary"] = True
         print()

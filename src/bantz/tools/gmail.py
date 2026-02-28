@@ -126,8 +126,8 @@ def build_query(
         parts.append("is:starred")
     if label:
         _LABEL_MAP = {
-            "sosyal": "social", "tanıtım": "promotions", "promosyon": "promotions",
-            "güncelleme": "updates", "forum": "forums", "önemli": "important",
+            "social": "social", "promotions": "promotions", "promo": "promotions",
+            "updates": "updates", "forums": "forums", "important": "important",
         }
         parts.append(f"label:{_LABEL_MAP.get(label.lower(), label)}")
     return " ".join(parts) if parts else "label:unread"
@@ -339,52 +339,54 @@ class GmailTool(BaseTool):
         Convert natural language to Gmail query syntax.
 
         Examples:
-          "github'dan mailler"           → "from:noreply@github.com"
-          "hocamdan mailler"             → "from:prof@uni.edu"
-          "yıldızlı mailler"             → "is:starred"
-          "önemli mailler"               → "is:important"
-          "ekli mailler"                 → "has:attachment"
-          "okunmamış mailler"            → "is:unread"
-          "dün gelen mailler"            → "after:2025/06/18 before:2025/06/19"
-          "bu hafta gelen mailler"       → "after:2025/06/16"
-          "okunmamış ahmet'ten mailler"  → "from:ahmet is:unread"
-          "sosyal mailler"               → "category:social"
-          "tanıtım mailleri"             → "category:promotions"
+          "emails from github"           → "from:noreply@github.com"
+          "emails from my professor"     → "from:prof@uni.edu"
+          "starred emails"               → "is:starred"
+          "important emails"             → "is:important"
+          "emails with attachments"      → "has:attachment"
+          "unread emails"                → "is:unread"
+          "yesterday's emails"           → "after:2025/06/18 before:2025/06/19"
+          "this week's emails"           → "after:2025/06/16"
+          "unread emails from ahmet"     → "from:ahmet is:unread"
+          "social emails"                → "category:social"
+          "promotional emails"           → "category:promotions"
         """
         q_parts: list[str] = []
 
-        # Sender: "X'den/X'tan/X'dan/X'ten mailler"
+        # Sender: "emails from X" / "from X"
         m = re.search(
-            r"(\S+?)[''\u2019]?(?:den|dan|tan|ten|ndan|nden)\s+(?:mailler?|mail|gelen)",
+            r"(?:emails?|mails?)\s+from\s+(\S+)",
             text, re.IGNORECASE,
         )
+        if not m:
+            m = re.search(r"from\s+(\S+?)(?:\s+emails?|\s+mails?|$)", text, re.IGNORECASE)
         if m:
             sender = m.group(1)
             email = contacts.resolve(sender)
             q_parts.append(f"from:{email}")
 
         # Stars / importance / attachment / unread
-        if re.search(r"yıldız", text, re.IGNORECASE):
+        if re.search(r"starred?", text, re.IGNORECASE):
             q_parts.append("is:starred")
-        if re.search(r"önemli", text, re.IGNORECASE):
+        if re.search(r"important", text, re.IGNORECASE):
             q_parts.append("is:important")
-        if re.search(r"ekli|ek\s+olan|attachment", text, re.IGNORECASE):
+        if re.search(r"attach|with\s+attachment", text, re.IGNORECASE):
             q_parts.append("has:attachment")
-        if re.search(r"okunmam[ıi]ş", text, re.IGNORECASE):
+        if re.search(r"unread", text, re.IGNORECASE):
             q_parts.append("is:unread")
 
         # Labels / categories
         _CATEGORY_MAP = {
-            "sosyal": "social", "tanıtım": "promotions", "promosyon": "promotions",
-            "güncelleme": "updates", "forum": "forums",
+            "social": "social", "promotions": "promotions", "promotional": "promotions",
+            "updates": "updates", "forums": "forums",
         }
-        for tr_label, gmail_cat in _CATEGORY_MAP.items():
-            if tr_label in text.lower():
+        for label, gmail_cat in _CATEGORY_MAP.items():
+            if label in text.lower():
                 q_parts.append(f"category:{gmail_cat}")
                 break
 
-        # Label by name (etiketli pattern)
-        lm = re.search(r"(\S+)\s+etiketli", text, re.IGNORECASE)
+        # Label by name ("labeled X" pattern)
+        lm = re.search(r"label(?:ed|:)?\s+(\S+)", text, re.IGNORECASE)
         if lm:
             q_parts.append(f"label:{lm.group(1)}")
 
@@ -396,14 +398,14 @@ class GmailTool(BaseTool):
             before = (dt + timedelta(days=1)).strftime("%Y/%m/%d")
             q_parts.append(f"after:{after} before:{before}")
         else:
-            # "bu hafta" / "son X gün"
-            if "bu hafta" in text.lower():
+            # "this week" / "last N days"
+            if "this week" in text.lower():
                 from datetime import datetime as _dt
                 now = _dt.now()
                 monday = now - timedelta(days=now.weekday())
                 q_parts.append(f"after:{monday.strftime('%Y/%m/%d')}")
             else:
-                dm = re.search(r"son\s+(\d+)\s*gün", text, re.IGNORECASE)
+                dm = re.search(r"last\s+(\d+)\s*days?", text, re.IGNORECASE)
                 if dm:
                     days = int(dm.group(1))
                     after = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")

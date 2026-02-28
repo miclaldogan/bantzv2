@@ -140,8 +140,8 @@ class Briefing:
                 output = result.output.strip()
                 if "no events" in output.lower():
                     return "No events on the calendar today"
-                # Strip "Bugün:" header, keep event lines
-                lines = [l for l in output.splitlines() if l.strip() and "Bugün:" not in l]
+                # Strip "Today:" header, keep event lines
+                lines = [l for l in output.splitlines() if l.strip() and "Today:" not in l]
                 return "\n    ".join(lines[:3])  # max 3 events
         except Exception:
             pass
@@ -168,19 +168,19 @@ class Briefing:
             result = await c.execute(action="due_today")
             if result.success:
                 output = result.output.strip()
-                if "ödev yok" in output.lower() or "no assignments" in output.lower():
+                if "no assignments" in output.lower():
                     # Check tomorrow too
                     result2 = await c.execute(action="assignments")
-                    if result2.success and ("🟡 Tomorrow" in result2.output or "🟡 Yarın" in result2.output):
-                        yarın_lines = [
+                    if result2.success and "🟡 Tomorrow" in result2.output:
+                        tmrw_lines = [
                             l.strip() for l in result2.output.splitlines()
-                            if "Tomorrow" in l or "Yarın" in l
+                            if "Tomorrow" in l
                         ]
                         return "Due tomorrow: " + ", ".join(
-                            l.replace("🟡 Tomorrow:", "").replace("🟡 Yarın:", "").strip() for l in yarın_lines[:2]
+                            l.replace("🟡 Tomorrow:", "").strip() for l in tmrw_lines[:2]
                         )
                     return None  # No urgent assignments → skip from briefing
-                return output.replace("Due today:\n", "Due today: ").replace("Bugün teslim:\n", "Due today: ")
+                return output.replace("Due today:\n", "Due today: ")
         except Exception:
             pass
         return None

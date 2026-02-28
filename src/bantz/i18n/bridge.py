@@ -27,7 +27,7 @@ _MODELS: dict[Direction, str] = {
 }
 
 class _Translator:
-    """Tek yönlü çevirici. Lazy-load."""
+    """Unidirectional translator. Lazy-loaded."""
 
     def __init__(self, direction: Direction) -> None:
         self.direction = direction
@@ -42,17 +42,17 @@ class _Translator:
         try:
             import torch
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-            logger.info(f"MarianMT yükleniyor: {self.model_id}")
+            logger.info(f"Loading MarianMT: {self.model_id}")
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
             self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id)
             self._model.to("cpu")
             self._model.eval()
             self._torch = torch
-            logger.info(f"MarianMT hazır: {self.model_id}")
+            logger.info(f"MarianMT ready: {self.model_id}")
         except ImportError:
             raise RuntimeError(
-                "transformers paketi yüklü değil. "
-                "Kurmak için: pip install 'bantz[translation]'"
+                "transformers package not installed. "
+                "Install with: pip install 'bantz[translation]'"
             )
 
     def translate(self, text: str) -> str:
@@ -77,9 +77,9 @@ class _Translator:
 
 class LanguageBridge:
     """
-    Kullanım:
+    Usage:
         from bantz.i18n.bridge import bridge
-        en_text = await bridge.to_english("diskimi kontrol et")
+        en_text = await bridge.to_english("check my disk")
         tr_text = await bridge.to_turkish("Your disk is 76% full.")
     """
 
@@ -92,7 +92,7 @@ class LanguageBridge:
         return self._enabled
 
     async def to_english(self, text: str) -> str:
-        """TR → EN. Eğer bridge devre dışıysa orijinal metni döner."""
+        """TR → EN. Returns original text if bridge is disabled."""
         if not self._enabled:
             return text
         return await asyncio.get_event_loop().run_in_executor(
@@ -100,7 +100,7 @@ class LanguageBridge:
         )
 
     async def to_turkish(self, text: str) -> str:
-        """EN → TR. Eğer bridge devre dışıysa orijinal metni döner."""
+        """EN → TR. Returns original text if bridge is disabled."""
         if not self._enabled:
             return text
         return await asyncio.get_event_loop().run_in_executor(
@@ -108,7 +108,7 @@ class LanguageBridge:
         )
 
     def preload(self) -> None:
-        """Startup'ta her iki modeli de önceden yükle (isteğe bağlı)."""
+        """Pre-load both models at startup (optional)."""
         if not self._enabled:
             return
         self._tr2en._load()

@@ -266,27 +266,25 @@ class Brain:
             return {"tool": "weather", "args": {"city": _extract_city(o)}}
 
         # Location / GPS
-        if re.search(r"where\s+am\s+i|my\s+location|gps|current\s+location|neredeyim", both):
+        if re.search(r"where\s+am\s+i|my\s+location|gps|current\s+location", both):
             return {"tool": "_location", "args": {}}
 
         # Named Places — save current location
         _save_place_match = re.search(
-            r"(?:burası|burayı?\s+(?:kaydet|olarak)|save\s+(?:here|this|location)\s+as|kaydet)\s+(.+)",
+            r"(?:save\s+(?:here|this|location)\s+as|this\s+(?:is|place\s+is))\s+(.+)",
             both, re.IGNORECASE,
         )
         if _save_place_match:
             name = _save_place_match.group(1).strip().strip('"\'')
-            # strip trailing "olarak kaydet" in Turkish
-            name = re.sub(r"\s+olarak\s*(?:kaydet)?$", "", name, flags=re.IGNORECASE).strip()
             return {"tool": "_save_place", "args": {"name": name}}
 
         # Named Places — list saved places
-        if re.search(r"konumlarım|kayıtlı\s*yer|my\s+places|saved?\s+places|saved?\s+locations", both):
+        if re.search(r"my\s+places|saved?\s+places|saved?\s+locations|list\s+places", both):
             return {"tool": "_list_places", "args": {}}
 
         # Named Places — delete a saved place
         _del_place_match = re.search(
-            r"(?:sil|kaldır|delete|remove)\s+(?:place|konum|yer)?\s*(.+)",
+            r"(?:delete|remove)\s+(?:place\s+)?(.+)",
             both, re.IGNORECASE,
         )
         if _del_place_match:

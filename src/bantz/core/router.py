@@ -1,8 +1,8 @@
 """
 Bantz v2 — Router
-Ollama'ya gönderilecek routing kararını üretir.
+Produces the routing decision to be sent to Ollama.
 
-Ayrı dosyaya taşındı: brain.py'nin büyümesini engeller.
+Split into its own file to keep brain.py from growing too large.
 """
 from __future__ import annotations
 
