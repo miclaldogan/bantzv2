@@ -25,7 +25,7 @@ import socket
 import threading
 import time as _time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
@@ -523,8 +523,9 @@ class GPSServer:
                 data = json.loads(LOCATION_FILE.read_text(encoding="utf-8"))
                 ts = data.get("timestamp", "")
                 if ts:
-                    dt = datetime.fromisoformat(ts)
-                    age = (datetime.now() - dt).total_seconds()
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    now = datetime.now(timezone.utc)
+                    age = (now - dt).total_seconds()
                     if age < TTL_SECONDS:
                         self._latest = data
                         log.debug(
@@ -557,8 +558,9 @@ class GPSServer:
         ts = self._latest.get("timestamp", "")
         if ts:
             try:
-                dt = datetime.fromisoformat(ts)
-                if (datetime.now() - dt).total_seconds() > TTL_SECONDS:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                if (now - dt).total_seconds() > TTL_SECONDS:
                     return None
             except Exception:
                 pass
