@@ -49,6 +49,11 @@ class Config(BaseSettings):
     # ── Storage ───────────────────────────────────────────────────────────
     data_dir: str = Field("", alias="BANTZ_DATA_DIR")
 
+    # ── Morning Briefing ──────────────────────────────────────────────────
+    morning_briefing_enabled: bool = Field(True, alias="BANTZ_MORNING_BRIEFING")
+    morning_briefing_hour: int = Field(8, alias="BANTZ_MORNING_HOUR")
+    morning_briefing_minute: int = Field(0, alias="BANTZ_MORNING_MINUTE")
+
     # ── Telegram ──────────────────────────────────────────────────────────
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
