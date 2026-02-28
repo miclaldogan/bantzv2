@@ -196,7 +196,20 @@ class BantzApp(App):
         self._check_ollama()
         self._warm_up_ollama()
         self._enrich_butler_greeting()
+        self._start_gps_server()
         self.query_one("#chat-input", Input).focus()
+
+    @work(exclusive=False)
+    async def _start_gps_server(self) -> None:
+        """Start the GPS receiver in the background."""
+        try:
+            from bantz.core.gps_server import gps_server
+            ok = await gps_server.start()
+            if ok:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_system(f"GPS: {gps_server.url}")
+        except Exception:
+            pass
 
     @work(exclusive=False)
     async def _warm_up_ollama(self) -> None:

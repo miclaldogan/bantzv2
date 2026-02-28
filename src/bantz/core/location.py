@@ -3,17 +3,24 @@ Bantz v2 — Location Service
 
 Priority order:
 1. .env manual override (BANTZ_CITY, BANTZ_LAT, BANTZ_LON)
-2. GeoClue2 via D-Bus (system location service, requires user permission)
-3. ipinfo.io IP geolocation (works without permission, online only)
-4. Hardcoded fallback (Ankara, TR)
+2. Live GPS from phone (via gps_server HTTP endpoint)
+3. WiFi SSID → places.json mapping
+4. places.json primary location
+5. GeoClue2 via D-Bus (system location service, requires user permission)
+6. ipinfo.io IP geolocation (works without permission, online only)
+7. Hardcoded fallback (Ankara, TR)
 
 Fetched once per session, cached in memory.
+Call reset() to re-resolve (e.g. after receiving new GPS data).
 """
 from __future__ import annotations
 
 import asyncio
+import json as _json_mod
 import logging
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -75,19 +82,27 @@ class LocationService:
         if loc := self._from_config():
             return loc
 
-        # 2. places.json primary location (set via --setup places)
+        # 2. Live GPS from phone (highest real-time priority)
+        if loc := self._from_live_gps():
+            return loc
+
+        # 3. WiFi SSID → places.json match
+        if loc := self._from_wifi_ssid():
+            return loc
+
+        # 4. places.json primary location (set via --setup places)
         if loc := self._from_places():
             return loc
 
-        # 3. GeoClue2 (Linux system location)
+        # 5. GeoClue2 (Linux system location)
         if loc := await self._from_geoclue():
             return loc
 
-        # 4. ipinfo.io
+        # 6. ipinfo.io
         if loc := await self._from_ipinfo():
             return loc
 
-        # 5. Fallback
+        # 7. Fallback
         logger.warning("All location sources failed — using fallback (Ankara, TR)")
         return Location(**FALLBACK, source="fallback")
 
@@ -145,6 +160,77 @@ class LocationService:
         except Exception as exc:
             logger.debug(f"places.json read failed: {exc}")
             return None
+
+    def _from_live_gps(self) -> Optional[Location]:
+        """Read live GPS from phone (via gps_server's saved location file)."""
+        try:
+            from bantz.core.gps_server import gps_server
+            loc_data = gps_server.latest
+            if not loc_data:
+                return None
+            lat = loc_data.get("lat", 0.0)
+            lon = loc_data.get("lon", 0.0)
+            if lat == 0.0 and lon == 0.0:
+                return None
+            acc = round(loc_data.get("accuracy", 0))
+            logger.info(f"Live GPS: {lat:.6f}, {lon:.6f} (±{acc}m)")
+            return Location(
+                city=f"GPS ({lat:.4f}, {lon:.4f})",
+                country="TR",
+                timezone="Europe/Istanbul",
+                lat=lat,
+                lon=lon,
+                source="phone_gps",
+            )
+        except Exception as exc:
+            logger.debug(f"Live GPS read failed: {exc}")
+            return None
+
+    @staticmethod
+    def _current_ssid() -> Optional[str]:
+        """Get the currently connected WiFi SSID via nmcli."""
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+                capture_output=True, text=True, timeout=3,
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("yes:"):
+                    ssid = line.split(":", 1)[1].strip()
+                    if ssid:
+                        return ssid
+        except Exception:
+            pass
+        return None
+
+    def _from_wifi_ssid(self) -> Optional[Location]:
+        """Match current WiFi SSID against places.json ssid field."""
+        ssid = self._current_ssid()
+        if not ssid:
+            return None
+
+        places_path = Path.home() / ".local" / "share" / "bantz" / "places.json"
+        if not places_path.exists():
+            return None
+        try:
+            data = _json_mod.loads(places_path.read_text(encoding="utf-8"))
+            for name, place in data.items():
+                if place.get("ssid") == ssid:
+                    lat = place.get("lat", 0.0)
+                    lon = place.get("lon", 0.0)
+                    label = place.get("label", name)
+                    logger.info(f"WiFi SSID '{ssid}' → {label}")
+                    return Location(
+                        city=label,
+                        country="TR",
+                        timezone="Europe/Istanbul",
+                        lat=lat,
+                        lon=lon,
+                        source=f"wifi:{ssid}",
+                    )
+        except Exception as exc:
+            logger.debug(f"WiFi SSID lookup failed: {exc}")
+        return None
 
     async def _from_geoclue(self) -> Optional[Location]:
         """Try GeoClue2 via D-Bus. Requires geoclue2 installed and user permission."""
