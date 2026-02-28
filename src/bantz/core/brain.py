@@ -24,6 +24,11 @@ from bantz.core.date_parser import resolve_date
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 
+try:
+    from bantz.memory.graph import graph_memory
+except ImportError:
+    graph_memory = None  # neo4j driver not installed
+
 
 def strip_markdown(text: str) -> str:
     text = re.sub(r"```(?:\w+)?\s*\n?(.*?)```", r"\1", text, flags=re.DOTALL)
@@ -49,6 +54,7 @@ You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs
 {style_hint}
 {time_hint}
 {profile_hint}
+{graph_hint}
 CRITICAL: You have NO access to real emails, calendar events, live news, or any external data.
 If the user asks about specific emails, contacts, or external info you don't have, say something like
 "I'd need to fetch that — try asking me to check your mail/calendar" and STOP. Never fabricate data.
@@ -66,7 +72,8 @@ RULES:
 - End with: "Want me to read any?" / "Which one?" / "Need anything else?"
 - If tool returned an error, say that honestly. Never claim success on failure.
 - Max 5 sentences. English only. Plain text, no markdown.{style_hint}{time_hint}
-{profile_hint}\
+{profile_hint}
+{graph_hint}\
 """
 
 COMMAND_SYSTEM = """\
@@ -124,6 +131,7 @@ class Brain:
             pass  # PDF/DOCX deps may not be installed
         self._bridge = None
         self._memory_ready = False
+        self._graph_ready = False
         # Session state: stores last tool results for contextual follow-ups
         self._last_messages: list[dict] = []   # last listed emails [{id, from, subject, ...}]
         self._last_events: list[dict] = []     # last listed calendar events
@@ -133,6 +141,31 @@ class Brain:
             memory.init(config.db_path)
             memory.new_session()
             self._memory_ready = True
+
+    async def _ensure_graph(self) -> None:
+        if not self._graph_ready and graph_memory:
+            await graph_memory.init()
+            self._graph_ready = True
+
+    async def _graph_context(self, user_msg: str) -> str:
+        """Get graph memory context string (empty if disabled)."""
+        if graph_memory and graph_memory.enabled:
+            try:
+                return await graph_memory.context_for(user_msg)
+            except Exception:
+                pass
+        return ""
+
+    async def _graph_store(self, user_msg: str, assistant_msg: str,
+                           tool_used: str | None = None,
+                           tool_data: dict | None = None) -> None:
+        """Store entities from exchange in graph (fire-and-forget)."""
+        if graph_memory and graph_memory.enabled:
+            try:
+                await graph_memory.extract_and_store(
+                    user_msg, assistant_msg, tool_used, tool_data)
+            except Exception:
+                pass
 
     def _get_bridge(self):
         if self._bridge is None:
@@ -385,6 +418,7 @@ class Brain:
 
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
         self._ensure_memory()
+        await self._ensure_graph()
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
 
@@ -397,6 +431,7 @@ class Brain:
         if steps:
             resp = await workflow_engine.execute(steps, self, en_input, tc)
             memory.add("assistant", resp, tool_used="workflow")
+            await self._graph_store(user_input, resp, "workflow")
             return BrainResult(response=resp, tool_used="workflow")
 
         quick = self._quick_route(user_input, en_input)
@@ -454,6 +489,7 @@ class Brain:
             if plan is None:
                 resp = await self._chat(en_input, tc)
                 memory.add("assistant", resp)
+                await self._graph_store(user_input, resp)
                 return BrainResult(response=resp, tool_used=None)
 
         route     = plan.get("route", "chat")
@@ -464,6 +500,7 @@ class Brain:
         if route != "tool" or not tool_name:
             resp = await self._chat(en_input, tc)
             memory.add("assistant", resp)
+            await self._graph_store(user_input, resp)
             return BrainResult(response=resp, tool_used=None)
 
         if risk == "destructive" and config.shell_confirm_destructive and not confirmed:
@@ -517,6 +554,8 @@ class Brain:
 
         resp = await self._finalize(en_input, result, tc)
         memory.add("assistant", resp, tool_used=tool_name)
+        await self._graph_store(user_input, resp, tool_name,
+                                result.data if result else None)
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
     async def _chat(self, en_input: str, tc: dict) -> str:
@@ -526,11 +565,12 @@ class Brain:
         """
         history = memory.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
+        graph_hint = await self._graph_context(en_input)
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint())},
+                style_hint=_style_hint(), graph_hint=graph_hint)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -565,7 +605,7 @@ class Brain:
         messages = [
             {"role": "system", "content": FINALIZER_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint())},
+                style_hint=_style_hint(), graph_hint=await self._graph_context(en_input))},
             {"role": "user", "content": (
                 f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
             )},

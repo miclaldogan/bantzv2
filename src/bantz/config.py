@@ -37,6 +37,12 @@ class Config(BaseSettings):
     location_lat: float = Field(0.0, alias="BANTZ_LAT")
     location_lon: float = Field(0.0, alias="BANTZ_LON")
 
+    # ── Neo4j Graph Memory ────────────────────────────────────────────────
+    neo4j_enabled: bool = Field(False, alias="BANTZ_NEO4J_ENABLED")
+    neo4j_uri: str = Field("bolt://localhost:7687", alias="BANTZ_NEO4J_URI")
+    neo4j_user: str = Field("neo4j", alias="BANTZ_NEO4J_USER")
+    neo4j_password: str = Field("bantzpass", alias="BANTZ_NEO4J_PASSWORD")
+
     # ── Storage ───────────────────────────────────────────────────────────
     data_dir: str = Field("", alias="BANTZ_DATA_DIR")
 
