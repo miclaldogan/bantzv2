@@ -234,6 +234,7 @@ class BantzApp(App):
         self._enrich_butler_greeting()
         self._start_gps_server()
         self._start_stationary_checker()
+        self._start_morning_briefing_timer()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -312,6 +313,28 @@ class BantzApp(App):
         except (asyncio.CancelledError, Exception):
             pass
 
+    def _start_morning_briefing_timer(self) -> None:
+        """Check every 60s if the scheduled morning briefing is due (#80)."""
+        self.set_interval(60, self._check_morning_briefing)
+
+    @work(exclusive=False)
+    async def _check_morning_briefing(self) -> None:
+        """Periodic check: fire morning briefing if it's the configured time."""
+        try:
+            from bantz.personality.greeting import greeting_manager
+            from bantz.core.memory import memory
+
+            text = await greeting_manager.morning_briefing_if_due()
+            if text:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(text)
+                chat.scroll_end()
+                try:
+                    memory.add("assistant", text, tool_used="briefing")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     @work(exclusive=False)
     async def _check_ollama(self) -> None:
