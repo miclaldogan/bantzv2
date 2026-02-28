@@ -83,6 +83,11 @@ class ThinkingLabel(Static):
 # ── ChatLog ───────────────────────────────────────────────────────────────────
 
 class ChatLog(RichLog):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._streaming_buffer: str = ""
+        self._stream_started: bool = False
+
     def add_user(self, text: str) -> None:
         self.write(f"[bold green]▶ You[/]   {text}")
 
@@ -94,6 +99,37 @@ class ChatLog(RichLog):
         self.write(f"[bold cyan]◆ Bantz[/]  {lines[0]}")
         for line in lines[1:]:
             self.write(f"         {line}")
+
+    def stream_start(self) -> None:
+        """Begin a streaming response — write the prefix, prepare buffer."""
+        self._streaming_buffer = ""
+        self._stream_started = True
+        self.write("[bold cyan]◆ Bantz[/]  ...")
+
+    def stream_token(self, token: str) -> None:
+        """Append a token to the current streaming response."""
+        self._streaming_buffer += token
+        # Split into completed lines vs current partial line
+        parts = self._streaming_buffer.split("\n")
+        # Replace the last written line with current partial text
+        if self.lines:
+            # Remove the last placeholder/partial line
+            self.lines.pop()
+        # Write any completed lines
+        if len(parts) > 1:
+            for completed_line in parts[:-1]:
+                self.write(f"         {completed_line}")
+        # Write current partial line
+        partial = parts[-1] if parts else ""
+        self.write(f"         {partial}")
+        self.scroll_end(animate=False)
+
+    def stream_end(self) -> str:
+        """Finish streaming — return the full accumulated text."""
+        text = self._streaming_buffer
+        self._streaming_buffer = ""
+        self._stream_started = False
+        return text
 
     def add_system(self, text: str) -> None:
         self.write(f"[dim]  {text}[/]")
@@ -311,6 +347,43 @@ class BantzApp(App):
             chat.add_system("  Check your internet connection and try again.")
             return
 
+        # ── Streaming response (#67) ──
+        if result.stream is not None:
+            self._show_thinking(False)
+            if result.tool_used:
+                chat.add_tool(result.tool_used)
+            chat.stream_start()
+
+            accumulated = ""
+            try:
+                async for token in result.stream:
+                    accumulated += token
+                    chat.stream_token(token)
+            except Exception as exc:
+                chat.stream_end()
+                self._busy = False
+                chat.add_error(f"Stream error: {exc}")
+                return
+
+            full_text = chat.stream_end()
+            self._busy = False
+
+            # Post-processing on accumulated text
+            from bantz.core.brain import strip_markdown
+            cleaned = strip_markdown(full_text)
+
+            # Save to memory + graph
+            from bantz.core.memory import memory as _mem
+            _mem.add("assistant", cleaned, tool_used=result.tool_used)
+            try:
+                from bantz.core.brain import brain as _brain
+                await _brain._graph_store(text, cleaned, result.tool_used)
+            except Exception:
+                pass
+
+            return
+
+        # ── Non-streaming response ──
         self._show_thinking(False)
         self._busy = False
 

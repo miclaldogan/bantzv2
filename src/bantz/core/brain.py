@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
+from typing import AsyncIterator
 
 import logging
 
@@ -123,6 +124,7 @@ class BrainResult:
     pending_command: str = ""
     pending_tool: str = ""
     pending_args: dict = field(default_factory=dict)
+    stream: AsyncIterator[str] | None = None
 
 
 class Brain:
@@ -695,10 +697,11 @@ class Brain:
             else:
                 plan = await _ollama_route(en_input, registry.all_schemas())
                 if plan is None:
-                    resp = await self._chat(en_input, tc)
-                    memory.add("assistant", resp)
-                    await self._graph_store(user_input, resp)
-                    return BrainResult(response=resp, tool_used=None)
+                    # Stream chat responses for lower perceived latency (#67)
+                    stream = self._chat_stream(en_input, tc)
+                    return BrainResult(
+                        response="", tool_used=None, stream=stream,
+                    )
 
         route     = plan.get("route", "chat")
         tool_name = plan.get("tool_name") or ""
@@ -706,10 +709,8 @@ class Brain:
         risk      = plan.get("risk_level", "safe")
 
         if route != "tool" or not tool_name:
-            resp = await self._chat(en_input, tc)
-            memory.add("assistant", resp)
-            await self._graph_store(user_input, resp)
-            return BrainResult(response=resp, tool_used=None)
+            stream = self._chat_stream(en_input, tc)
+            return BrainResult(response="", tool_used=None, stream=stream)
 
         if risk == "destructive" and config.shell_confirm_destructive and not confirmed:
             cmd_str = tool_args.get("command", tool_name)
@@ -765,6 +766,15 @@ class Brain:
                 },
             )
 
+        # Try streaming finalize for long tool output (#67)
+        fin_stream = await self._finalize_stream(en_input, result, tc)
+        if fin_stream is not None:
+            return BrainResult(
+                response="", tool_used=tool_name,
+                tool_result=result, stream=fin_stream,
+            )
+
+        # Short output — non-streaming finalize
         resp = await self._finalize(en_input, result, tc)
         memory.add("assistant", resp, tool_used=tool_name)
         await self._graph_store(user_input, resp, tool_name,
@@ -805,6 +815,40 @@ class Brain:
             return strip_markdown(raw)
         except Exception as exc:
             return f"(Ollama error: {exc})"
+
+    async def _chat_stream(self, en_input: str, tc: dict) -> AsyncIterator[str]:
+        """
+        Streaming chat — yields tokens as they arrive from LLM.
+        Post-processing (strip_markdown) runs on accumulated text at consumer side.
+        """
+        history = memory.context(n=12)
+        prior = history[:-1] if (history and history[-1]["role"] == "user") else history
+        graph_hint = await self._graph_context(en_input)
+
+        messages = [
+            {"role": "system", "content": CHAT_SYSTEM.format(
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
+                style_hint=_style_hint(), graph_hint=graph_hint)},
+            *prior,
+            {"role": "user", "content": en_input},
+        ]
+
+        # Try Gemini streaming first
+        try:
+            from bantz.llm.gemini import gemini
+            if gemini.is_enabled():
+                async for token in gemini.chat_stream(messages):
+                    yield token
+                return
+        except Exception:
+            pass  # fall through to Ollama
+
+        # Ollama streaming fallback
+        try:
+            async for token in ollama.chat_stream(messages):
+                yield token
+        except Exception as exc:
+            yield f"(Ollama error: {exc})"
 
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         if not result.success:
@@ -855,6 +899,51 @@ class Brain:
             )
 
         return cleaned
+
+    async def _finalize_stream(
+        self, en_input: str, result: ToolResult, tc: dict,
+    ) -> AsyncIterator[str] | None:
+        """
+        Streaming finalize — yields tokens for long tool output.
+        Returns None if output is short enough to return directly (no LLM needed).
+        Post-processing (hallucination check) runs at consumer side on accumulated text.
+        """
+        if not result.success:
+            return None  # errors are short, no need to stream
+        output = result.output.strip()
+        if not output or output == "(command executed successfully, no output)":
+            return None
+        if len(output) < 800:
+            return None  # short enough to return verbatim
+
+        messages = [
+            {"role": "system", "content": FINALIZER_SYSTEM.format(
+                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
+                style_hint=_style_hint(), graph_hint=await self._graph_context(en_input))},
+            {"role": "user", "content": (
+                f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
+            )},
+        ]
+
+        async def _stream() -> AsyncIterator[str]:
+            # Try Gemini streaming first
+            try:
+                from bantz.llm.gemini import gemini
+                if gemini.is_enabled():
+                    async for token in gemini.chat_stream(messages, temperature=0.2):
+                        yield token
+                    return
+            except Exception:
+                pass
+
+            # Ollama streaming fallback
+            try:
+                async for token in ollama.chat_stream(messages):
+                    yield token
+            except Exception:
+                yield output[:1500]
+
+        return _stream()
 
     @staticmethod
     def _hallucination_check(response: str, tool_output: str) -> tuple[str, float]:

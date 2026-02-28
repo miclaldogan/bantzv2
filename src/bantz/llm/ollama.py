@@ -27,6 +27,34 @@ class OllamaClient:
             data = resp.json()
             return data["message"]["content"]
 
+    async def chat_stream(self, messages: list[dict]) -> AsyncIterator[str]:
+        """
+        Stream tokens from Ollama via NDJSON.
+        Ollama /api/chat with stream:true returns lines like:
+          {"message": {"content": "token"}, "done": false}
+          {"message": {"content": ""}, "done": true}
+        """
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json={"model": self.model, "messages": messages, "stream": True},
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    token = data.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                    if data.get("done", False):
+                        return
+
     async def is_available(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
