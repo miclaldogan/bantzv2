@@ -265,6 +265,10 @@ class Brain:
         if any(k in both for k in ("weather", "temperature", "rain", "forecast", "degrees")):
             return {"tool": "weather", "args": {"city": _extract_city(o)}}
 
+        # Location / GPS
+        if re.search(r"where\s+am\s+i|my\s+location|gps|current\s+location|neredeyim", both):
+            return {"tool": "_location", "args": {}}
+
         # News — support topic search
         if any(k in both for k in ("news", "headlines", "hacker news", "top stories")):
             source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
@@ -416,6 +420,37 @@ class Brain:
         ])
         return raw.strip().strip("`")
 
+    async def _handle_location(self) -> str:
+        """Handle 'where am i' queries — show GPS/location info."""
+        from bantz.core.location import location_service
+        try:
+            loc = await location_service.get()
+        except Exception:
+            loc = None
+
+        lines: list[str] = []
+        if loc:
+            lines.append(f"📍 {loc.display}")
+            if loc.lat and loc.lon:
+                lines.append(f"   Coordinates: {loc.lat:.6f}, {loc.lon:.6f}")
+            lines.append(f"   Source: {loc.source}")
+        else:
+            lines.append("📍 Location unknown")
+
+        # Show GPS server status
+        try:
+            from bantz.core.gps_server import gps_server
+            gps_loc = gps_server.latest
+            if gps_loc:
+                acc = round(gps_loc.get("accuracy", 0))
+                lines.append(f"   Phone GPS: {gps_loc['lat']:.6f}, {gps_loc['lon']:.6f} (±{acc}m)")
+            else:
+                lines.append(f"   Phone GPS: not connected — open {gps_server.url} on phone")
+        except Exception:
+            pass
+
+        return "\n".join(lines)
+
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
         self._ensure_memory()
         await self._ensure_graph()
@@ -441,6 +476,11 @@ class Brain:
             text = await _briefing.generate()
             memory.add("assistant", text, tool_used="briefing")
             return BrainResult(response=text, tool_used="briefing")
+
+        if quick and quick["tool"] == "_location":
+            text = await self._handle_location()
+            memory.add("assistant", text, tool_used="location")
+            return BrainResult(response=text, tool_used="location")
 
         if quick and quick["tool"] == "_schedule_today":
             from bantz.core.schedule import schedule as _sched

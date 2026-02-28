@@ -575,6 +575,10 @@ async def _doctor() -> None:
     plc_icon = "✓" if _plc.is_configured() else "○"
     print(f"{plc_icon} Places: {_plc.status_line()}")
 
+    # GPS
+    from bantz.core.gps_server import gps_server
+    print(f"○ {gps_server.status_line()}")
+
     print("─" * 44)
 
 
