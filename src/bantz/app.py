@@ -236,6 +236,15 @@ class BantzApp(App):
         self._start_stationary_checker()
         self.query_one("#chat-input", Input).focus()
 
+    async def action_quit(self) -> None:
+        """Send GPS stop signal before exiting (#74)."""
+        try:
+            from bantz.core.gps_server import gps_server
+            await gps_server.stop()
+        except Exception:
+            pass
+        self.exit()
+
     @work(exclusive=False)
     async def _start_gps_server(self) -> None:
         """Start the GPS receiver in the background."""
@@ -302,6 +311,7 @@ class BantzApp(App):
                     pass
         except (asyncio.CancelledError, Exception):
             pass
+
 
     @work(exclusive=False)
     async def _check_ollama(self) -> None:
