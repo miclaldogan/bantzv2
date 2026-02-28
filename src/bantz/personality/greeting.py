@@ -1,24 +1,18 @@
 """
-Bantz v2 — Greeting & Scheduled Morning Briefing (#80)
+Bantz v2 — Scheduled Morning Briefing (#80)
 
-Handles:
-1. Boot greeting — delegates to butler for rich proactive greeting on launch
-2. Scheduled morning briefing — fires at configured time (default 08:00)
+Fires a daily briefing at a configurable time (default 08:00).
+Boot greeting is handled separately by app.py → _enrich_butler_greeting().
 
 Usage:
     from bantz.personality.greeting import greeting_manager
-
-    # Boot greeting (called from app.py on_mount)
-    text = await greeting_manager.boot_greeting(session_info)
-
-    # Check if morning briefing should fire now
     text = await greeting_manager.morning_briefing_if_due()
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, date
-from typing import Any, Optional
+from typing import Optional
 
 from bantz.config import config
 from bantz.core.briefing import briefing as _briefing
@@ -30,19 +24,6 @@ class GreetingManager:
 
     def __init__(self) -> None:
         self._last_briefing_date: date | None = None
-
-    async def boot_greeting(self, session_info: dict[str, Any]) -> str:
-        """
-        Rich boot greeting via butler.
-        Already wired in app.py via _enrich_butler_greeting — this is an
-        alternative entry point if callers want it directly.
-        """
-        try:
-            from bantz.core.butler import butler
-            return await butler.greet(session_info)
-        except Exception as exc:
-            log.debug("Boot greeting failed: %s", exc)
-            return ""
 
     async def morning_briefing_if_due(self) -> Optional[str]:
         """
