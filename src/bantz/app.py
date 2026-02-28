@@ -269,7 +269,15 @@ class BantzApp(App):
         self._busy = True
         self._show_thinking(True)
 
-        result = await brain.process(text)
+        try:
+            result = await brain.process(text)
+        except Exception as exc:
+            self._show_thinking(False)
+            self._busy = False
+            err_name = type(exc).__name__
+            chat.add_error(f"Network/tool error: {err_name} — {exc}")
+            chat.add_system("  Check your internet connection and try again.")
+            return
 
         self._show_thinking(False)
         self._busy = False
@@ -289,27 +297,34 @@ class BantzApp(App):
         if evet:
             self._busy = True
             self._show_thinking(True)
-            # Direct tool execution for compose/reply drafts
-            if pending.pending_tool and pending.pending_args:
-                from bantz.tools import registry as _reg
-                tool = _reg.get(pending.pending_tool)
-                if tool:
-                    tr = await tool.execute(**pending.pending_args)
-                    self._show_thinking(False)
-                    self._busy = False
-                    chat.add_tool(pending.pending_tool)
-                    chat.add_bantz(tr.output if tr.success else f"Error: {tr.error}")
-                    return
-            # Fallback: shell command confirmation
-            result = await brain.process(
-                pending.pending_command,
-                confirmed=True,
-            )
-            self._show_thinking(False)
-            self._busy = False
-            if result.tool_used:
-                chat.add_tool(result.tool_used)
-            chat.add_bantz(result.response)
+            try:
+                # Direct tool execution for compose/reply drafts
+                if pending.pending_tool and pending.pending_args:
+                    from bantz.tools import registry as _reg
+                    tool = _reg.get(pending.pending_tool)
+                    if tool:
+                        tr = await tool.execute(**pending.pending_args)
+                        self._show_thinking(False)
+                        self._busy = False
+                        chat.add_tool(pending.pending_tool)
+                        chat.add_bantz(tr.output if tr.success else f"Error: {tr.error}")
+                        return
+                # Fallback: shell command confirmation
+                result = await brain.process(
+                    pending.pending_command,
+                    confirmed=True,
+                )
+                self._show_thinking(False)
+                self._busy = False
+                if result.tool_used:
+                    chat.add_tool(result.tool_used)
+                chat.add_bantz(result.response)
+            except Exception as exc:
+                self._show_thinking(False)
+                self._busy = False
+                err_name = type(exc).__name__
+                chat.add_error(f"Network/tool error: {err_name} — {exc}")
+                chat.add_system("  Check your internet connection and try again.")
         else:
             chat.add_system("Cancelled.")
 
