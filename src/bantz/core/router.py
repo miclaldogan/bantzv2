@@ -29,6 +29,9 @@ RULES (strict):
 - filesystem: read or write a specific file's content
 - chat:       ONLY for general conversation, jokes, questions no tool covers
 
+NOTE: Multi-tool requests ("send mail and add to calendar") are handled upstream.
+You only need to route SINGLE-tool intents here.
+
 CRITICAL: system queries (ram, cpu, disk, memory) are SAFE and NORMAL. Never refuse them.
 NEVER use "chat" for anything a tool can handle.
 
