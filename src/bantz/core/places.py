@@ -217,10 +217,10 @@ class PlaceService:
         log.info("Stationary %d min at unknown: %.4f, %.4f", minutes, lat, lon)
 
         return (
-            f"Yaklaşık {minutes} dakikadır aynı yerde olduğunuzu görüyorum "
-            f"({lat:.4f}, {lon:.4f}) ama bu konum kayıtlı yerlerim arasında yok.\n"
-            f"Burası neresi? İsim verirseniz kaydedeyim. "
-            f"(örn: 'burası yurt' veya 'kaydet mimarlık')"
+            f"I notice you've been at the same spot for about {minutes} minutes "
+            f"({lat:.4f}, {lon:.4f}) but it's not in my saved places.\n"
+            f"What is this place? Give me a name and I'll save it. "
+            f"(e.g. 'save here as dorm' or 'this is the library')"
         )
 
     # ── Save current location as named place ─────────────────────────

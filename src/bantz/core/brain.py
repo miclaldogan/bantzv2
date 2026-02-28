@@ -491,25 +491,25 @@ class Brain:
             lat = result.get("lat", 0.0)
             lon = result.get("lon", 0.0)
             return (
-                f"📌 '{name}' olarak kaydettim!\n"
-                f"   Koordinat: {lat:.6f}, {lon:.6f}\n"
-                f"   Yarıçap: {result.get('radius', 100)}m"
+                f"📌 Saved '{name}' as a place!\n"
+                f"   Coordinates: {lat:.6f}, {lon:.6f}\n"
+                f"   Radius: {result.get('radius', 100)}m"
             )
-        return "❌ GPS verisi yok — konumu kaydedemedim. Telefon GPS'i açık mı?"
+        return "❌ No GPS data — couldn't save location. Is the phone GPS on?"
 
     async def _handle_list_places(self) -> str:
         """List all saved places."""
         from bantz.core.places import places as _places
         all_p = _places.all_places()
         if not all_p:
-            return "Kayıtlı konum yok. 'burası X' diyerek kaydet."
-        lines = ["📌 Kayıtlı konumlar:"]
+            return "No saved places yet. Say 'save here as X' to save one."
+        lines = ["📌 Saved places:"]
         for key, p in all_p.items():
             label = p.get("label", key)
             lat = p.get("lat", 0.0)
             lon = p.get("lon", 0.0)
             radius = p.get("radius", 100)
-            marker = " ⬅ buradasın" if key == _places._current_place_key else ""
+            marker = " ⬅ you are here" if key == _places._current_place_key else ""
             lines.append(f"  • {label} ({lat:.4f}, {lon:.4f}, r={radius}m){marker}")
         return "\n".join(lines)
 
@@ -517,8 +517,8 @@ class Brain:
         """Delete a saved place."""
         from bantz.core.places import places as _places
         if _places.delete_place(name):
-            return f"📌 '{name}' silindi."
-        return f"❌ '{name}' adında kayıtlı konum bulamadım."
+            return f"📌 '{name}' deleted."
+        return f"❌ No saved place named '{name}' found."
 
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
         self._ensure_memory()
