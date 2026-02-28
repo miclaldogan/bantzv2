@@ -269,6 +269,32 @@ class Brain:
         if re.search(r"where\s+am\s+i|my\s+location|gps|current\s+location|neredeyim", both):
             return {"tool": "_location", "args": {}}
 
+        # Named Places — save current location
+        _save_place_match = re.search(
+            r"(?:burası|burayı?\s+(?:kaydet|olarak)|save\s+(?:here|this|location)\s+as|kaydet)\s+(.+)",
+            both, re.IGNORECASE,
+        )
+        if _save_place_match:
+            name = _save_place_match.group(1).strip().strip('"\'')
+            # strip trailing "olarak kaydet" in Turkish
+            name = re.sub(r"\s+olarak\s*(?:kaydet)?$", "", name, flags=re.IGNORECASE).strip()
+            return {"tool": "_save_place", "args": {"name": name}}
+
+        # Named Places — list saved places
+        if re.search(r"konumlarım|kayıtlı\s*yer|my\s+places|saved?\s+places|saved?\s+locations", both):
+            return {"tool": "_list_places", "args": {}}
+
+        # Named Places — delete a saved place
+        _del_place_match = re.search(
+            r"(?:sil|kaldır|delete|remove)\s+(?:place|konum|yer)?\s*(.+)",
+            both, re.IGNORECASE,
+        )
+        if _del_place_match:
+            cand = _del_place_match.group(1).strip().strip('"\'')
+            # only treat as place delete if candidate looks like a place name (short, no verbs)
+            if len(cand.split()) <= 3 and not re.search(r"file|mail|event|calendar", cand, re.IGNORECASE):
+                return {"tool": "_delete_place", "args": {"name": cand}}
+
         # News — support topic search
         if any(k in both for k in ("news", "headlines", "hacker news", "top stories")):
             source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
@@ -423,6 +449,7 @@ class Brain:
     async def _handle_location(self) -> str:
         """Handle 'where am i' queries — show GPS/location info."""
         from bantz.core.location import location_service
+        from bantz.core.places import places as _places
         try:
             loc = await location_service.get()
         except Exception:
@@ -437,6 +464,11 @@ class Brain:
         else:
             lines.append("📍 Location unknown")
 
+        # Show current named place if any
+        cur_label = _places.current_place_label()
+        if cur_label:
+            lines.append(f"   📌 Currently at: {cur_label}")
+
         # Show GPS server status
         try:
             from bantz.core.gps_server import gps_server
@@ -450,6 +482,43 @@ class Brain:
             pass
 
         return "\n".join(lines)
+
+    async def _handle_save_place(self, name: str) -> str:
+        """Save current GPS position as a named place."""
+        from bantz.core.places import places as _places
+        result = _places.save_here(name)
+        if result:
+            lat = result.get("lat", 0.0)
+            lon = result.get("lon", 0.0)
+            return (
+                f"📌 '{name}' olarak kaydettim!\n"
+                f"   Koordinat: {lat:.6f}, {lon:.6f}\n"
+                f"   Yarıçap: {result.get('radius', 100)}m"
+            )
+        return "❌ GPS verisi yok — konumu kaydedemedim. Telefon GPS'i açık mı?"
+
+    async def _handle_list_places(self) -> str:
+        """List all saved places."""
+        from bantz.core.places import places as _places
+        all_p = _places.all_places()
+        if not all_p:
+            return "Kayıtlı konum yok. 'burası X' diyerek kaydet."
+        lines = ["📌 Kayıtlı konumlar:"]
+        for key, p in all_p.items():
+            label = p.get("label", key)
+            lat = p.get("lat", 0.0)
+            lon = p.get("lon", 0.0)
+            radius = p.get("radius", 100)
+            marker = " ⬅ buradasın" if key == _places._current_place_key else ""
+            lines.append(f"  • {label} ({lat:.4f}, {lon:.4f}, r={radius}m){marker}")
+        return "\n".join(lines)
+
+    async def _handle_delete_place(self, name: str) -> str:
+        """Delete a saved place."""
+        from bantz.core.places import places as _places
+        if _places.delete_place(name):
+            return f"📌 '{name}' silindi."
+        return f"❌ '{name}' adında kayıtlı konum bulamadım."
 
     async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
         self._ensure_memory()
@@ -481,6 +550,21 @@ class Brain:
             text = await self._handle_location()
             memory.add("assistant", text, tool_used="location")
             return BrainResult(response=text, tool_used="location")
+
+        if quick and quick["tool"] == "_save_place":
+            text = await self._handle_save_place(quick["args"]["name"])
+            memory.add("assistant", text, tool_used="places")
+            return BrainResult(response=text, tool_used="places")
+
+        if quick and quick["tool"] == "_list_places":
+            text = await self._handle_list_places()
+            memory.add("assistant", text, tool_used="places")
+            return BrainResult(response=text, tool_used="places")
+
+        if quick and quick["tool"] == "_delete_place":
+            text = await self._handle_delete_place(quick["args"]["name"])
+            memory.add("assistant", text, tool_used="places")
+            return BrainResult(response=text, tool_used="places")
 
         if quick and quick["tool"] == "_schedule_today":
             from bantz.core.schedule import schedule as _sched
