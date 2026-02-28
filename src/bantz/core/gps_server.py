@@ -224,86 +224,182 @@ _PHONE_APP_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0d1117">
-<title>Bantz GPS</title>
+<title>Bantz GPS Tracker</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
 background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;align-items:center;
-justify-content:center;min-height:100vh;padding:20px}
-.c{background:#161b22;border:1px solid #30363d;border-radius:12px;
-padding:32px;max-width:400px;width:100%;text-align:center}
-h1{font-size:22px;margin-bottom:6px}
+justify-content:center;min-height:100vh;padding:16px;-webkit-user-select:none;user-select:none}
+.c{background:#161b22;border:1px solid #30363d;border-radius:16px;
+padding:28px;max-width:400px;width:100%;text-align:center}
+h1{font-size:22px;margin-bottom:4px}
 .sub{color:#8b949e;font-size:13px;margin-bottom:20px}
-.btn{background:#238636;border:none;color:white;padding:14px 28px;border-radius:8px;
-font-size:16px;cursor:pointer;width:100%;font-weight:600}
+.btn{border:none;color:white;padding:16px 28px;border-radius:12px;
+font-size:17px;cursor:pointer;width:100%;font-weight:700;transition:all 0.3s}
+.btn-start{background:#238636}
+.btn-start:hover{background:#2ea043}
+.btn-stop{background:#da3633}
+.btn-stop:hover{background:#f85149}
 .btn:disabled{background:#30363d;cursor:not-allowed}
-.st{margin-top:16px;padding:12px;border-radius:8px;font-size:14px;line-height:1.5}
+.live{display:none;margin-top:20px}
+.live.on{display:block}
+.pulse{display:inline-block;width:12px;height:12px;border-radius:50%;
+background:#3fb950;margin-right:8px;vertical-align:middle;
+animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+.stats{background:#0d1117;border-radius:10px;padding:14px;margin-top:14px;text-align:left}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;
+border-bottom:1px solid #161b22}
+.row:last-child{border:none}
+.lbl{color:#8b949e}
+.val{color:#e6edf3;font-family:monospace;font-size:12px}
+.st{margin-top:14px;padding:10px;border-radius:8px;font-size:13px}
 .ok{background:#0d1f0d;border:1px solid #238636;color:#3fb950}
 .er{background:#1f0d0d;border:1px solid #da3633;color:#f85149}
 .in{background:#0d1520;border:1px solid #1f6feb;color:#58a6ff}
-.co{font-family:monospace;font-size:13px;color:#8b949e;margin-top:8px}
-.md{color:#8b949e;font-size:11px;margin-top:16px}
+.md{color:#6e7681;font-size:11px;margin-top:14px;line-height:1.4}
+.cnt{font-size:32px;font-weight:700;color:#3fb950;margin:8px 0}
 </style>
 </head><body>
 <div class="c">
-<div style="font-size:48px;margin-bottom:16px">&#x1F4CD;</div>
-<h1>Bantz GPS</h1>
-<p class="sub">Relay mode &mdash; works from any network</p>
-<button class="btn" id="b" onclick="go()">Share Location</button>
+<div style="font-size:44px;margin-bottom:12px">&#x1F4CD;</div>
+<h1>Bantz GPS Tracker</h1>
+<p class="sub">Continuous location tracking</p>
+
+<button class="btn btn-start" id="btn" onclick="toggle()">Start Tracking</button>
+
 <div id="s"></div>
-<label style="display:block;margin-top:12px;cursor:pointer">
-<input type="checkbox" id="au" onchange="tog()">
-<span style="color:#8b949e;font-size:13px">Auto-refresh (5 min)</span>
-</label>
-<p class="md">Channel: %%RELAY_TOPIC%%</p>
+
+<div class="live" id="live">
+  <div><span class="pulse"></span><span style="color:#3fb950;font-weight:600">LIVE TRACKING</span></div>
+  <div class="cnt" id="cnt">0</div>
+  <div style="color:#8b949e;font-size:12px">updates sent</div>
+
+  <div class="stats">
+    <div class="row"><span class="lbl">Latitude</span><span class="val" id="lat">-</span></div>
+    <div class="row"><span class="lbl">Longitude</span><span class="val" id="lon">-</span></div>
+    <div class="row"><span class="lbl">Accuracy</span><span class="val" id="acc">-</span></div>
+    <div class="row"><span class="lbl">Speed</span><span class="val" id="spd">-</span></div>
+    <div class="row"><span class="lbl">Last sent</span><span class="val" id="ts">-</span></div>
+    <div class="row"><span class="lbl">Next in</span><span class="val" id="nxt">-</span></div>
+  </div>
 </div>
+
+<p class="md">Channel: %%RELAY_TOPIC%%<br>
+Screen stays awake while tracking</p>
+</div>
+
 <script>
-var T='%%RELAY_TOPIC%%',N='https://ntfy.sh';var iv=null;
-function go(){
-  var b=document.getElementById('b'),s=document.getElementById('s');
-  b.disabled=true;b.textContent='Getting GPS...';
-  s.innerHTML='<div class="st in">Requesting location...</div>';
+var T='%%RELAY_TOPIC%%', N='https://ntfy.sh';
+var watchId=null, sendIv=null, wakeLock=null, countdownIv=null;
+var lastPos=null, sendCount=0, SEND_INTERVAL=60;
+var secondsLeft=0;
+
+function toggle(){
+  if(watchId!==null) stopTracking();
+  else startTracking();
+}
+
+function startTracking(){
+  var b=document.getElementById('btn'), s=document.getElementById('s');
   if(!navigator.geolocation){
     s.innerHTML='<div class="st er">Geolocation not supported</div>';
-    b.disabled=false;b.textContent='Share Location';return;
+    return;
   }
-  navigator.geolocation.getCurrentPosition(
-    function(p){
-      var d={lat:p.coords.latitude,lon:p.coords.longitude,
-        accuracy:p.coords.accuracy,altitude:p.coords.altitude,
-        speed:p.coords.speed,timestamp:new Date().toISOString()};
-      fetch(N+'/'+T,{method:'POST',body:JSON.stringify(d)})
-      .then(function(r){
-        if(r.ok){
-          s.innerHTML='<div class="st ok">&#x2713; Sent to Bantz!</div>'+
-            '<div class="co">'+d.lat.toFixed(6)+', '+d.lon.toFixed(6)+
-            ' (&plusmn;'+Math.round(d.accuracy)+'m)</div>';
-          b.textContent='Update';
-        } else {
-          s.innerHTML='<div class="st er">Server error</div>';
-          b.textContent='Retry';
-        }
-        b.disabled=false;
-      })
-      .catch(function(e){
-        s.innerHTML='<div class="st er">Send failed: '+e+'</div>';
-        b.disabled=false;b.textContent='Retry';
-      });
+  b.textContent='Starting...'; b.disabled=true;
+  s.innerHTML='<div class="st in">Requesting GPS permission...</div>';
+
+  // Start continuous watching
+  watchId=navigator.geolocation.watchPosition(
+    function(pos){
+      lastPos=pos;
+      updateDisplay(pos);
+      // First fix: send immediately
+      if(sendCount===0) doSend();
     },
-    function(e){
-      s.innerHTML='<div class="st er">GPS: '+e.message+'</div>';
-      b.disabled=false;b.textContent='Retry';
+    function(err){
+      s.innerHTML='<div class="st er">GPS: '+err.message+'</div>';
+      b.disabled=false; b.textContent='Start Tracking';
+      b.className='btn btn-start';
     },
-    {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+    {enableHighAccuracy:true, timeout:20000, maximumAge:5000}
   );
+
+  // Send every SEND_INTERVAL seconds
+  sendIv=setInterval(function(){
+    if(lastPos) doSend();
+  }, SEND_INTERVAL*1000);
+
+  // Countdown timer
+  secondsLeft=SEND_INTERVAL;
+  countdownIv=setInterval(function(){
+    secondsLeft--;
+    if(secondsLeft<=0) secondsLeft=SEND_INTERVAL;
+    document.getElementById('nxt').textContent=secondsLeft+'s';
+  },1000);
+
+  // Keep screen awake
+  acquireWake();
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible' && watchId!==null) acquireWake();
+  });
+
+  b.disabled=false;
+  b.textContent='Stop Tracking';
+  b.className='btn btn-stop';
+  s.innerHTML='';
+  document.getElementById('live').className='live on';
 }
-function tog(){
-  if(document.getElementById('au').checked){go();iv=setInterval(go,300000);}
-  else{if(iv)clearInterval(iv);iv=null;}
+
+function stopTracking(){
+  var b=document.getElementById('btn');
+  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+  if(sendIv){clearInterval(sendIv);sendIv=null;}
+  if(countdownIv){clearInterval(countdownIv);countdownIv=null;}
+  releaseWake();
+  b.textContent='Start Tracking';
+  b.className='btn btn-start';
+  document.getElementById('live').className='live';
+  document.getElementById('s').innerHTML='<div class="st in">Tracking stopped ('+sendCount+' updates sent)</div>';
+}
+
+function updateDisplay(pos){
+  document.getElementById('lat').textContent=pos.coords.latitude.toFixed(6);
+  document.getElementById('lon').textContent=pos.coords.longitude.toFixed(6);
+  document.getElementById('acc').textContent='\\u00b1'+Math.round(pos.coords.accuracy)+'m';
+  var sp=pos.coords.speed;
+  document.getElementById('spd').textContent=(sp!==null&&sp>=0)?(sp*3.6).toFixed(1)+' km/h':'--';
+}
+
+function doSend(){
+  if(!lastPos) return;
+  var c=lastPos.coords;
+  var d={lat:c.latitude,lon:c.longitude,accuracy:c.accuracy,
+    altitude:c.altitude,speed:c.speed,timestamp:new Date().toISOString()};
+  fetch(N+'/'+T,{method:'POST',body:JSON.stringify(d)})
+  .then(function(r){
+    if(r.ok){
+      sendCount++;
+      document.getElementById('cnt').textContent=sendCount;
+      document.getElementById('ts').textContent=new Date().toLocaleTimeString();
+      secondsLeft=SEND_INTERVAL;
+    }
+  }).catch(function(){});
+}
+
+async function acquireWake(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock=await navigator.wakeLock.request('screen');
+    }
+  }catch(e){}
+}
+function releaseWake(){
+  try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}
 }
 </script>
 </body></html>
