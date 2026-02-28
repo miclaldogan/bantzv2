@@ -33,6 +33,9 @@ docs = [
     "pymupdf>=1.24.0",
     "python-docx>=1.0.0",
 ]
+graph = [
+    "neo4j>=5.0.0",
+]
 
 [project.scripts]
 bantz = "bantz.__main__:main"
