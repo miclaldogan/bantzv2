@@ -16,7 +16,7 @@ pip install -e ".[dev]"
 
 - Python 3.11+
 - Ollama running locally (`ollama serve`)
-- A model pulled (e.g., `ollama pull qwen2.5-coder:7b`)
+- A model pulled (e.g., `ollama pull qwen2.5:7b`)
 
 ## Project Structure
 

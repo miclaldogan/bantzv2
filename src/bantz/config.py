@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings
 
 class Config(BaseSettings):
     # ── Ollama ────────────────────────────────────────────────────────────
-    ollama_model: str = Field("qwen2.5-coder:7b", alias="BANTZ_OLLAMA_MODEL")
+    ollama_model: str = Field("qwen2.5:7b", alias="BANTZ_OLLAMA_MODEL")
     ollama_base_url: str = Field("http://localhost:11434", alias="BANTZ_OLLAMA_BASE_URL")
 
     # ── Gemini (optional) ─────────────────────────────────────────────────
