@@ -132,10 +132,7 @@ class Brain:
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
-        try:
-            import bantz.tools.web_search   # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass  # web_search module not yet created
+        import bantz.tools.web_search   # noqa: F401
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
