@@ -37,6 +37,9 @@ class Config(BaseSettings):
     location_lat: float = Field(0.0, alias="BANTZ_LAT")
     location_lon: float = Field(0.0, alias="BANTZ_LON")
 
+    # ── GPS Relay ─────────────────────────────────────────────────────────
+    gps_relay_token: str = Field("", alias="BANTZ_GPS_RELAY_TOKEN")
+
     # ── Neo4j Graph Memory ────────────────────────────────────────────────
     neo4j_enabled: bool = Field(False, alias="BANTZ_NEO4J_ENABLED")
     neo4j_uri: str = Field("bolt://localhost:7687", alias="BANTZ_NEO4J_URI")

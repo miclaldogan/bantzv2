@@ -208,6 +208,7 @@ class BantzApp(App):
             if ok:
                 chat = self.query_one("#chat-log", ChatLog)
                 chat.add_system(f"GPS: {gps_server.url}")
+                chat.add_system(f"Relay: {gps_server.relay_topic}")
         except Exception:
             pass
 
