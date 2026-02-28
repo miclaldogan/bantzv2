@@ -65,30 +65,33 @@ class Butler:
     ) -> str:
         greeting = self._time_greeting(segment)
 
+        # Use profile name or fallback to generic
+        tag = profile.name or "boss"
+
         if is_first:
-            return f"{greeting}, ma'am. Bantz here — ready to go."
+            return f"{greeting}, {tag}. Bantz here — ready to go."
 
         if absence_hours < 1:
-            return f"Welcome back, ma'am."
+            return f"Welcome back, {tag}."
 
         if absence_hours < 6:
-            return f"{greeting}, ma'am. Been a few hours."
+            return f"{greeting}, {tag}. Been a few hours."
 
         if absence_hours < 20:
-            return f"{greeting}, boss. Here's what's going on."
+            return f"{greeting}, {tag}. Here's what's going on."
 
         if absence_hours < 30:
             if segment == "sabah":
-                return "Good morning, ma'am. Let me catch you up."
-            return f"{greeting}, ma'am. Here's your status."
+                return f"Good morning, {tag}. Let me catch you up."
+            return f"{greeting}, {tag}. Here's your status."
 
         if absence_hours < 72:
-            return f"{greeting}, boss. It's been a couple days — here's the rundown."
+            return f"{greeting}, {tag}. It's been a couple days — here's the rundown."
 
         if absence_hours < 168:
-            return f"{greeting}, ma'am. Been about a week. Let me brief you."
+            return f"{greeting}, {tag}. Been about a week. Let me brief you."
 
-        return f"{greeting}, boss. Long time no see. Here's what you've missed."
+        return f"{greeting}, {tag}. Long time no see. Here's what you've missed."
 
     @staticmethod
     def _time_greeting(segment: str) -> str:
