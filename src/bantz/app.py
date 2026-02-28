@@ -197,6 +197,7 @@ class BantzApp(App):
         self._warm_up_ollama()
         self._enrich_butler_greeting()
         self._start_gps_server()
+        self._start_stationary_checker()
         self.query_one("#chat-input", Input).focus()
 
     @work(exclusive=False)
@@ -209,6 +210,23 @@ class BantzApp(App):
                 chat = self.query_one("#chat-log", ChatLog)
                 chat.add_system(f"GPS: {gps_server.url}")
                 chat.add_system(f"Relay: {gps_server.relay_topic}")
+        except Exception:
+            pass
+
+    def _start_stationary_checker(self) -> None:
+        """Run stationary check every 5 minutes."""
+        self.set_interval(300, self._check_stationary)
+
+    @work(exclusive=False)
+    async def _check_stationary(self) -> None:
+        """Periodic check: if user is stationary at unknown place, show prompt."""
+        try:
+            from bantz.core.places import places
+            notice = places.check_stationary()
+            if notice:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(notice)
+                chat.scroll_end()
         except Exception:
             pass
 

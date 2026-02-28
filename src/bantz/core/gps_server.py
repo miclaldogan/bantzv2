@@ -536,7 +536,7 @@ class GPSServer:
                 pass
 
     def _save_location(self, data: dict) -> None:
-        """Save received GPS data to memory and disk."""
+        """Save received GPS data to memory and disk, feed place manager."""
         self._latest = data
         LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOCATION_FILE.write_text(
@@ -547,6 +547,18 @@ class GPSServer:
             data.get("lat", 0), data.get("lon", 0),
             round(data.get("accuracy", 0)),
         )
+
+        # Feed the place manager for geofence / stationary tracking
+        lat = data.get("lat")
+        lon = data.get("lon")
+        if lat is not None and lon is not None:
+            try:
+                from bantz.core.places import places
+                transition = places.update_gps(lat, lon)
+                if transition:
+                    log.info("Place transition → %s", transition)
+            except Exception:
+                pass
 
     # ── Latest data ──────────────────────────────────────────────────
 
