@@ -4,6 +4,7 @@ Bantz v2 — Entry point
 Commands:
   bantz                         → TUI
   bantz --once "query"          → single query, no UI
+  bantz --daemon                → headless daemon (scheduler + GPS, no TUI)
   bantz --doctor                → system health check
   bantz --setup profile         → user profile setup
   bantz --setup google gmail    → OAuth setup for Gmail
@@ -11,6 +12,7 @@ Commands:
   bantz --setup schedule        → class schedule setup
   bantz --setup telegram        → Telegram bot token setup
   bantz --setup places          → Known locations setup
+  bantz --setup systemd         → install systemd user service
 """
 from __future__ import annotations
 
@@ -21,6 +23,8 @@ import asyncio
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bantz", description="Bantz v2 — your terminal host")
     parser.add_argument("--once", metavar="QUERY", help="Run single query, no UI")
+    parser.add_argument("--daemon", action="store_true",
+                        help="Run as headless daemon (scheduler + GPS, no TUI)")
     parser.add_argument("--doctor", action="store_true", help="System health check")
     parser.add_argument("--setup", nargs="+", metavar="SERVICE",
                         help="Setup integrations: --setup google gmail")
@@ -36,6 +40,10 @@ def main() -> None:
 
     if args.once:
         asyncio.run(_once(args.once))
+        return
+
+    if args.daemon:
+        asyncio.run(_daemon())
         return
 
     from bantz.app import run
@@ -58,6 +66,9 @@ def _handle_setup(parts: list[str]) -> None:
     if len(parts) >= 1 and parts[0].lower() == "gemini":
         _setup_gemini()
         return
+    if len(parts) >= 1 and parts[0].lower() == "systemd":
+        _setup_systemd()
+        return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
         from bantz.auth.google_oauth import setup_google
@@ -71,6 +82,7 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup telegram")
         print("  bantz --setup places")
         print("  bantz --setup gemini")
+        print("  bantz --setup systemd")
 
 
 def _setup_telegram() -> None:
@@ -604,6 +616,162 @@ async def _once(query: str) -> None:
                 print(tr.output if tr.success else f"Error: {tr.error}")
         else:
             print("Cancelled.")
+
+
+async def _daemon() -> None:
+    """Run Bantz as a headless daemon — scheduler, GPS, and morning briefing.
+
+    No TUI, no interactive input. Designed to run under systemd.
+    Reminders fire to journald logs (and optionally Telegram).
+    """
+    import signal
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
+    log = logging.getLogger("bantz.daemon")
+    log.info("Bantz daemon starting...")
+
+    from bantz.config import config
+    config.ensure_dirs()
+
+    # Init memory + scheduler
+    from bantz.core.memory import memory
+    memory.init(config.db_path)
+    memory.new_session()
+
+    from bantz.core.scheduler import scheduler
+    scheduler.init(config.db_path)
+    log.info("Scheduler initialized: %s", scheduler.status_line())
+
+    # Start GPS server
+    gps_ok = False
+    try:
+        from bantz.core.gps_server import gps_server
+        gps_ok = await gps_server.start()
+        if gps_ok:
+            log.info("GPS server: %s (relay: %s)", gps_server.url, gps_server.relay_topic)
+    except Exception as exc:
+        log.warning("GPS server failed to start: %s", exc)
+
+    # Graceful shutdown
+    stop_event = asyncio.Event()
+
+    def _signal_handler(sig, _frame):
+        log.info("Received %s — shutting down...", signal.Signals(sig).name)
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    # Periodic tasks
+    async def _reminder_loop():
+        """Check for due reminders periodically."""
+        interval = config.reminder_check_interval
+        while not stop_event.is_set():
+            try:
+                due = scheduler.check_due()
+                for r in due:
+                    repeat_tag = f" (repeats {r['repeat']})" if r["repeat"] != "none" else ""
+                    log.info("⏰ REMINDER: %s%s", r["title"], repeat_tag)
+                    memory.add("assistant", f"⏰ Reminder: {r['title']}{repeat_tag}", tool_used="reminder")
+            except Exception as exc:
+                log.debug("Reminder check error: %s", exc)
+            await asyncio.sleep(interval)
+
+    async def _briefing_loop():
+        """Check if morning briefing is due."""
+        while not stop_event.is_set():
+            try:
+                from bantz.personality.greeting import greeting_manager
+                text = await greeting_manager.morning_briefing_if_due()
+                if text:
+                    log.info("📋 Morning briefing:\n%s", text)
+                    memory.add("assistant", text, tool_used="briefing")
+            except Exception as exc:
+                log.debug("Briefing check error: %s", exc)
+            await asyncio.sleep(60)
+
+    log.info("Daemon running — scheduler (%ds), briefing (60s). PID: %d",
+             config.reminder_check_interval, asyncio.get_event_loop().__class__.__name__ and __import__("os").getpid())
+
+    # Run loops until stop signal
+    tasks = [
+        asyncio.create_task(_reminder_loop()),
+        asyncio.create_task(_briefing_loop()),
+    ]
+
+    await stop_event.wait()
+
+    # Cleanup
+    for t in tasks:
+        t.cancel()
+    if gps_ok:
+        try:
+            await gps_server.stop()
+        except Exception:
+            pass
+    log.info("Bantz daemon stopped.")
+
+
+def _setup_systemd() -> None:
+    """Install Bantz systemd user service."""
+    import os
+    import shutil
+    from pathlib import Path
+
+    print("\n🦌 Bantz — systemd Service Setup")
+    print("─" * 44)
+
+    user = os.environ.get("USER", "")
+    if not user:
+        print("✗ Cannot determine current user.")
+        return
+
+    project_dir = Path(__file__).resolve().parent.parent.parent  # src/bantz → repo root
+    service_src = project_dir / "deploy" / "bantz@.service"
+
+    if not service_src.exists():
+        print(f"✗ Service template not found: {service_src}")
+        return
+
+    # Read and substitute %i with actual user
+    content = service_src.read_text()
+    resolved = content.replace("%i", user)
+
+    # Install to user systemd directory
+    systemd_dir = Path.home() / ".config" / "systemd" / "user"
+    systemd_dir.mkdir(parents=True, exist_ok=True)
+    target = systemd_dir / "bantz.service"
+    target.write_text(resolved)
+
+    print(f"✓ Service file installed: {target}")
+    print()
+    print("To enable and start:")
+    print(f"  systemctl --user daemon-reload")
+    print(f"  systemctl --user enable bantz.service")
+    print(f"  systemctl --user start bantz.service")
+    print()
+    print("To check status:")
+    print(f"  systemctl --user status bantz.service")
+    print(f"  journalctl --user -u bantz.service -f")
+    print()
+    print("To enable on boot (persist after logout):")
+    print(f"  loginctl enable-linger {user}")
+    print()
+
+    # Ask if user wants to enable now
+    answer = input("Enable and start now? [y/N] ").strip().lower()
+    if answer in ("y", "yes"):
+        os.system("systemctl --user daemon-reload")
+        os.system("systemctl --user enable bantz.service")
+        os.system("systemctl --user start bantz.service")
+        print("✓ Service enabled and started!")
+        os.system("systemctl --user status bantz.service --no-pager")
+    else:
+        print("Setup complete — enable manually when ready.")
 
 
 if __name__ == "__main__":
