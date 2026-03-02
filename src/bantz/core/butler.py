@@ -81,7 +81,7 @@ class Butler:
             return f"{greeting}, {tag}. Here's what's going on."
 
         if absence_hours < 30:
-            if segment == "sabah":
+            if segment == "morning":
                 return f"Good morning, {tag}. Let me catch you up."
             return f"{greeting}, {tag}. Here's your status."
 
@@ -96,11 +96,11 @@ class Butler:
     @staticmethod
     def _time_greeting(segment: str) -> str:
         return {
-            "gece_erken": "Good evening",
-            "sabah": "Good morning",
-            "oglen": "Good afternoon",
-            "aksam": "Good evening",
-            "gece_gec": "Good evening",
+            "late_night": "Good evening",
+            "morning": "Good morning",
+            "afternoon": "Good afternoon",
+            "evening": "Good evening",
+            "night": "Good evening",
         }.get(segment, "Hello")
 
     # ── Formatters ────────────────────────────────────────────────────────

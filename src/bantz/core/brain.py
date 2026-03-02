@@ -2,7 +2,7 @@
 Bantz v2 — Brain (Orchestrator)
 
 Pipeline:
-  TR input → [bridge: TR→EN] → quick_route OR router (Ollama) → tool → finalizer → output
+  user input → [bridge: optional TR→EN] → quick_route OR router (Ollama) → tool → finalizer → output
 
 Fixes vs previous version:
   - Model refusal detection: if Ollama refuses a system query, fallback to direct tool
@@ -472,7 +472,7 @@ class Brain:
         _is_reminder = any(k in both for k in (
             "remind me", "set a reminder", "set reminder",
             "reminder", "set a timer", "set timer",
-            "alarm", "hatırlat", "zamanlayıcı",
+            "alarm",
         ))
         if _is_reminder:
             if any(k in both for k in ("list", "show", "my reminder", "upcoming", "what reminder")):
@@ -480,7 +480,7 @@ class Brain:
             if any(k in both for k in ("cancel", "delete", "remove", "stop")):
                 title_m = re.search(
                     r"(?:cancel|delete|remove|stop)\s+(?:reminder\s+)?(?:#?(\d+)|(.+?))"
-                    r"(?:\s*$|\s*(?:please|lütfen))",
+                    r"(?:\s*$|\s*(?:please))",
                     both, re.IGNORECASE,
                 )
                 if title_m:
@@ -488,7 +488,7 @@ class Brain:
                         return {"tool": "reminder", "args": {"action": "cancel", "id": title_m.group(1)}}
                     return {"tool": "reminder", "args": {"action": "cancel", "title": title_m.group(2).strip()}}
                 return {"tool": "reminder", "args": {"action": "cancel"}}
-            if any(k in both for k in ("snooze", "ertele")):
+            if any(k in both for k in ("snooze",)):
                 return {"tool": "reminder", "args": {"action": "snooze"}}
             return {"tool": "reminder", "args": {"action": "add", "intent": orig}}
 
