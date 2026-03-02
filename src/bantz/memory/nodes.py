@@ -1,0 +1,225 @@
+"""
+Bantz v3 — Graph Node / Relationship Schema + Entity Extraction
+
+Defines the node labels, relationship types, and rule-based entity
+extraction logic for the Neo4j knowledge graph.
+
+Usage:
+    from bantz.memory.nodes import NODE_LABELS, REL_TYPES, extract_entities
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime
+
+# ── Schema constants ───────────────────────────────────────────────────────
+
+NODE_LABELS = (
+    "Person", "Topic", "Decision", "Task", "Event", "Location", "Document",
+)
+
+REL_TYPES = {
+    "KNOWS":        ("Person", "Person"),
+    "ASSIGNED_TO":  ("Task", "Person"),
+    "RELATED_TO":   (None, None),          # flexible
+    "DECIDED_IN":   ("Decision", "Event"),
+    "WORKS_ON":     ("Person", "Topic"),
+    "LOCATED_AT":   (None, "Location"),
+    "REFERENCES":   (None, "Document"),
+    "COMMITTED_TO": ("Person", "Task"),
+    "FOLLOWS_UP":   ("Task", "Decision"),
+}
+
+# Words that look like names but aren't
+_SKIP_NAMES = frozenset({
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+    "Saturday", "Sunday", "January", "February", "March",
+    "April", "May", "June", "July", "August", "September",
+    "October", "November", "December", "Today", "Tomorrow",
+    "Error", "Done", "Event", "Calendar", "Gmail", "News",
+    "Desktop", "Downloads", "Documents", "Home", "Bantz",
+    "Linux", "Python", "English", "Turkish",
+})
+
+_SKIP_LOCATIONS = frozenset({
+    *_SKIP_NAMES, "Neo", "Ollama", "Google",
+})
+
+_TOOL_TOPIC_MAP = {
+    "calendar": "calendar",
+    "gmail": "email",
+    "news": "news",
+    "weather": "weather",
+    "classroom": "university",
+    "web_search": "research",
+    "document": "documents",
+    "shell": "system",
+}
+
+
+# ── Entity extraction ──────────────────────────────────────────────────────
+
+def extract_entities(
+    user_msg: str,
+    assistant_msg: str,
+    tool_used: str | None,
+    tool_data: dict | None,
+) -> list[dict]:
+    """
+    Rule-based entity extraction from a conversation exchange.
+
+    Returns list of dicts:
+        {"label": ..., "key": ..., "props": {...}, "rels": [...]}
+    """
+    entities: list[dict] = []
+    combined = f"{user_msg} {assistant_msg}".lower()
+    tool_data = tool_data or {}
+
+    # ── People mentioned ──
+    people_patterns = [
+        r"(?:from|with|to|by|about|ask|tell|call|email|meet)"
+        r"\s+([A-Z][a-z]{2,15}(?:\s+[A-Z][a-z]{2,15})?)",
+    ]
+    found_people: set[str] = set()
+    for pat in people_patterns:
+        for m in re.finditer(pat, f"{user_msg} {assistant_msg}"):
+            name = m.group(1).strip()
+            if name not in _SKIP_NAMES and len(name) > 2:
+                found_people.add(name)
+
+    for name in found_people:
+        entities.append({
+            "label": "Person",
+            "key": "name",
+            "props": {"name": name, "last_seen": datetime.now().isoformat()},
+            "rels": [],
+        })
+
+    # ── Topics from tool usage ──
+    if tool_used and tool_used in _TOOL_TOPIC_MAP:
+        topic_name = _TOOL_TOPIC_MAP[tool_used]
+        entities.append({
+            "label": "Topic",
+            "key": "name",
+            "props": {"name": topic_name, "last_accessed": datetime.now().isoformat()},
+            "rels": [],
+        })
+
+    # ── Calendar events → Event nodes ──
+    if tool_used == "calendar" and tool_data:
+        events = tool_data.get("events", [])
+        if isinstance(events, list):
+            for ev in events[:5]:
+                title = ev.get("summary") or ev.get("title", "")
+                if title:
+                    start = ev.get("start", "")
+                    entities.append({
+                        "label": "Event",
+                        "key": "title",
+                        "props": {"title": title, "date": start,
+                                  "updated_at": datetime.now().isoformat()},
+                        "rels": [],
+                    })
+        if "added" in assistant_msg.lower() or "created" in assistant_msg.lower():
+            title_m = re.search(
+                r"[\"'](.+?)[\"']|Event:\s*(.+?)(?:\n|$)", assistant_msg)
+            if title_m:
+                t = (title_m.group(1) or title_m.group(2) or "").strip()
+                if t:
+                    entities.append({
+                        "label": "Event",
+                        "key": "title",
+                        "props": {"title": t, "updated_at": datetime.now().isoformat()},
+                        "rels": [],
+                    })
+
+    # ── Gmail → potential person nodes ──
+    if tool_used == "gmail" and tool_data:
+        messages = tool_data.get("messages", [])
+        for msg in messages[:5]:
+            sender = msg.get("from", "")
+            if sender:
+                name_match = re.match(r"([^<]+)", sender)
+                if name_match:
+                    name = name_match.group(1).strip().strip('"')
+                    if name and len(name) > 2 and "@" not in name:
+                        entities.append({
+                            "label": "Person",
+                            "key": "name",
+                            "props": {"name": name, "email": sender.strip(),
+                                      "last_seen": datetime.now().isoformat()},
+                            "rels": [],
+                        })
+
+    # ── Decisions — "let's use X", "we'll go with X" ──
+    decision_patterns = [
+        r"(?:let'?s|we(?:'ll)?\s+(?:go\s+with|use|pick|choose|decided?\s+to))"
+        r"\s+(.+?)(?:\.|$|!)",
+        r"(?:i'?ll|going to|plan to)\s+(.+?)(?:\.|$|!)",
+    ]
+    for pat in decision_patterns:
+        m = re.search(pat, combined)
+        if m:
+            what = m.group(1).strip()[:100]
+            if len(what) > 5:
+                entities.append({
+                    "label": "Decision",
+                    "key": "what",
+                    "props": {"what": what,
+                              "date": datetime.now().isoformat(),
+                              "context": user_msg[:200]},
+                    "rels": [],
+                })
+            break
+
+    # ── Tasks — "remind me to", "i need to", "add task" ──
+    task_patterns = [
+        r"(?:remind\s+me\s+to|i\s+need\s+to|todo|add\s+task|task:)\s+(.+?)(?:\.|$|!)",
+        r"(?:don'?t\s+forget\s+to)\s+(.+?)(?:\.|$|!)",
+    ]
+    for pat in task_patterns:
+        m = re.search(pat, combined)
+        if m:
+            desc = m.group(1).strip()[:150]
+            if len(desc) > 3:
+                entities.append({
+                    "label": "Task",
+                    "key": "description",
+                    "props": {"description": desc, "status": "open",
+                              "priority": "medium",
+                              "created_at": datetime.now().isoformat()},
+                    "rels": [],
+                })
+            break
+
+    # ── Documents ──
+    if tool_used == "document":
+        path = tool_data.get("path", "")
+        if path:
+            entities.append({
+                "label": "Document",
+                "key": "path",
+                "props": {"path": path,
+                          "accessed_at": datetime.now().isoformat()},
+                "rels": [],
+            })
+
+    # ── Locations ──
+    loc_patterns = [
+        r"(?:in|at|from|going to|travel to)\s+"
+        r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"
+        r"(?:\s|,|\.|\?|!|$)",
+    ]
+    for pat in loc_patterns:
+        for m in re.finditer(pat, f"{user_msg} {assistant_msg}"):
+            loc = m.group(1).strip()
+            if loc not in _SKIP_LOCATIONS and len(loc) > 2:
+                entities.append({
+                    "label": "Location",
+                    "key": "name",
+                    "props": {"name": loc,
+                              "last_mentioned": datetime.now().isoformat()},
+                    "rels": [],
+                })
+
+    return entities

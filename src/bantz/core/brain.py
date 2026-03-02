@@ -1,13 +1,15 @@
 """
-Bantz v2 — Brain (Orchestrator)
+Bantz v3 — Brain (Orchestrator)
 
 Pipeline:
-  user input → [bridge: optional TR→EN] → quick_route OR router (Ollama) → tool → finalizer → output
+  user input → [bridge: optional TR→EN] → quick_route OR intent (Ollama CoT) → tool → finalizer → output
 
-Fixes vs previous version:
-  - Model refusal detection: if Ollama refuses a system query, fallback to direct tool
-  - Memory dedup: user message saved once, not duplicated in context window
-  - Router extracted to router.py
+Extracted modules:
+  - core/finalizer.py    — LLM post-processing + hallucination check
+  - core/intent.py       — Qwen CoT intent parser
+  - core/router.py       — simpler one-shot routing
+  - memory/nodes.py      — graph schema + entity extraction
+  - memory/context_builder.py — graph → LLM context string
 """
 from __future__ import annotations
 
@@ -24,6 +26,14 @@ from bantz.core.memory import memory
 from bantz.core.profile import profile
 from bantz.core.intent import cot_route
 from bantz.core.date_parser import resolve_date
+from bantz.core.finalizer import (
+    finalize as _finalize_fn,
+    finalize_stream as _finalize_stream_fn,
+    hallucination_check as _hallucination_check_fn,
+    log_hallucination as _log_hallucination_fn,
+    strip_markdown,
+    FINALIZER_SYSTEM,
+)
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 
@@ -33,16 +43,6 @@ try:
     from bantz.memory.graph import graph_memory
 except ImportError:
     graph_memory = None  # neo4j driver not installed
-
-
-def strip_markdown(text: str) -> str:
-    text = re.sub(r"```(?:\w+)?\s*\n?(.*?)```", r"\1", text, flags=re.DOTALL)
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.+?)\*", r"\1", text)
-    text = re.sub(r"`([^`]+)`", r"\1", text)
-    text = re.sub(r"^\d+\.\s+", "- ", text, flags=re.MULTILINE)
-    return text.strip()
 
 
 def _style_hint() -> str:
@@ -75,20 +75,6 @@ CRITICAL RULES — FOLLOW STRICTLY:
 4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
 5. If unsure, say you don't know. NEVER guess or make up data.
 Respond in English. Plain text only.\
-"""
-
-FINALIZER_SYSTEM = """\
-You are Bantz — a direct personal host. A tool just returned real data. Present it clearly.
-RULES:
-- Present ONLY what the tool actually returned. NEVER add data that isn't in the tool output.
-- Lead with a count or label: "3 unread", "2 events today"
-- One line per notable item: who/what and what they want or say
-- Flag urgent items first. Skip noise unless notable.
-- End with: "Want me to read any?" / "Which one?" / "Need anything else?"
-- If tool returned an error, say that honestly. Never claim success on failure.
-- Max 5 sentences. English only. Plain text, no markdown.{style_hint}{time_hint}
-{profile_hint}
-{graph_hint}\
 """
 
 COMMAND_SYSTEM = """\
@@ -878,204 +864,29 @@ class Brain:
             yield f"(Ollama error: {exc})"
 
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
-        if not result.success:
-            return f"Error: {result.error}"
-        output = result.output.strip()
-        if not output or output == "(command executed successfully, no output)":
-            return "Done. ✓"
-        if len(output) < 800:
-            return output
-
-        messages = [
-            {"role": "system", "content": FINALIZER_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=await self._graph_context(en_input))},
-            {"role": "user", "content": (
-                f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
-            )},
-        ]
-
-        # Prefer Gemini Flash for finalization if available (#58)
-        raw = None
-        try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                raw = await gemini.chat(messages, temperature=0.2)
-        except Exception:
-            pass  # fall through to Ollama
-
-        if raw is None:
-            try:
-                raw = await ollama.chat(messages)
-            except Exception:
-                return output[:1500]
-
-        cleaned = strip_markdown(raw)
-
-        # Anti-hallucination guard (#63): verify finalizer didn't fabricate data
-        cleaned, confidence = self._hallucination_check(cleaned, output)
-
-        # Log hallucination incidents (#63)
-        if confidence < 0.8:
-            _log_hallucination(
-                user_input=en_input,
-                tool_output=output[:2000],
-                response=cleaned[:2000],
-                confidence=confidence,
-                tool_used=result.tool,
-            )
-
-        return cleaned
+        """Delegate to core.finalizer module."""
+        return await _finalize_fn(
+            en_input, result, tc,
+            style_hint=_style_hint(),
+            profile_hint=profile.prompt_hint(),
+            graph_hint=await self._graph_context(en_input),
+        )
 
     async def _finalize_stream(
         self, en_input: str, result: ToolResult, tc: dict,
     ) -> AsyncIterator[str] | None:
-        """
-        Streaming finalize — yields tokens for long tool output.
-        Returns None if output is short enough to return directly (no LLM needed).
-        Post-processing (hallucination check) runs at consumer side on accumulated text.
-        """
-        if not result.success:
-            return None  # errors are short, no need to stream
-        output = result.output.strip()
-        if not output or output == "(command executed successfully, no output)":
-            return None
-        if len(output) < 800:
-            return None  # short enough to return verbatim
-
-        messages = [
-            {"role": "system", "content": FINALIZER_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=await self._graph_context(en_input))},
-            {"role": "user", "content": (
-                f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
-            )},
-        ]
-
-        async def _stream() -> AsyncIterator[str]:
-            # Try Gemini streaming first
-            try:
-                from bantz.llm.gemini import gemini
-                if gemini.is_enabled():
-                    async for token in gemini.chat_stream(messages, temperature=0.2):
-                        yield token
-                    return
-            except Exception:
-                pass
-
-            # Ollama streaming fallback
-            try:
-                async for token in ollama.chat_stream(messages):
-                    yield token
-            except Exception:
-                yield output[:1500]
-
-        return _stream()
+        """Delegate to core.finalizer module."""
+        return await _finalize_stream_fn(
+            en_input, result, tc,
+            style_hint=_style_hint(),
+            profile_hint=profile.prompt_hint(),
+            graph_hint=await self._graph_context(en_input),
+        )
 
     @staticmethod
     def _hallucination_check(response: str, tool_output: str) -> tuple[str, float]:
-        """
-        Compare finalizer response against tool output.
-        Returns (possibly-modified response, confidence score 0.0–1.0).
-
-        Confidence scoring:
-        - Start at 1.0
-        - Deduct 0.3 for fabricated emails
-        - Deduct 0.2 for fabricated large numbers
-        - Deduct 0.15 for fabricated quoted strings
-        - Deduct 0.1 for response much longer than tool output
-        """
-        confidence = 1.0
-        issues: list[str] = []
-
-        # 1. Fabricated email addresses
-        resp_emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.\w+", response))
-        tool_emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.\w+", tool_output))
-        fabricated_emails = resp_emails - tool_emails
-        if fabricated_emails:
-            confidence -= 0.3
-            issues.append(f"fabricated_emails: {fabricated_emails}")
-            response += "\n⚠ (Some details may be inaccurate — check original data)"
-
-        # 2. Fabricated large numbers (file sizes, counts)
-        resp_numbers = set(re.findall(r"\b(\d{3,})\b", response))
-        tool_numbers = set(re.findall(r"\b(\d{3,})\b", tool_output))
-        fabricated_numbers = resp_numbers - tool_numbers
-        if fabricated_numbers:
-            bad = [n for n in fabricated_numbers if int(n) > 100 and n not in tool_output]
-            if bad:
-                confidence -= 0.2
-                issues.append(f"fabricated_numbers: {bad}")
-                response += "\n⚠ (Verify numbers against actual data)"
-
-        # 3. Fabricated quoted strings — "Subject: ..." or names in quotes
-        resp_quoted = set(re.findall(r'["\u201c]([^"\u201d]{5,60})["\u201d]', response))
-        if resp_quoted:
-            tool_lower = tool_output.lower()
-            fake_quotes = {q for q in resp_quoted if q.lower() not in tool_lower}
-            if fake_quotes:
-                confidence -= 0.15
-                issues.append(f"fabricated_quotes: {fake_quotes}")
-
-        # 4. Response suspiciously longer than tool output
-        if tool_output and len(response) > len(tool_output) * 2.5 and len(response) > 500:
-            confidence -= 0.1
-            issues.append("response_much_longer_than_tool_output")
-
-        confidence = max(0.0, round(confidence, 2))
-
-        if issues:
-            log.debug("Hallucination check: confidence=%.2f issues=%s", confidence, issues)
-
-        return response, confidence
-
-
-def _log_hallucination(
-    user_input: str,
-    tool_output: str,
-    response: str,
-    confidence: float,
-    tool_used: str | None,
-) -> None:
-    """
-    Log a hallucination incident to SQLite for analysis (#63).
-    Table: hallucination_log in bantz.db
-    """
-    try:
-        from datetime import datetime
-        conn = memory._conn
-        if conn is None:
-            return
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS hallucination_log ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "  timestamp TEXT NOT NULL,"
-            "  user_input TEXT,"
-            "  tool_used TEXT,"
-            "  tool_output TEXT,"
-            "  response TEXT,"
-            "  confidence REAL NOT NULL"
-            ")",
-        )
-        conn.execute(
-            "INSERT INTO hallucination_log"
-            "(timestamp, user_input, tool_used, tool_output, response, confidence) "
-            "VALUES (?,?,?,?,?,?)",
-            (
-                datetime.now().isoformat(timespec="seconds"),
-                user_input[:500],
-                tool_used,
-                tool_output[:2000],
-                response[:2000],
-                confidence,
-            ),
-        )
-        log.info(
-            "Hallucination logged: confidence=%.2f tool=%s input=%s",
-            confidence, tool_used, user_input[:80],
-        )
-    except Exception as exc:
-        log.debug("Failed to log hallucination: %s", exc)
+        """Delegate to core.finalizer module."""
+        return _hallucination_check_fn(response, tool_output)
 
 
 def _extract_city(text: str) -> str:
