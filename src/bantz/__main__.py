@@ -46,7 +46,7 @@ def main() -> None:
         asyncio.run(_daemon())
         return
 
-    from bantz.app import run
+    from bantz.interface.tui.app import run
     run()
 
 
@@ -132,7 +132,7 @@ def _setup_telegram() -> None:
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n✅ Token saved: {env_path}")
-    print("Start with: python -m bantz.integrations.telegram_bot")
+    print("Start with: python -m bantz.interface.telegram_bot")
 
 
 def _setup_gemini() -> None:

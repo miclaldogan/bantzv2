@@ -1,0 +1,62 @@
+/* Bantz v3 — Textual TUI Styles */
+
+Screen {
+    background: #0d0d0d;
+}
+
+#main-layout {
+    height: 1fr;
+}
+
+#chat-panel {
+    width: 3fr;
+    border: solid #1e3a1e;
+    padding: 0 1;
+}
+
+#right-panel {
+    width: 1fr;
+    border: solid #1a2a3a;
+    padding: 1;
+}
+
+ChatLog {
+    height: 1fr;
+    scrollbar-color: #2a4a2a;
+}
+
+#thinking-area {
+    height: 1;
+    padding: 0 1;
+}
+
+#input-row {
+    height: 3;
+    border-top: solid #1e3a1e;
+    padding: 0 1;
+}
+
+Input {
+    background: #111;
+    border: solid #2a4a2a;
+    color: #00ff88;
+}
+
+Input:focus {
+    border: solid #00ff88;
+}
+
+SystemStatus {
+    height: auto;
+    color: #aaccaa;
+}
+
+Header {
+    background: #0a1a0a;
+    color: #00ff88;
+}
+
+Footer {
+    background: #0a1a0a;
+    color: #446644;
+}
