@@ -1,20 +1,33 @@
 """
-Bantz v2 — Gmail Tool (v2)
-Advanced filtering, contacts, smart compose, reply.
+Bantz v3 — Gmail Tool
+Full OAuth v3: read, write, search, label, forward, thread view.
 
-New features:
-- contacts.json: takma ad → email mapping ("hocam" → "prof@uni.edu")
-- Query builder: from, date, stars, labels, subject
-- compose: LLM generates body from intent + confirmation step
-- reply: thread reply to last/specific message
+Features:
+- contacts.json: alias → email mapping ("hocam" → "prof@uni.edu")
+- Query builder: from, date, stars, labels, subject, full-text
+- compose / reply / forward: LLM-assisted with draft confirmation
+- Thread view: see full conversation in chronological order
+- Label management: add/remove labels, star/unstar, mark read/unread
+- Batch operations: modify multiple messages at once
 
 Actions:
-  summary   — LLM-powered unread summary
-  count     — unread count
-  read      — read single message content
-  search    — filtered search (from, date, stars, label)  filter    — natural-language advanced filtering (sender, date, stars, labels)  send      — direct send (to/subject/body known)
-  compose   — LLM generates body, confirms before send
-  reply     — reply to a thread
+  summary      — LLM-powered unread summary
+  count        — unread count
+  read         — read single message content
+  thread       — full thread view (all messages in conversation)
+  search       — filtered search (from, date, stars, label, full-text)
+  filter       — natural-language advanced filtering
+  send         — direct send (to/subject/body known)
+  compose      — LLM generates body, confirms before send
+  reply        — reply to a thread
+  forward      — forward email to another recipient
+  star         — star a message
+  unstar       — unstar a message
+  mark_read    — mark message(s) as read
+  mark_unread  — mark message(s) as unread
+  add_label    — add label to message(s)
+  remove_label — remove label from message(s)
+  contacts     — manage contact aliases
 """
 from __future__ import annotations
 
@@ -110,6 +123,7 @@ def build_query(
     starred: bool = False,
     label: str = "",             # "promotions", "social", "updates", "forums"
     unread_only: bool = True,
+    full_text: str = "",         # raw Gmail query passthrough
 ) -> str:
     parts = []
     if unread_only:
@@ -130,6 +144,8 @@ def build_query(
             "updates": "updates", "forums": "forums", "important": "important",
         }
         parts.append(f"label:{_LABEL_MAP.get(label.lower(), label)}")
+    if full_text:
+        parts.append(full_text)
     return " ".join(parts) if parts else "label:unread"
 
 
@@ -138,23 +154,26 @@ def build_query(
 class GmailTool(BaseTool):
     name = "gmail"
     description = (
-        "Reads, filters, composes and sends Gmail messages. "
-        "Use for: mail, gmail, inbox, summarize emails, "
-        "emails from X, starred emails, this week's emails, "
-        "send email, email my professor, reply to email, how many emails."
+        "Reads, writes, searches, and manages Gmail messages and labels. "
+        "Use for: mail, gmail, inbox, email summary, compose, reply, forward, "
+        "thread view, star, label, mark read, send email, batch operations."
     )
     risk_level = "safe"
 
     async def execute(
         self,
         action: str = "summary",
-        # summary | count | read | search | filter | send | compose | reply | contacts
+        # summary | count | read | thread | search | filter | send | compose
+        # reply | forward | star | unstar | mark_read | mark_unread
+        # add_label | remove_label | contacts
         message_id: str = "",
+        thread_id: str = "",     # for thread view
         from_sender: str = "",
         subject_filter: str = "",
         days_ago: int = 0,
         starred: bool = False,
         label: str = "",
+        label_name: str = "",    # for label management
         to: str = "",
         subject: str = "",
         body: str = "",
@@ -162,6 +181,8 @@ class GmailTool(BaseTool):
         raw_query: str = "",     # for filter/compose: full original query text
         alias: str = "",         # for contacts: add alias
         email: str = "",         # for contacts: add email
+        message_ids: str = "",   # comma-separated for batch ops
+        full_text: str = "",     # raw Gmail query passthrough
         limit: int = 5,
         **kwargs: Any,
     ) -> ToolResult:
@@ -174,9 +195,11 @@ class GmailTool(BaseTool):
             return await self._count(creds)
         elif action == "read":
             return await self._read_message(creds, message_id)
+        elif action == "thread":
+            return await self._thread_view(creds, thread_id or message_id)
         elif action == "search":
             return await self._search(creds, from_sender, subject_filter,
-                                      days_ago, starred, label, limit)
+                                      days_ago, starred, label, limit, full_text)
         elif action == "filter":
             return await self._filter(creds, raw_query or intent, limit)
         elif action == "send":
@@ -185,6 +208,26 @@ class GmailTool(BaseTool):
             return await self._compose(creds, to, subject, intent or raw_query)
         elif action == "reply":
             return await self._reply(creds, message_id, intent or body)
+        elif action == "forward":
+            return await self._forward(creds, message_id, to, intent or body)
+        elif action == "star":
+            return await self._modify_labels(creds, message_id, message_ids,
+                                              add_labels=["STARRED"])
+        elif action == "unstar":
+            return await self._modify_labels(creds, message_id, message_ids,
+                                              remove_labels=["STARRED"])
+        elif action == "mark_read":
+            return await self._modify_labels(creds, message_id, message_ids,
+                                              remove_labels=["UNREAD"])
+        elif action == "mark_unread":
+            return await self._modify_labels(creds, message_id, message_ids,
+                                              add_labels=["UNREAD"])
+        elif action == "add_label":
+            return await self._add_remove_label(creds, message_id, message_ids,
+                                                 label_name, add=True)
+        elif action == "remove_label":
+            return await self._add_remove_label(creds, message_id, message_ids,
+                                                 label_name, add=False)
         elif action == "contacts":
             return self._manage_contacts(alias, email)
         else:
@@ -268,6 +311,7 @@ class GmailTool(BaseTool):
         self, creds,
         from_sender: str, subject_filter: str,
         days_ago: int, starred: bool, label: str, limit: int,
+        full_text: str = "",
     ) -> ToolResult:
         query = build_query(
             from_sender=from_sender,
@@ -275,6 +319,7 @@ class GmailTool(BaseTool):
             days_ago=days_ago,
             starred=starred,
             label=label,
+            full_text=full_text,
         )
         messages = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_messages_sync, creds, query, limit
@@ -542,6 +587,220 @@ class GmailTool(BaseTool):
             output="Saved contacts:\n" + "\n".join(lines),
         )
 
+    # ── Thread view ───────────────────────────────────────────────────────
+
+    async def _thread_view(self, creds, thread_id: str) -> ToolResult:
+        """Fetch full thread — all messages in a conversation."""
+        if not thread_id:
+            messages = await asyncio.get_event_loop().run_in_executor(
+                None, self._fetch_messages_sync, creds, build_query(), 1
+            )
+            if not messages:
+                return ToolResult(success=True, output="No unread threads.")
+            thread_id = messages[0]["thread_id"]
+
+        thread_msgs = await asyncio.get_event_loop().run_in_executor(
+            None, self._fetch_thread_sync, creds, thread_id
+        )
+        if not thread_msgs:
+            return ToolResult(
+                success=False, output="", error="Could not fetch thread."
+            )
+
+        lines = []
+        for i, m in enumerate(thread_msgs, 1):
+            lines.append(
+                f"[{i}] From: {m['from']}  ({m['date']})\n"
+                f"    Subject: {m['subject']}\n"
+                f"    {m['body'][:500]}\n"
+            )
+
+        summary = await self._llm_summarize(
+            "\n".join(lines),
+            "You are Bantz. Summarize this email thread as a conversation. "
+            "Note who said what in chronological order and any actions needed. "
+            "Be concise. No markdown.",
+        )
+
+        return ToolResult(
+            success=True,
+            output=summary or "\n".join(lines),
+            data={
+                "thread_id": thread_id,
+                "message_count": len(thread_msgs),
+                "messages": [
+                    {
+                        "id": m["id"],
+                        "from": m["from"],
+                        "subject": m["subject"],
+                        "date": m["date"],
+                    }
+                    for m in thread_msgs
+                ],
+            },
+        )
+
+    # ── Forward ───────────────────────────────────────────────────────────
+
+    async def _forward(
+        self, creds, message_id: str, to: str, intent: str
+    ) -> ToolResult:
+        """Forward an email to another recipient."""
+        if not to:
+            return ToolResult(
+                success=False, output="",
+                error="Recipient required for forwarding.",
+            )
+
+        if not message_id:
+            messages = await asyncio.get_event_loop().run_in_executor(
+                None, self._fetch_messages_sync, creds, build_query(), 1
+            )
+            if not messages:
+                return ToolResult(
+                    success=True, output="No email found to forward."
+                )
+            message_id = messages[0]["id"]
+
+        content = await asyncio.get_event_loop().run_in_executor(
+            None, self._fetch_content_sync, creds, message_id
+        )
+        if not content:
+            return ToolResult(
+                success=False, output="", error="Could not read email."
+            )
+
+        to_resolved = contacts.resolve(to)
+        fwd_subject = f"Fwd: {content['subject']}"
+
+        quoted = (
+            f"---------- Forwarded message ----------\n"
+            f"From: {content['from']}\n"
+            f"Subject: {content['subject']}\n\n"
+            f"{content['body'][:3000]}"
+        )
+
+        if intent:
+            note = await self._llm_compose(
+                to_resolved, fwd_subject, intent,
+                context=f"Forwarding this email:\n{quoted[:1000]}",
+            )
+            fwd_body = f"{note}\n\n{quoted}" if note else quoted
+        else:
+            fwd_body = quoted
+
+        preview = (
+            f"Forward draft:\n"
+            f"  To: {to_resolved}\n"
+            f"  Subject: {fwd_subject}\n"
+            f"  ---\n"
+            f"{fwd_body[:800]}\n"
+            f"  ---\n"
+            f"Shall I send it? (yes/no)"
+        )
+        return ToolResult(
+            success=True,
+            output=preview,
+            data={
+                "draft": True,
+                "to": to_resolved,
+                "subject": fwd_subject,
+                "body": fwd_body,
+                "original_id": message_id,
+            },
+        )
+
+    # ── Label management ─────────────────────────────────────────────────
+
+    async def _modify_labels(
+        self, creds, message_id: str, message_ids: str,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+    ) -> ToolResult:
+        """Add/remove system labels (STARRED, UNREAD, etc.)."""
+        ids = self._resolve_message_ids(message_id, message_ids)
+        if not ids:
+            return ToolResult(
+                success=False, output="",
+                error="No message ID(s) specified.",
+            )
+
+        count = await asyncio.get_event_loop().run_in_executor(
+            None, self._batch_modify_sync, creds, ids,
+            add_labels or [], remove_labels or [],
+        )
+
+        _names = {
+            "STARRED": "starred", "UNREAD": "unread",
+            "IMPORTANT": "important", "INBOX": "inbox",
+        }
+        actions = []
+        for lbl in (add_labels or []):
+            actions.append(f"added {_names.get(lbl, lbl)}")
+        for lbl in (remove_labels or []):
+            actions.append(f"removed {_names.get(lbl, lbl)}")
+
+        desc = " & ".join(actions)
+        return ToolResult(
+            success=True,
+            output=f"Done: {desc} on {count} message(s).",
+            data={"modified_count": count, "message_ids": ids},
+        )
+
+    async def _add_remove_label(
+        self, creds, message_id: str, message_ids: str,
+        label_name: str, add: bool = True,
+    ) -> ToolResult:
+        """Add or remove a label by name."""
+        if not label_name:
+            return ToolResult(
+                success=False, output="", error="Label name required.",
+            )
+
+        ids = self._resolve_message_ids(message_id, message_ids)
+        if not ids:
+            return ToolResult(
+                success=False, output="",
+                error="No message ID(s) specified.",
+            )
+
+        label_id = await asyncio.get_event_loop().run_in_executor(
+            None, self._resolve_label_sync, creds, label_name
+        )
+        if not label_id:
+            return ToolResult(
+                success=False, output="",
+                error=f"Label '{label_name}' not found.",
+            )
+
+        add_labels = [label_id] if add else []
+        remove_labels = [label_id] if not add else []
+        count = await asyncio.get_event_loop().run_in_executor(
+            None, self._batch_modify_sync, creds, ids,
+            add_labels, remove_labels,
+        )
+
+        verb = "added" if add else "removed"
+        return ToolResult(
+            success=True,
+            output=f"Label '{label_name}' {verb} on {count} message(s).",
+            data={
+                "modified_count": count,
+                "label": label_name,
+                "message_ids": ids,
+            },
+        )
+
+    @staticmethod
+    def _resolve_message_ids(message_id: str, message_ids: str) -> list[str]:
+        """Parse single ID or comma-separated IDs into a list."""
+        ids: list[str] = []
+        if message_ids:
+            ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
+        if message_id and message_id not in ids:
+            ids.insert(0, message_id)
+        return ids
+
     # ── Sync helpers ──────────────────────────────────────────────────────
 
     def _build_service(self, creds):
@@ -628,6 +887,75 @@ class GmailTool(BaseTool):
             message_body["threadId"] = thread_id
         svc.users().messages().send(userId="me", body=message_body).execute()
         return True
+
+    def _fetch_thread_sync(self, creds, thread_id: str) -> list[dict]:
+        """Fetch all messages in a thread."""
+        svc = self._build_service(creds)
+        thread = svc.users().threads().get(
+            userId="me", id=thread_id, format="full"
+        ).execute()
+        messages = []
+        for msg in thread.get("messages", []):
+            headers = {
+                h["name"]: h["value"] for h in msg["payload"]["headers"]
+            }
+            body = self._extract_body(msg["payload"])
+            messages.append({
+                "id": msg["id"],
+                "thread_id": thread_id,
+                "from": headers.get("From", ""),
+                "subject": headers.get("Subject", ""),
+                "date": headers.get("Date", ""),
+                "body": body,
+            })
+        return messages
+
+    def _batch_modify_sync(
+        self, creds, message_ids: list[str],
+        add_labels: list[str], remove_labels: list[str],
+    ) -> int:
+        """Modify labels on multiple messages. Returns count modified."""
+        svc = self._build_service(creds)
+        body: dict[str, Any] = {}
+        if add_labels:
+            body["addLabelIds"] = add_labels
+        if remove_labels:
+            body["removeLabelIds"] = remove_labels
+        count = 0
+        for mid in message_ids:
+            try:
+                svc.users().messages().modify(
+                    userId="me", id=mid, body=body
+                ).execute()
+                count += 1
+            except Exception:
+                continue
+        return count
+
+    def _resolve_label_sync(self, creds, label_name: str) -> str:
+        """Resolve a label name to its Gmail label ID."""
+        _SYSTEM = {
+            "inbox": "INBOX", "starred": "STARRED",
+            "important": "IMPORTANT", "unread": "UNREAD",
+            "sent": "SENT", "draft": "DRAFT",
+            "spam": "SPAM", "trash": "TRASH",
+            "social": "CATEGORY_SOCIAL",
+            "promotions": "CATEGORY_PROMOTIONS",
+            "updates": "CATEGORY_UPDATES",
+            "forums": "CATEGORY_FORUMS",
+        }
+        sys_id = _SYSTEM.get(label_name.lower())
+        if sys_id:
+            return sys_id
+        try:
+            svc = self._build_service(creds)
+            result = svc.users().labels().list(userId="me").execute()
+            for lbl in result.get("labels", []):
+                if lbl["name"].lower() == label_name.lower():
+                    return lbl["id"]
+        except Exception:
+            pass
+        return ""
 
     # ── LLM helpers ───────────────────────────────────────────────────────
 
