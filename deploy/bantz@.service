@@ -1,0 +1,25 @@
+[Unit]
+Description=Bantz v2 — Personal AI Assistant (Daemon)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/bantzv2
+EnvironmentFile=/home/%i/bantzv2/.env
+ExecStart=/home/%i/bantzv2/.venv/bin/python -m bantz --daemon
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bantz
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/%i
+ProtectHome=no
+
+[Install]
+WantedBy=default.target
