@@ -45,7 +45,7 @@ _WEEK_REFS: list[tuple[str, str]] = [
 
 def resolve_date(text: str, now: datetime | None = None) -> Optional[datetime]:
     """
-    Extract and resolve a date reference from Turkish text.
+    Extract and resolve a date reference from natural language text.
     Returns a datetime (date at 00:00) or None if no date found.
 
     Priority: explicit relative ("tomorrow") > named weekday ("thursday") > week ref.

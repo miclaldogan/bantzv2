@@ -460,8 +460,8 @@ class BantzApp(App):
     async def _handle_confirm(self, text: str, chat: ChatLog) -> None:
         pending = self._pending
         self._pending = None
-        evet = text.lower().strip() in ("evet", "e", "yes", "y", "ok", "tamam")
-        if evet:
+        confirmed = text.lower().strip() in ("yes", "y", "ok", "evet", "e", "tamam")
+        if confirmed:
             self._busy = True
             self._show_thinking(True)
             try:

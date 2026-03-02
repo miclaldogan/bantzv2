@@ -219,13 +219,13 @@ class Briefing:
         try:
             hour = now.hour
             if 6 <= hour < 12:
-                segment = "sabah"
+                segment = "morning"
             elif 12 <= hour < 17:
-                segment = "oglen"
+                segment = "afternoon"
             elif 17 <= hour < 21:
-                segment = "aksam"
+                segment = "evening"
             else:
-                segment = "gece_gec"
+                segment = "night"
 
             top = _habits.top_tools_for_segment(segment, n=3, days=14)
             if not top:

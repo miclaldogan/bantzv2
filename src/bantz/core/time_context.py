@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-Segment = Literal["gece_erken", "sabah", "oglen", "aksam", "gece_gec"]
+Segment = Literal["late_night", "morning", "afternoon", "evening", "night"]
 
 
 def get_segment(hour: int | None = None) -> Segment:
@@ -16,31 +16,31 @@ def get_segment(hour: int | None = None) -> Segment:
     if hour is None:
         hour = datetime.now().hour
     if 0 <= hour < 6:
-        return "gece_erken"
+        return "late_night"
     elif 6 <= hour < 12:
-        return "sabah"
+        return "morning"
     elif 12 <= hour < 17:
-        return "oglen"
+        return "afternoon"
     elif 17 <= hour < 21:
-        return "aksam"
+        return "evening"
     else:
-        return "gece_gec"
+        return "night"
 
 
 _GREETINGS: dict[Segment, str] = {
-    "gece_erken": "Working late at night",
-    "sabah":      "Good morning",
-    "oglen":      "Good afternoon",
-    "aksam":      "Good evening",
-    "gece_gec":   "Good night",
+    "late_night": "Working late at night",
+    "morning":    "Good morning",
+    "afternoon":  "Good afternoon",
+    "evening":    "Good evening",
+    "night":      "Good night",
 }
 
 _SEGMENT_EN: dict[Segment, str] = {
-    "gece_erken": "late night",
-    "sabah":      "morning",
-    "oglen":      "afternoon",
-    "aksam":      "evening",
-    "gece_gec":   "night",
+    "late_night": "late night",
+    "morning":    "morning",
+    "afternoon":  "afternoon",
+    "evening":    "evening",
+    "night":      "night",
 }
 
 

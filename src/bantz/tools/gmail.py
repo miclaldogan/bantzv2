@@ -311,7 +311,7 @@ class GmailTool(BaseTool):
     # ── Filter (natural language → Gmail query) ──────────────────────────
 
     async def _filter(self, creds, raw_query: str, limit: int = 10) -> ToolResult:
-        """Parse Turkish natural language into Gmail query and search."""
+        """Parse natural language into Gmail query and search."""
         q = self._build_gmail_query(raw_query)
         messages = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_messages_sync, creds, q, limit, False
