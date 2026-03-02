@@ -235,6 +235,7 @@ class BantzApp(App):
         self._start_gps_server()
         self._start_stationary_checker()
         self._start_morning_briefing_timer()
+        self._start_reminder_checker()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -316,6 +317,34 @@ class BantzApp(App):
     def _start_morning_briefing_timer(self) -> None:
         """Check every 60s if the scheduled morning briefing is due (#80)."""
         self.set_interval(60, self._check_morning_briefing)
+
+    def _start_reminder_checker(self) -> None:
+        """Check periodically for due reminders (#61)."""
+        self.set_interval(config.reminder_check_interval, self._check_reminders)
+
+    @work(exclusive=False)
+    async def _check_reminders(self) -> None:
+        """Periodic check: fire due reminders in the TUI."""
+        try:
+            from bantz.core.scheduler import scheduler
+            from bantz.core.memory import memory
+
+            due = scheduler.check_due()
+            if not due:
+                return
+
+            chat = self.query_one("#chat-log", ChatLog)
+            for r in due:
+                repeat_tag = f" (repeats {r['repeat']})" if r['repeat'] != 'none' else ''
+                text = f"\u23f0 Reminder: {r['title']}{repeat_tag}"
+                chat.add_bantz(text)
+                try:
+                    memory.add("assistant", text, tool_used="reminder")
+                except Exception:
+                    pass
+            chat.scroll_end()
+        except Exception:
+            pass
 
     @work(exclusive=False)
     async def _check_morning_briefing(self) -> None:

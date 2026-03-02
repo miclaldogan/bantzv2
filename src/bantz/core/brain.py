@@ -138,6 +138,7 @@ class Brain:
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
+        import bantz.tools.reminder     # noqa: F401
         try:
             import bantz.tools.document     # noqa: F401
         except (ImportError, ModuleNotFoundError):
@@ -154,6 +155,8 @@ class Brain:
         if not self._memory_ready:
             memory.init(config.db_path)
             memory.new_session()
+            from bantz.core.scheduler import scheduler
+            scheduler.init(config.db_path)
             self._memory_ready = True
 
     async def _ensure_graph(self) -> None:
@@ -464,6 +467,30 @@ class Brain:
             if any(k in both for k in ("read", "open", "show")):
                 return {"tool": "document", "args": {"path": path, "action": "read"}}
             return {"tool": "document", "args": {"path": path, "action": "summarize"}}
+
+        # Reminders
+        _is_reminder = any(k in both for k in (
+            "remind me", "set a reminder", "set reminder",
+            "reminder", "set a timer", "set timer",
+            "alarm", "hatırlat", "zamanlayıcı",
+        ))
+        if _is_reminder:
+            if any(k in both for k in ("list", "show", "my reminder", "upcoming", "what reminder")):
+                return {"tool": "reminder", "args": {"action": "list"}}
+            if any(k in both for k in ("cancel", "delete", "remove", "stop")):
+                title_m = re.search(
+                    r"(?:cancel|delete|remove|stop)\s+(?:reminder\s+)?(?:#?(\d+)|(.+?))"
+                    r"(?:\s*$|\s*(?:please|lütfen))",
+                    both, re.IGNORECASE,
+                )
+                if title_m:
+                    if title_m.group(1):
+                        return {"tool": "reminder", "args": {"action": "cancel", "id": title_m.group(1)}}
+                    return {"tool": "reminder", "args": {"action": "cancel", "title": title_m.group(2).strip()}}
+                return {"tool": "reminder", "args": {"action": "cancel"}}
+            if any(k in both for k in ("snooze", "ertele")):
+                return {"tool": "reminder", "args": {"action": "snooze"}}
+            return {"tool": "reminder", "args": {"action": "add", "intent": orig}}
 
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",

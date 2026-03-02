@@ -47,6 +47,7 @@ class Briefing:
         schedule_str = self._get_schedule(now) if "schedule" in sections else None
         next_class_str = await self._get_next_class(now) if "schedule" in sections else None
         habit_str = self._get_habit_hint(now) if "habits" in sections else None
+        reminder_str = self._get_reminders()
 
         return self._format(
             tc=tc,
@@ -58,6 +59,7 @@ class Briefing:
             schedule=schedule_str,
             next_class=next_class_str,
             habits=habit_str,
+            reminders=reminder_str,
         )
 
     # ── Formatters ────────────────────────────────────────────────────────
@@ -71,6 +73,7 @@ class Briefing:
         schedule: Optional[str],
         next_class: Optional[str],
         habits: Optional[str] = None,
+        reminders: Optional[str] = None,
     ) -> str:
         lines = []
 
@@ -107,7 +110,9 @@ class Briefing:
         # Habit-based hint
         if habits:
             lines.append(f"🔁  {habits}")
-
+        # Reminders due today
+        if reminders:
+            lines.append(f"{reminders}")
         # Footer if everything failed
         if not any([weather, calendar, gmail, classroom]):
             lines.append("(Services not responding — check your internet connection)")
@@ -228,6 +233,14 @@ class Briefing:
 
             names = ", ".join(t["tool"] for t in top)
             return f"Frequently used at this hour: {names}"
+        except Exception:
+            return None
+
+    def _get_reminders(self) -> Optional[str]:
+        """Show reminders due today — from Scheduler (#61)."""
+        try:
+            from bantz.core.scheduler import scheduler
+            return scheduler.format_due_today()
         except Exception:
             return None
 

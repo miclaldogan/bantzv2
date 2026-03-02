@@ -497,6 +497,7 @@ async def _doctor() -> None:
     import bantz.tools.gmail
     import bantz.tools.calendar
     import bantz.tools.classroom
+    import bantz.tools.reminder
 
     print("Bantz v2 — System Check")
     print("─" * 44)
@@ -578,6 +579,11 @@ async def _doctor() -> None:
     # GPS
     from bantz.core.gps_server import gps_server
     print(f"○ {gps_server.status_line()}")
+
+    # Scheduler
+    from bantz.core.scheduler import scheduler as _sched
+    _sched.init(config.db_path)
+    print(f"✓ {_sched.status_line()}")
 
     print("─" * 44)
 

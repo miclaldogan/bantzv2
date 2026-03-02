@@ -54,6 +54,9 @@ class Config(BaseSettings):
     morning_briefing_hour: int = Field(8, alias="BANTZ_MORNING_HOUR")
     morning_briefing_minute: int = Field(0, alias="BANTZ_MORNING_MINUTE")
 
+    # ── Scheduler / Reminders ─────────────────────────────────────────────
+    reminder_check_interval: int = Field(30, alias="BANTZ_REMINDER_CHECK_INTERVAL")
+
     # ── Telegram ──────────────────────────────────────────────────────────
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
