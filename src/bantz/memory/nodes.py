@@ -15,7 +15,8 @@ from datetime import datetime
 # ── Schema constants ───────────────────────────────────────────────────────
 
 NODE_LABELS = (
-    "Person", "Topic", "Decision", "Task", "Event", "Location", "Document",
+    "Person", "Topic", "Decision", "Task", "Event",
+    "Location", "Document", "Reminder", "Commitment",
 )
 
 REL_TYPES = {
@@ -94,6 +95,9 @@ def extract_entities(
             "props": {"name": name, "last_seen": datetime.now().isoformat()},
             "rels": [],
         })
+
+    # Track extracted names/labels for relationship building later
+    _people_names = list(found_people)
 
     # ── Topics from tool usage ──
     if tool_used and tool_used in _TOOL_TOPIC_MAP:
@@ -205,6 +209,7 @@ def extract_entities(
             })
 
     # ── Locations ──
+    _location_names: list[str] = []
     loc_patterns = [
         r"(?:in|at|from|going to|travel to)\s+"
         r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"
@@ -214,12 +219,180 @@ def extract_entities(
         for m in re.finditer(pat, f"{user_msg} {assistant_msg}"):
             loc = m.group(1).strip()
             if loc not in _SKIP_LOCATIONS and len(loc) > 2:
+                _location_names.append(loc)
                 entities.append({
                     "label": "Location",
                     "key": "name",
                     "props": {"name": loc,
                               "last_mentioned": datetime.now().isoformat()},
                     "rels": [],
+                })
+
+    # ── Reminders (from tool data) ──
+    if tool_used == "reminder" and tool_data:
+        title = tool_data.get("title", "")
+        if title:
+            props = {
+                "title": title,
+                "status": "active",
+                "created_at": datetime.now().isoformat(),
+            }
+            if tool_data.get("fire_at"):
+                props["fire_at"] = tool_data["fire_at"]
+                props["trigger_type"] = "time"
+            if tool_data.get("trigger_place"):
+                props["trigger_place"] = tool_data["trigger_place"]
+                props["trigger_type"] = "location"
+            entities.append({
+                "label": "Reminder",
+                "key": "title",
+                "props": props,
+                "rels": [],
+            })
+
+    # ── Commitments — "I promised", "I committed", "I guarantee" ──
+    commitment_patterns = [
+        r"(?:i\s+promise[d]?\s+(?:to\s+)?|i\s+commit(?:ted)?\s+to\s+|"
+        r"i\s+guarantee\s+|i\s+swear\s+(?:to\s+)?|i'?ll\s+make\s+sure\s+(?:to\s+)?)"
+        r"(.+?)(?:\.|$|!)",
+        r"(?:promise[d]?\s+(?:you|him|her|them)\s+(?:to\s+)?)"
+        r"(.+?)(?:\.|$|!)",
+    ]
+    for pat in commitment_patterns:
+        m = re.search(pat, combined)
+        if m:
+            what = m.group(1).strip()[:150]
+            if len(what) > 3:
+                rels: list[dict] = []
+                # Link commitment to people mentioned
+                for pname in _people_names:
+                    rels.append({
+                        "type": "COMMITTED_TO",
+                        "target_label": "Person",
+                        "target_key": "name",
+                        "target_val": pname,
+                    })
+                entities.append({
+                    "label": "Commitment",
+                    "key": "what",
+                    "props": {
+                        "what": what,
+                        "status": "active",
+                        "date": datetime.now().isoformat(),
+                        "context": user_msg[:200],
+                    },
+                    "rels": rels,
+                })
+            break
+
+    # ── Build relationships between co-occurring entities ──
+    entities = _build_relationships(entities, _people_names, _location_names, tool_used)
+
+    return entities
+
+
+def _build_relationships(
+    entities: list[dict],
+    people: list[str],
+    locations: list[str],
+    tool_used: str | None,
+) -> list[dict]:
+    """Enrich entities with cross-references based on co-occurrence."""
+
+    # Collect labels of entities we extracted this turn
+    has_task = any(e["label"] == "Task" for e in entities)
+    has_event = any(e["label"] == "Event" for e in entities)
+    has_decision = any(e["label"] == "Decision" for e in entities)
+    has_document = any(e["label"] == "Document" for e in entities)
+    has_topic = any(e["label"] == "Topic" for e in entities)
+
+    for ent in entities:
+        label = ent["label"]
+
+        # Person → Task: ASSIGNED_TO
+        if label == "Task" and people:
+            for pname in people[:2]:
+                ent["rels"].append({
+                    "type": "ASSIGNED_TO",
+                    "target_label": "Person",
+                    "target_key": "name",
+                    "target_val": pname,
+                })
+
+        # Person → Topic: WORKS_ON
+        if label == "Person" and has_topic:
+            topic_ent = next((e for e in entities if e["label"] == "Topic"), None)
+            if topic_ent:
+                ent["rels"].append({
+                    "type": "WORKS_ON",
+                    "target_label": "Topic",
+                    "target_key": "name",
+                    "target_val": topic_ent["props"]["name"],
+                })
+
+        # Decision → Event: DECIDED_IN
+        if label == "Decision" and has_event:
+            event_ent = next((e for e in entities if e["label"] == "Event"), None)
+            if event_ent:
+                ent["rels"].append({
+                    "type": "DECIDED_IN",
+                    "target_label": "Event",
+                    "target_key": "title",
+                    "target_val": event_ent["props"]["title"],
+                })
+
+        # Event/Person → Location: LOCATED_AT
+        if label in ("Event", "Person") and locations:
+            ent["rels"].append({
+                "type": "LOCATED_AT",
+                "target_label": "Location",
+                "target_key": "name",
+                "target_val": locations[0],
+            })
+
+        # Task/Decision → Document: REFERENCES
+        if label in ("Task", "Decision") and has_document:
+            doc_ent = next((e for e in entities if e["label"] == "Document"), None)
+            if doc_ent:
+                ent["rels"].append({
+                    "type": "REFERENCES",
+                    "target_label": "Document",
+                    "target_key": "path",
+                    "target_val": doc_ent["props"]["path"],
+                })
+
+        # Topic ↔ Topic / Event / Person: RELATED_TO
+        if label == "Topic" and has_event:
+            event_ent = next((e for e in entities if e["label"] == "Event"), None)
+            if event_ent:
+                ent["rels"].append({
+                    "type": "RELATED_TO",
+                    "target_label": "Event",
+                    "target_key": "title",
+                    "target_val": event_ent["props"]["title"],
+                })
+
+        # Person → Person: KNOWS (if multiple people mentioned together)
+        if label == "Person" and len(people) > 1:
+            my_name = ent["props"]["name"]
+            for other in people:
+                if other != my_name:
+                    ent["rels"].append({
+                        "type": "KNOWS",
+                        "target_label": "Person",
+                        "target_key": "name",
+                        "target_val": other,
+                    })
+
+        # Task → Decision: FOLLOWS_UP
+        if label == "Task" and has_decision:
+            dec_ent = next((e for e in entities if e["label"] == "Decision"), None)
+            if dec_ent:
+                ent["rels"].append({
+                    "type": "FOLLOWS_UP",
+                    "target_label": "Decision",
+                    "target_key": "what",
+                    "target_val": dec_ent["props"]["what"],
                 })
 
     return entities

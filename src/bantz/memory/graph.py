@@ -84,13 +84,15 @@ class GraphMemory:
     async def _ensure_indexes(self) -> None:
         """Create indexes for fast lookups."""
         queries = [
-            "CREATE INDEX IF NOT EXISTS FOR (p:Person)   ON (p.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (t:Topic)    ON (t.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (d:Decision) ON (d.what)",
-            "CREATE INDEX IF NOT EXISTS FOR (tk:Task)    ON (tk.description)",
-            "CREATE INDEX IF NOT EXISTS FOR (e:Event)    ON (e.title)",
-            "CREATE INDEX IF NOT EXISTS FOR (l:Location) ON (l.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (dc:Document) ON (dc.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (p:Person)     ON (p.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (t:Topic)      ON (t.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (d:Decision)   ON (d.what)",
+            "CREATE INDEX IF NOT EXISTS FOR (tk:Task)      ON (tk.description)",
+            "CREATE INDEX IF NOT EXISTS FOR (e:Event)      ON (e.title)",
+            "CREATE INDEX IF NOT EXISTS FOR (l:Location)   ON (l.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (dc:Document)  ON (dc.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (r:Reminder)   ON (r.title)",
+            "CREATE INDEX IF NOT EXISTS FOR (c:Commitment) ON (c.what)",
         ]
         async with self._driver.session() as s:
             for q in queries:
@@ -137,7 +139,8 @@ class GraphMemory:
         return extract_entities(user_msg, assistant_msg, tool_used, tool_data)
 
     async def _upsert_entities(self, entities: list[dict], now: str) -> None:
-        """MERGE entities into Neo4j — create if new, update if existing."""
+        """MERGE entities into Neo4j — create if new, update if existing.
+        Also create relationships between entities."""
         async with self._driver.session() as session:
             for ent in entities:
                 label = ent["label"]
@@ -158,6 +161,43 @@ class GraphMemory:
                     await session.run(query, **props)
                 except Exception as exc:
                     log.debug("Upsert %s failed: %s", label, exc)
+
+                # Create relationships
+                for rel in ent.get("rels", []):
+                    await self._upsert_relationship(
+                        session, label, key, key_val, rel
+                    )
+
+    async def _upsert_relationship(
+        self,
+        session,
+        src_label: str,
+        src_key: str,
+        src_val: str,
+        rel: dict,
+    ) -> None:
+        """MERGE a relationship between two nodes."""
+        rel_type = rel["type"]
+        tgt_label = rel["target_label"]
+        tgt_key = rel["target_key"]
+        tgt_val = rel["target_val"]
+
+        query = (
+            f"MATCH (a:{src_label} {{{src_key}: $src_val}})\n"
+            f"MATCH (b:{tgt_label} {{{tgt_key}: $tgt_val}})\n"
+            f"MERGE (a)-[r:{rel_type}]->(b)\n"
+            f"ON CREATE SET r.created_at = $now\n"
+            f"ON MATCH SET r.updated_at = $now"
+        )
+        try:
+            await session.run(
+                query,
+                src_val=src_val,
+                tgt_val=tgt_val,
+                now=datetime.now().isoformat(),
+            )
+        except Exception as exc:
+            log.debug("Rel %s failed: %s", rel_type, exc)
 
     # ── Reading — build context for LLM ────────────────────────────────────
 
@@ -213,6 +253,89 @@ class GraphMemory:
             f"Graph memory: {s['total_nodes']} nodes, "
             f"{s['total_relationships']} rels"
         )
+
+    # ── Delete operations ──────────────────────────────────────────────────
+
+    async def delete_node(
+        self,
+        label: str,
+        key: str,
+        value: str,
+    ) -> bool:
+        """Delete a specific node and its relationships.
+
+        Returns True if a node was deleted.
+        """
+        if not self._enabled:
+            return False
+
+        try:
+            result = await self._query(
+                f"MATCH (n:{label} {{{key}: $val}}) "
+                f"DETACH DELETE n RETURN count(n) AS deleted",
+                val=value,
+            )
+            return result[0]["deleted"] > 0 if result else False
+        except Exception as exc:
+            log.debug("Delete %s failed: %s", label, exc)
+            return False
+
+    async def delete_by_label(
+        self,
+        label: str,
+        limit: int = 0,
+    ) -> int:
+        """Delete all nodes of a given label (with optional limit).
+
+        Returns count of deleted nodes.
+        """
+        if not self._enabled:
+            return 0
+
+        try:
+            if limit > 0:
+                result = await self._query(
+                    f"MATCH (n:{label}) WITH n LIMIT $limit "
+                    f"DETACH DELETE n RETURN count(n) AS deleted",
+                    limit=limit,
+                )
+            else:
+                result = await self._query(
+                    f"MATCH (n:{label}) DETACH DELETE n "
+                    f"RETURN count(n) AS deleted"
+                )
+            return result[0]["deleted"] if result else 0
+        except Exception as exc:
+            log.debug("Delete all %s failed: %s", label, exc)
+            return 0
+
+    async def delete_relationship(
+        self,
+        src_label: str,
+        src_key: str,
+        src_val: str,
+        rel_type: str,
+        tgt_label: str,
+        tgt_key: str,
+        tgt_val: str,
+    ) -> bool:
+        """Delete a specific relationship between two nodes."""
+        if not self._enabled:
+            return False
+
+        try:
+            result = await self._query(
+                f"MATCH (a:{src_label} {{{src_key}: $src_val}})"
+                f"-[r:{rel_type}]->"
+                f"(b:{tgt_label} {{{tgt_key}: $tgt_val}}) "
+                f"DELETE r RETURN count(r) AS deleted",
+                src_val=src_val,
+                tgt_val=tgt_val,
+            )
+            return result[0]["deleted"] > 0 if result else False
+        except Exception as exc:
+            log.debug("Delete rel %s failed: %s", rel_type, exc)
+            return False
 
 
 # Singleton
