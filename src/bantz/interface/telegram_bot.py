@@ -61,6 +61,9 @@ if config.telegram_allowed_users.strip():
         if uid.strip().isdigit()
     }
 
+# ── Active chat IDs for proactive notifications ──────────────────────────────
+_active_chats: set[int] = set()
+
 
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: reject messages from non-whitelisted users."""
@@ -87,6 +90,7 @@ async def _safe_reply(update: Update, text: str) -> None:
 
 @_authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _active_chats.add(update.effective_chat.id)
     await update.message.reply_text(
         "🦌 Bantz is live!\n\n"
         "Commands:\n"
@@ -97,7 +101,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/odev — upcoming assignments\n"
         "/ders — today's schedule\n"
         "/siradaki — next class\n"
-        "/haber — latest news"
+        "/haber — latest news\n"
+        "/hatirlatici — list reminders"
     )
 
 
@@ -197,6 +202,55 @@ async def cmd_haber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"News error: {exc}")
 
 
+@_authorized
+async def cmd_hatirlatici(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List upcoming reminders."""
+    _active_chats.add(update.effective_chat.id)
+    try:
+        from bantz.core.scheduler import scheduler
+        text = scheduler.format_upcoming(limit=10)
+        await _safe_reply(update, text)
+    except Exception as exc:
+        await update.message.reply_text(f"Reminder error: {exc}")
+
+
+# ── Proactive reminder notifications ─────────────────────────────────────────
+
+async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Periodic job: check for due reminders and send notifications."""
+    if not _active_chats:
+        return
+
+    try:
+        from bantz.core.scheduler import scheduler
+        due = scheduler.check_due()
+    except Exception:
+        due = []
+
+    # Also check location-triggered reminders
+    try:
+        from bantz.core.places import places
+        place_due = places.pop_place_reminders()
+        due.extend(place_due)
+    except Exception:
+        pass
+
+    for item in due:
+        title = item.get("title", "Reminder")
+        place_label = item.get("_place_label")
+
+        if place_label:
+            text = f"📍⏰ Reminder (at {place_label}): {title}"
+        else:
+            text = f"⏰ Reminder: {title}"
+
+        for chat_id in _active_chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text)
+            except Exception as exc:
+                log.debug("Failed to send reminder to %d: %s", chat_id, exc)
+
+
 # ── Bot runner ────────────────────────────────────────────────────────────────
 
 def run_bot() -> None:
@@ -219,6 +273,15 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("ders", cmd_ders))
     app.add_handler(CommandHandler("siradaki", cmd_siradaki))
     app.add_handler(CommandHandler("haber", cmd_haber))
+    app.add_handler(CommandHandler("hatirlatici", cmd_hatirlatici))
+
+    # Proactive reminder check — runs every 30 seconds
+    app.job_queue.run_repeating(
+        _check_reminders_job,
+        interval=config.reminder_check_interval,
+        first=10,
+        name="reminder_check",
+    )
 
     log.info("🦌 Bantz Telegram bot starting...")
     if _PROXY:

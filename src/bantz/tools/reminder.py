@@ -23,8 +23,9 @@ class ReminderTool(BaseTool):
     name = "reminder"
     description = (
         "Create, list, cancel, or snooze reminders and timers. "
+        "Supports time-based and location-based triggers. "
         "Use for: remind me, set a reminder, set a timer, my reminders, "
-        "cancel reminder, snooze, alarm."
+        "cancel reminder, snooze, alarm, remind me when at X."
     )
     risk_level = "safe"
 
@@ -49,29 +50,52 @@ class ReminderTool(BaseTool):
         title = kwargs.get("title", "").strip()
         time_str = kwargs.get("time", "").strip()
         repeat = kwargs.get("repeat", "none")
+        place = kwargs.get("place", "").strip()
 
         # Parse from natural language if we have intent text
-        if intent and (not title or not time_str):
-            parsed_title, parsed_time, parsed_repeat = _parse_reminder_intent(intent)
+        if intent and (not title or (not time_str and not place)):
+            parsed_title, parsed_time, parsed_repeat, parsed_place = _parse_reminder_intent(intent)
             if not title:
                 title = parsed_title
-            if not time_str:
+            if not time_str and not place:
                 time_str = parsed_time
+                place = parsed_place
             if repeat == "none" and parsed_repeat != "none":
                 repeat = parsed_repeat
 
         if not title:
             title = "Reminder"
 
-        # Resolve the fire time
+        # ── Location-based reminder ──
+        if place:
+            place_key = _resolve_place(place)
+            if not place_key:
+                return ToolResult(
+                    success=False, output="",
+                    error=f"Unknown place: \"{place}\". Save it first with 'save here as {place}'.",
+                )
+            # Use a far-future fire_at as fallback expiry
+            fire_at = datetime.now() + timedelta(days=365)
+            rid = scheduler.add(title, fire_at, repeat=repeat, trigger_place=place_key)
+            # Dual-write to Neo4j
+            _store_reminder_neo4j(rid, title, trigger_place=place_key, repeat=repeat)
+            return ToolResult(
+                success=True,
+                output=f"📍 Reminder #{rid} set: \"{title}\" — when you arrive at {place}",
+                data={"id": rid, "title": title, "trigger_place": place_key, "repeat": repeat},
+            )
+
+        # ── Time-based reminder ──
         fire_at = _resolve_time(time_str) if time_str else None
         if not fire_at:
-            # Default: 1 hour from now
             fire_at = datetime.now() + timedelta(hours=1)
 
         rid = scheduler.add(title, fire_at, repeat=repeat)
         time_display = fire_at.strftime("%d %b %H:%M")
         repeat_info = f" (repeats: {repeat})" if repeat != "none" else ""
+
+        # Dual-write to Neo4j
+        _store_reminder_neo4j(rid, title, fire_at=fire_at, repeat=repeat)
 
         return ToolResult(
             success=True,
@@ -137,19 +161,20 @@ class ReminderTool(BaseTool):
 
 # ── Natural language parsing ──────────────────────────────────────────────────
 
-def _parse_reminder_intent(text: str) -> tuple[str, str, str]:
+def _parse_reminder_intent(text: str) -> tuple[str, str, str, str]:
     """
-    Extract title, time, and repeat mode from natural language.
-    Returns (title, time_str, repeat).
+    Extract title, time, repeat mode, and place from natural language.
+    Returns (title, time_str, repeat, place).
 
     Examples:
-        "remind me to call dentist at 3pm" → ("call dentist", "3pm", "none")
-        "remind me every day at 9am to check email" → ("check email", "9am", "daily")
-        "set a timer for 30 minutes" → ("Timer", "30 minutes", "none")
-        "remind me in 2 hours to buy groceries" → ("buy groceries", "2 hours", "none")
+        "remind me to call dentist at 3pm" → ("call dentist", "3pm", "none", "")
+        "remind me every day at 9am to check email" → ("check email", "9am", "daily", "")
+        "remind me to buy milk when I'm at the market" → ("buy milk", "", "none", "market")
+        "when I get to university remind me about office hours" → ("about office hours", "", "none", "university")
     """
     t = text.strip()
     repeat = "none"
+    place = ""
 
     # Detect repeat mode
     if re.search(r"\bevery\s*day\b", t, re.IGNORECASE):
@@ -158,6 +183,20 @@ def _parse_reminder_intent(text: str) -> tuple[str, str, str]:
         repeat = "weekly"
     elif re.search(r"\b(?:weekday|workday)s?\b", t, re.IGNORECASE):
         repeat = "weekdays"
+
+    # ── Detect location triggers ──
+    # "when at X", "when I'm at X", "when I get to X", "when I arrive at X",
+    # "when I'm near X", "when at the X"
+    place_patterns = [
+        r"when\s+(?:i(?:'m|\s+am))?\s*(?:at|near|around)\s+(?:the\s+)?(.+?)(?:\s+remind|\s+tell|\s*$)",
+        r"when\s+(?:i\s+)?(?:get|arrive|go)\s+(?:to|at)\s+(?:the\s+)?(.+?)(?:\s+remind|\s*$|\s*,)",
+    ]
+    for pat in place_patterns:
+        m = re.search(pat, t, re.IGNORECASE)
+        if m:
+            place = m.group(1).strip().rstrip(".,!? ")
+            t = t[:m.start()] + t[m.end():]
+            break
 
     # Strip common prefixes
     cleaned = re.sub(
@@ -214,7 +253,7 @@ def _parse_reminder_intent(text: str) -> tuple[str, str, str]:
     if not title or len(title) < 2:
         title = "Reminder"
 
-    return title, time_str, repeat
+    return title, time_str, repeat, place
 
 
 def _resolve_time(time_str: str) -> datetime | None:
@@ -298,3 +337,84 @@ def _parse_clock_time(s: str) -> tuple[int, int] | None:
 # Register
 reminder_tool = ReminderTool()
 registry.register(reminder_tool)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _resolve_place(name: str) -> str | None:
+    """Resolve a place name to its key from the places database.
+
+    Returns the place key if found, None otherwise.
+    """
+    try:
+        from bantz.core.places import places
+        all_places = places.all_places()
+        name_lower = name.lower().strip()
+
+        # Exact key match
+        if name_lower in all_places:
+            return name_lower
+
+        # Label match (case-insensitive)
+        for key, place in all_places.items():
+            label = place.get("label", key).lower()
+            if label == name_lower or name_lower in label or label in name_lower:
+                return key
+
+        return None
+    except Exception:
+        return None
+
+
+def _store_reminder_neo4j(
+    rid: int,
+    title: str,
+    fire_at: datetime | None = None,
+    trigger_place: str | None = None,
+    repeat: str = "none",
+) -> None:
+    """Dual-write reminder to Neo4j graph as a Reminder node."""
+    try:
+        from bantz.memory.graph import graph_memory
+        if not graph_memory.enabled:
+            return
+
+        import asyncio
+        from datetime import datetime as dt
+
+        props = {
+            "rid": rid,
+            "title": title,
+            "repeat": repeat,
+            "status": "active",
+            "created_at": dt.now().isoformat(),
+        }
+        if fire_at:
+            props["fire_at"] = fire_at.isoformat()
+        if trigger_place:
+            props["trigger_place"] = trigger_place
+            props["trigger_type"] = "location"
+        else:
+            props["trigger_type"] = "time"
+
+        async def _write():
+            try:
+                driver = graph_memory._driver
+                if driver:
+                    async with driver.session() as s:
+                        await s.run(
+                            "MERGE (r:Reminder {rid: $rid}) "
+                            "ON CREATE SET r += $props "
+                            "ON MATCH SET r += $props",
+                            rid=rid, props=props,
+                        )
+            except Exception:
+                pass
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_write())
+        except RuntimeError:
+            asyncio.run(_write())
+    except Exception:
+        pass

@@ -69,13 +69,19 @@ class Scheduler:
                 repeat_interval  INTEGER DEFAULT 0,
                 created_at       TEXT NOT NULL,
                 fired            INTEGER NOT NULL DEFAULT 0,
-                snoozed_until    TEXT
+                snoozed_until    TEXT,
+                trigger_place    TEXT
             )
         """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_reminders_fire
                 ON reminders(fire_at, fired)
         """)
+        # Migration: add trigger_place column to existing tables
+        try:
+            self._conn.execute("ALTER TABLE reminders ADD COLUMN trigger_place TEXT")
+        except Exception:
+            pass  # column already exists
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -85,25 +91,38 @@ class Scheduler:
         fire_at: datetime,
         repeat: str = "none",
         repeat_interval: int = 0,
+        trigger_place: str | None = None,
     ) -> int:
-        """Create a new reminder. Returns the reminder ID."""
+        """Create a new reminder. Returns the reminder ID.
+
+        If trigger_place is set, the reminder fires when the user enters
+        that named place (from places.py) instead of at fire_at.
+        fire_at is still stored as a fallback expiry.
+        """
         if repeat not in _REPEAT_MODES:
             repeat = "none"
 
         with self._lock:
             cur = self._conn.execute(
-                """INSERT INTO reminders (title, fire_at, repeat, repeat_interval, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO reminders
+                       (title, fire_at, repeat, repeat_interval, created_at, trigger_place)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     title,
                     fire_at.isoformat(),
                     repeat,
                     repeat_interval,
                     datetime.now().isoformat(),
+                    trigger_place,
                 ),
             )
             rid = cur.lastrowid
-            log.info("Reminder #%d added: '%s' at %s (repeat=%s)", rid, title, fire_at, repeat)
+            if trigger_place:
+                log.info("Reminder #%d added: '%s' when at '%s' (repeat=%s)",
+                         rid, title, trigger_place, repeat)
+            else:
+                log.info("Reminder #%d added: '%s' at %s (repeat=%s)",
+                         rid, title, fire_at, repeat)
             return rid
 
     def check_due(self) -> list[dict]:
@@ -216,6 +235,35 @@ class Scheduler:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def check_place_due(self, place_key: str) -> list[dict]:
+        """Return location-triggered reminders for the given place and mark fired.
+
+        Called by places.py when the user enters a known place.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM reminders
+                   WHERE fired = 0
+                     AND trigger_place = ?
+                     AND (snoozed_until IS NULL OR snoozed_until <= ?)
+                   ORDER BY created_at""",
+                (place_key, datetime.now().isoformat()),
+            ).fetchall()
+
+            due = []
+            for row in rows:
+                item = dict(row)
+                due.append(item)
+
+                repeat = item["repeat"]
+                if repeat == "none":
+                    self._conn.execute(
+                        "UPDATE reminders SET fired = 1 WHERE id = ?",
+                        (item["id"],),
+                    )
+                # Recurring location reminders stay active
+            return due
+
     def count_active(self) -> int:
         """Count unfired reminders."""
         row = self._conn.execute(
@@ -254,9 +302,15 @@ class Scheduler:
                 time_str = f"in {delta.seconds // 60}m"
 
             repeat_tag = f" 🔁 {r['repeat']}" if r["repeat"] != "none" else ""
-            lines.append(
-                f"  #{r['id']} — {r['title']}  ⏱ {fire.strftime('%d %b %H:%M')} ({time_str}){repeat_tag}"
-            )
+            place = r.get("trigger_place")
+            if place:
+                lines.append(
+                    f"  #{r['id']} — {r['title']}  📍 when at {place}{repeat_tag}"
+                )
+            else:
+                lines.append(
+                    f"  #{r['id']} — {r['title']}  ⏱ {fire.strftime('%d %b %H:%M')} ({time_str}){repeat_tag}"
+                )
         return "\n".join(lines)
 
     def format_due_today(self) -> Optional[str]:

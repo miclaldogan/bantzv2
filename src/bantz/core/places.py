@@ -65,6 +65,9 @@ class PlaceService:
         self._asked_for_anchor: bool = False
         self._last_ask_time: float = 0.0
 
+        # Location-triggered reminders that fired
+        self._place_fired: list[dict] = []
+
     def _load(self) -> None:
         if self._loaded:
             return
@@ -133,6 +136,7 @@ class PlaceService:
         entered a *new* known place, else None.
 
         Call this each time new GPS data arrives.
+        Also triggers location-based reminders from the scheduler.
         """
         self._load()
         now = _time.time()
@@ -147,6 +151,8 @@ class PlaceService:
             if place_key and place:
                 transition = place["label"]
                 log.info("Entered place: %s", place["label"])
+                # Fire location-based reminders
+                self._fire_place_reminders(place_key, place["label"])
             elif self._current_place_key:
                 log.info("Left place: %s", self._current_place_key)
             self._last_place_key = self._current_place_key
@@ -178,6 +184,32 @@ class PlaceService:
         if place:
             return place.get("label", self._current_place_key)
         return self._current_place_key
+
+    # ── Location-based reminders ──────────────────────────────────────
+
+    def _fire_place_reminders(self, place_key: str, place_label: str) -> None:
+        """Check scheduler for reminders triggered by entering this place."""
+        try:
+            from bantz.core.scheduler import scheduler
+            due = scheduler.check_place_due(place_key)
+            for item in due:
+                item["_place_label"] = place_label
+                self._place_fired.append(item)
+                log.info(
+                    "Location reminder #%d fired at %s: %s",
+                    item["id"], place_label, item["title"],
+                )
+        except Exception as exc:
+            log.debug("Place reminder check failed: %s", exc)
+
+    def pop_place_reminders(self) -> list[dict]:
+        """Return and clear any location-triggered reminders that fired.
+
+        The TUI and Telegram bot poll this to display notifications.
+        """
+        fired = self._place_fired[:]
+        self._place_fired.clear()
+        return fired
 
     def check_stationary(self) -> Optional[str]:
         """
