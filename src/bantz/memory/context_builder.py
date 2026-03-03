@@ -110,7 +110,35 @@ async def build_context(
             lines = [f"  - {e['title']} ({e['date'] or '?'})" for e in events]
             parts.append("Recent events:\n" + "\n".join(lines))
 
-        # 5. Keyword-matching
+        # 5. Active commitments
+        commitments = await query_fn(
+            "MATCH (c:Commitment {status: 'active'}) "
+            "RETURN c.what AS what, c.date AS date "
+            "ORDER BY c.date DESC LIMIT 5"
+        )
+        if commitments:
+            lines = [f"  - {c['what']}" for c in commitments]
+            parts.append("Active commitments:\n" + "\n".join(lines))
+
+        # 6. Active reminders
+        reminders = await query_fn(
+            "MATCH (r:Reminder {status: 'active'}) "
+            "RETURN r.title AS title, r.trigger_type AS trigger, "
+            "r.fire_at AS fire_at, r.trigger_place AS place "
+            "ORDER BY r.created_at DESC LIMIT 5"
+        )
+        if reminders:
+            lines = []
+            for r in reminders:
+                if r.get("place"):
+                    lines.append(f"  - {r['title']} (at {r['place']})")
+                elif r.get("fire_at"):
+                    lines.append(f"  - {r['title']} ({r['fire_at']})")
+                else:
+                    lines.append(f"  - {r['title']}")
+            parts.append("Active reminders:\n" + "\n".join(lines))
+
+        # 7. Keyword-matching
         keywords = extract_keywords(user_msg)
         if keywords:
             relevant = await keyword_search(keywords, query_fn)
