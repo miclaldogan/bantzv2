@@ -39,6 +39,7 @@ SERVICE_SCOPES: dict[str, list[str]] = {
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/contacts.readonly",
     ],
     "classroom": [
         "https://www.googleapis.com/auth/classroom.courses.readonly",

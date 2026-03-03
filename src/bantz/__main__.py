@@ -510,6 +510,7 @@ async def _doctor() -> None:
     import bantz.tools.calendar
     import bantz.tools.classroom
     import bantz.tools.reminder
+    import bantz.tools.contacts
 
     print("Bantz v2 — System Check")
     print("─" * 44)
