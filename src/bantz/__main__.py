@@ -549,7 +549,10 @@ async def _doctor() -> None:
     # Location
     from bantz.core.location import location_service
     loc = await location_service.get()
-    print(f"✓ Location: {loc.display}  (via {loc.source})")
+    if loc.is_live:
+        print(f"✓ Location: {loc.display}  (via {loc.source})")
+    else:
+        print(f"○ Location: unknown  (no live source — enable phone GPS)")
 
     # Google integrations
     print("  Google integrations:")
