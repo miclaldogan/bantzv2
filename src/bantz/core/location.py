@@ -53,6 +53,11 @@ class Location:
     source: str = "unknown"   # "config" | "geoclue" | "ipinfo" | "fallback"
 
     @property
+    def is_live(self) -> bool:
+        """True when location comes from a real-time source (GPS, WiFi, GeoClue)."""
+        return self.source in ("phone_gps", "geoclue") or self.source.startswith("wifi:")
+
+    @property
     def is_turkey(self) -> bool:
         return self.country == "TR"
 

@@ -533,18 +533,22 @@ class Brain:
         if gps_loc:
             acc = round(gps_loc.get("accuracy", 0))
             lines.append(f"📍 Phone GPS: {gps_loc['lat']:.6f}, {gps_loc['lon']:.6f} (±{acc}m)")
-        elif loc:
+        elif loc and loc.is_live:
             lines.append(f"📍 {loc.display}")
             if loc.lat and loc.lon:
                 lines.append(f"   Coordinates: {loc.lat:.6f}, {loc.lon:.6f}")
             lines.append(f"   Source: {loc.source}")
         else:
-            lines.append("📍 Location unknown")
-
-        if not gps_loc:
+            lines.append(
+                "I can't pinpoint where you are right now — "
+                "I need your phone GPS to figure that out."
+            )
             try:
                 from bantz.core.gps_server import gps_server
-                lines.append(f"   Phone GPS: not connected — open {gps_server.url} on phone")
+                lines.append(
+                    f"Open {gps_server.url} on your phone and "
+                    f"hit 'Share Location' so I can see where you are."
+                )
             except Exception:
                 pass
 
