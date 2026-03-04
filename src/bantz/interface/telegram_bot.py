@@ -102,7 +102,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/ders — today's schedule\n"
         "/siradaki — next class\n"
         "/haber — latest news\n"
-        "/hatirlatici — list reminders"
+        "/hatirlatici — list reminders\n"
+        "/digest — evening daily digest\n"
+        "/weekly — weekly summary"
     )
 
 
@@ -214,6 +216,82 @@ async def cmd_hatirlatici(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"Reminder error: {exc}")
 
 
+@_authorized
+async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On-demand daily digest."""
+    _active_chats.add(update.effective_chat.id)
+    await update.message.reply_text("⏳ Generating digest…")
+    try:
+        from bantz.core.digest import digest_manager
+        text = await digest_manager.daily_digest()
+        await _safe_reply(update, text)
+    except Exception as exc:
+        await update.message.reply_text(f"Digest error: {exc}")
+
+
+@_authorized
+async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On-demand weekly digest."""
+    _active_chats.add(update.effective_chat.id)
+    await update.message.reply_text("⏳ Generating weekly digest…")
+    try:
+        from bantz.core.digest import digest_manager
+        text = await digest_manager.weekly_digest()
+        await _safe_reply(update, text)
+    except Exception as exc:
+        await update.message.reply_text(f"Weekly digest error: {exc}")
+
+
+# ── Proactive digest notifications ───────────────────────────────────────────
+
+async def _daily_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled job: send evening daily digest to all active chats."""
+    if not _active_chats or not config.daily_digest_enabled:
+        return
+
+    try:
+        from bantz.core.digest import digest_manager
+        text = await digest_manager.daily_digest()
+    except Exception as exc:
+        log.warning("Daily digest job failed: %s", exc)
+        return
+
+    for chat_id in _active_chats:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as exc:
+            log.debug("Failed to send daily digest to %d: %s", chat_id, exc)
+
+
+async def _weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled job: send weekly digest on configured day."""
+    if not _active_chats or not config.weekly_digest_enabled:
+        return
+
+    from datetime import datetime
+    now = datetime.now()
+    _DAY_MAP = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    target_day = _DAY_MAP.get(config.weekly_digest_day.lower(), 6)
+    if now.weekday() != target_day:
+        return
+
+    try:
+        from bantz.core.digest import digest_manager
+        text = await digest_manager.weekly_digest()
+    except Exception as exc:
+        log.warning("Weekly digest job failed: %s", exc)
+        return
+
+    for chat_id in _active_chats:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as exc:
+            log.debug("Failed to send weekly digest to %d: %s", chat_id, exc)
+
+
 # ── Proactive reminder notifications ─────────────────────────────────────────
 
 async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -274,6 +352,8 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("siradaki", cmd_siradaki))
     app.add_handler(CommandHandler("haber", cmd_haber))
     app.add_handler(CommandHandler("hatirlatici", cmd_hatirlatici))
+    app.add_handler(CommandHandler("digest", cmd_digest))
+    app.add_handler(CommandHandler("weekly", cmd_weekly))
 
     # Proactive reminder check — runs every 30 seconds
     app.job_queue.run_repeating(
@@ -281,6 +361,29 @@ def run_bot() -> None:
         interval=config.reminder_check_interval,
         first=10,
         name="reminder_check",
+    )
+
+    # Daily digest — runs every 60s, job itself checks if it's the right time
+    import datetime as _dt
+    _digest_time = _dt.time(
+        hour=config.daily_digest_hour,
+        minute=config.daily_digest_minute,
+    )
+    app.job_queue.run_daily(
+        _daily_digest_job,
+        time=_digest_time,
+        name="daily_digest",
+    )
+
+    # Weekly digest — runs daily at configured time, job checks day-of-week
+    _weekly_time = _dt.time(
+        hour=config.weekly_digest_hour,
+        minute=config.weekly_digest_minute,
+    )
+    app.job_queue.run_daily(
+        _weekly_digest_job,
+        time=_weekly_time,
+        name="weekly_digest",
     )
 
     log.info("🦌 Bantz Telegram bot starting...")

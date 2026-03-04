@@ -254,6 +254,38 @@ class GraphMemory:
             f"{s['total_relationships']} rels"
         )
 
+    # ── Growth tracking ────────────────────────────────────────────────────
+
+    async def growth_since(self, since_iso: str) -> dict:
+        """Count nodes and relationships created since a given ISO timestamp.
+
+        Returns {"new_nodes": N, "new_rels": N, "by_label": {...}}.
+        """
+        if not self._enabled:
+            return {"new_nodes": 0, "new_rels": 0, "by_label": {}}
+
+        try:
+            nodes = await self._query(
+                "MATCH (n) WHERE n.created_at >= $since OR n.updated_at >= $since "
+                "OR n.last_seen >= $since OR n.accessed_at >= $since "
+                "RETURN labels(n)[0] AS label, count(n) AS cnt",
+                since=since_iso,
+            )
+            rels = await self._query(
+                "MATCH ()-[r]->() WHERE r.created_at >= $since "
+                "RETURN count(r) AS cnt",
+                since=since_iso,
+            )
+            by_label = {r["label"]: r["cnt"] for r in nodes}
+            return {
+                "new_nodes": sum(r["cnt"] for r in nodes),
+                "new_rels": rels[0]["cnt"] if rels else 0,
+                "by_label": by_label,
+            }
+        except Exception as exc:
+            log.debug("Growth query failed: %s", exc)
+            return {"new_nodes": 0, "new_rels": 0, "by_label": {}}
+
     # ── Delete operations ──────────────────────────────────────────────────
 
     async def delete_node(

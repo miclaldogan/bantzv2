@@ -72,6 +72,7 @@ class BantzApp(App):
         self._start_stationary_checker()
         self._start_morning_briefing_timer()
         self._start_reminder_checker()
+        self._start_digest_checker()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -186,6 +187,39 @@ class BantzApp(App):
                 chat.scroll_end()
                 try:
                     memory.add("assistant", text, tool_used="briefing")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _start_digest_checker(self) -> None:
+        self.set_interval(60, self._check_digest)
+
+    @work(exclusive=False)
+    async def _check_digest(self) -> None:
+        try:
+            from bantz.core.digest import digest_manager
+            from bantz.core.memory import memory
+
+            # Check daily digest
+            text = await digest_manager.daily_if_due()
+            if text:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(text)
+                chat.scroll_end()
+                try:
+                    memory.add("assistant", text, tool_used="digest")
+                except Exception:
+                    pass
+
+            # Check weekly digest
+            text = await digest_manager.weekly_if_due()
+            if text:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(text)
+                chat.scroll_end()
+                try:
+                    memory.add("assistant", text, tool_used="digest")
                 except Exception:
                     pass
         except Exception:
