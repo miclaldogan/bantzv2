@@ -84,3 +84,23 @@ class WeatherTool(BaseTool):
 
 
 registry.register(WeatherTool())
+
+
+# ── Digest helper ─────────────────────────────────────────────────────────────
+
+async def tomorrow_forecast() -> str | None:
+    """Return a short forecast string for tomorrow, or None on failure."""
+    try:
+        tool = WeatherTool()
+        loc = await location_service.get()
+        data = await tool._fetch(loc.city)
+        days = data.get("weather", [])
+        if len(days) < 2:
+            return None
+        day = days[1]  # tomorrow
+        max_c = day["maxtempC"]
+        min_c = day["mintempC"]
+        desc = day["hourly"][4]["weatherDesc"][0]["value"]  # noon
+        return f"{min_c}°C–{max_c}°C, {desc}"
+    except Exception:
+        return None

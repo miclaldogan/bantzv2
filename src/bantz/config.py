@@ -54,6 +54,15 @@ class Config(BaseSettings):
     morning_briefing_hour: int = Field(8, alias="BANTZ_MORNING_HOUR")
     morning_briefing_minute: int = Field(0, alias="BANTZ_MORNING_MINUTE")
 
+    # ── Digests ───────────────────────────────────────────────────────────
+    daily_digest_enabled: bool = Field(True, alias="BANTZ_DAILY_DIGEST_ENABLED")
+    daily_digest_hour: int = Field(20, alias="BANTZ_DAILY_DIGEST_HOUR")
+    daily_digest_minute: int = Field(0, alias="BANTZ_DAILY_DIGEST_MINUTE")
+    weekly_digest_enabled: bool = Field(True, alias="BANTZ_WEEKLY_DIGEST_ENABLED")
+    weekly_digest_day: str = Field("sunday", alias="BANTZ_WEEKLY_DIGEST_DAY")
+    weekly_digest_hour: int = Field(20, alias="BANTZ_WEEKLY_DIGEST_HOUR")
+    weekly_digest_minute: int = Field(0, alias="BANTZ_WEEKLY_DIGEST_MINUTE")
+
     # ── Scheduler / Reminders ─────────────────────────────────────────────
     reminder_check_interval: int = Field(30, alias="BANTZ_REMINDER_CHECK_INTERVAL")
 

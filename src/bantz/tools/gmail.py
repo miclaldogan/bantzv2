@@ -1003,3 +1003,53 @@ class GmailTool(BaseTool):
 
 
 registry.register(GmailTool())
+
+
+# ── Digest helpers ────────────────────────────────────────────────────────────
+
+def _count_query_sync(creds, query: str) -> int:
+    """Count messages matching a Gmail query."""
+    from googleapiclient.discovery import build
+    svc = build("gmail", "v1", credentials=creds)
+    result = svc.users().messages().list(
+        userId="me", q=query, maxResults=1,
+    ).execute()
+    return result.get("resultSizeEstimate", 0)
+
+
+async def email_stats_today() -> dict:
+    """Return email stats for today: received, sent, unread counts."""
+    try:
+        tool = GmailTool()
+        creds = token_store.get("gmail")
+        loop = asyncio.get_event_loop()
+
+        unread = await loop.run_in_executor(None, tool._count_sync, creds)
+        received = await loop.run_in_executor(
+            None, _count_query_sync, creds, "newer_than:1d in:inbox",
+        )
+        sent = await loop.run_in_executor(
+            None, _count_query_sync, creds, "newer_than:1d in:sent",
+        )
+        return {"received": received, "sent": sent, "unread": unread}
+    except Exception:
+        return {"received": 0, "sent": 0, "unread": 0}
+
+
+async def email_stats_week() -> dict:
+    """Return email stats for this week."""
+    try:
+        tool = GmailTool()
+        creds = token_store.get("gmail")
+        loop = asyncio.get_event_loop()
+
+        unread = await loop.run_in_executor(None, tool._count_sync, creds)
+        received = await loop.run_in_executor(
+            None, _count_query_sync, creds, "newer_than:7d in:inbox",
+        )
+        sent = await loop.run_in_executor(
+            None, _count_query_sync, creds, "newer_than:7d in:sent",
+        )
+        return {"received": received, "sent": sent, "unread": unread}
+    except Exception:
+        return {"received": 0, "sent": 0, "unread": 0}
