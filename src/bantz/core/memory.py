@@ -30,8 +30,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from bantz.data.store import ConversationStore
 
-class Memory:
+
+class Memory(ConversationStore):
     def __init__(self) -> None:
         self._db_path: Optional[Path] = None
         self._conn: Optional[sqlite3.Connection] = None
