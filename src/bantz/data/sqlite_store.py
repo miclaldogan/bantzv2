@@ -1,0 +1,445 @@
+"""
+Bantz v3 — SQLite Store Implementations
+
+Concrete SQLite-backed stores for conversations and reminders.
+Schema matches the existing v2 tables — zero-migration upgrade.
+
+These are standalone implementations usable in tests and migration
+scripts without importing the full ``core/`` layer.  At runtime the
+DataLayer wires the existing ``Memory`` and ``Scheduler`` singletons
+(which inherit from these ABCs) instead.
+"""
+from __future__ import annotations
+
+import logging
+import sqlite3
+import threading
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+from bantz.data.store import ConversationStore, ReminderStore
+
+log = logging.getLogger("bantz.data.sqlite")
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open a WAL-mode autocommit SQLite connection."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+# ━━ Conversation Store ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLiteConversationStore(ConversationStore):
+    """SQLite conversation + message store, compatible with v2 schema."""
+
+    def __init__(self) -> None:
+        self._db_path: Optional[Path] = None
+        self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.Lock()
+        self._session_id: Optional[int] = None
+
+    # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def init(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        c = self._conn
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at  TEXT NOT NULL,
+                last_active TEXT NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+                role            TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                content         TEXT NOT NULL,
+                tool_used       TEXT,
+                created_at      TEXT NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_conv
+                ON messages(conversation_id, created_at)
+        """)
+        # FTS5 for full-text search — graceful fallback if unavailable
+        try:
+            c.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+                USING fts5(content, content='messages', content_rowid='id')
+            """)
+            c.execute("""
+                CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+                END
+            """)
+        except sqlite3.OperationalError:
+            pass  # FTS5 not compiled in
+
+    # ── session management ────────────────────────────────────────────────
+
+    def new_session(self) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO conversations(started_at, last_active) VALUES (?,?)",
+                (now, now),
+            )
+            self._session_id = cur.lastrowid
+        return self._session_id
+
+    def resume_session(self, session_id: int) -> bool:
+        row = self._conn.execute(
+            "SELECT id FROM conversations WHERE id=?", (session_id,)
+        ).fetchone()
+        if row:
+            self._session_id = session_id
+            return True
+        return False
+
+    @property
+    def session_id(self) -> Optional[int]:
+        return self._session_id
+
+    # ── writing ───────────────────────────────────────────────────────────
+
+    def add(self, role: str, content: str, tool_used: Optional[str] = None) -> int:
+        if not self._session_id:
+            self.new_session()
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO messages(conversation_id, role, content, tool_used, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (self._session_id, role, content, tool_used, now),
+            )
+            self._conn.execute(
+                "UPDATE conversations SET last_active=? WHERE id=?",
+                (now, self._session_id),
+            )
+        return cur.lastrowid
+
+    # ── reading ───────────────────────────────────────────────────────────
+
+    def context(self, n: int = 12) -> list[dict]:
+        if not self._session_id:
+            return []
+        rows = self._conn.execute(
+            """SELECT role, content FROM messages
+               WHERE conversation_id=? AND role IN ('user','assistant')
+               ORDER BY created_at DESC LIMIT ?""",
+            (self._session_id, n),
+        ).fetchall()
+        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+    def last_n(self, n: int = 20) -> list[dict]:
+        if not self._session_id:
+            return []
+        rows = self._conn.execute(
+            """SELECT role, content, tool_used, created_at FROM messages
+               WHERE conversation_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self._session_id, n),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    def search(self, query: str, limit: int = 10) -> list[dict]:
+        try:
+            rows = self._conn.execute(
+                """SELECT m.role, m.content, m.tool_used, m.created_at,
+                          c.id as conv_id
+                   FROM messages_fts f
+                   JOIN messages m ON m.id = f.rowid
+                   JOIN conversations c ON c.id = m.conversation_id
+                   WHERE messages_fts MATCH ?
+                   ORDER BY m.created_at DESC LIMIT ?""",
+                (query, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = self._conn.execute(
+                """SELECT m.role, m.content, m.tool_used, m.created_at,
+                          c.id as conv_id
+                   FROM messages m
+                   JOIN conversations c ON c.id = m.conversation_id
+                   WHERE m.content LIKE ?
+                   ORDER BY m.created_at DESC LIMIT ?""",
+                (f"%{query}%", limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_by_date(self, date: datetime, limit: int = 20) -> list[dict]:
+        date_str = date.strftime("%Y-%m-%d")
+        rows = self._conn.execute(
+            """SELECT m.role, m.content, m.tool_used, m.created_at,
+                      c.id as conv_id
+               FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               WHERE m.created_at LIKE ?
+               ORDER BY m.created_at ASC LIMIT ?""",
+            (f"{date_str}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def conversation_list(self, limit: int = 20) -> list[dict]:
+        rows = self._conn.execute(
+            """SELECT c.id, c.started_at, c.last_active,
+                      COUNT(m.id) as message_count,
+                      (SELECT content FROM messages
+                       WHERE conversation_id=c.id AND role='user'
+                       ORDER BY created_at LIMIT 1) as first_message
+               FROM conversations c
+               LEFT JOIN messages m ON m.conversation_id=c.id
+               GROUP BY c.id
+               ORDER BY c.last_active DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── diagnostics ───────────────────────────────────────────────────────
+
+    def stats(self) -> dict:
+        total_conv = self._conn.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        total_msg = self._conn.execute(
+            "SELECT COUNT(*) FROM messages"
+        ).fetchone()[0]
+        session_msg = 0
+        if self._session_id:
+            session_msg = self._conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id=?",
+                (self._session_id,),
+            ).fetchone()[0]
+        return {
+            "db_path": str(self._db_path),
+            "total_conversations": total_conv,
+            "total_messages": total_msg,
+            "current_session_id": self._session_id,
+            "current_session_messages": session_msg,
+        }
+
+    def prune(self, keep_days: int = 90) -> int:
+        cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM conversations WHERE last_active < ?", (cutoff,)
+            )
+        return cur.rowcount
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+
+# ━━ Reminder Store ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_REPEAT_MODES = ("none", "daily", "weekly", "weekdays", "custom")
+
+
+class SQLiteReminderStore(ReminderStore):
+    """SQLite reminder store, compatible with v2 schema."""
+
+    def __init__(self) -> None:
+        self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.Lock()
+
+    # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def init(self, db_path: Path) -> None:
+        self._conn = _connect(db_path)
+        self._migrate()
+        log.debug("SQLiteReminderStore initialized: %s", db_path)
+
+    def _migrate(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                title            TEXT NOT NULL,
+                fire_at          TEXT NOT NULL,
+                repeat           TEXT NOT NULL DEFAULT 'none',
+                repeat_interval  INTEGER DEFAULT 0,
+                created_at       TEXT NOT NULL,
+                fired            INTEGER NOT NULL DEFAULT 0,
+                snoozed_until    TEXT,
+                trigger_place    TEXT
+            )
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reminders_fire
+                ON reminders(fire_at, fired)
+        """)
+        try:
+            self._conn.execute("ALTER TABLE reminders ADD COLUMN trigger_place TEXT")
+        except Exception:
+            pass  # column already exists
+
+    # ── CRUD ──────────────────────────────────────────────────────────────
+
+    def add(
+        self,
+        title: str,
+        fire_at: datetime,
+        repeat: str = "none",
+        repeat_interval: int = 0,
+        trigger_place: Optional[str] = None,
+    ) -> int:
+        if repeat not in _REPEAT_MODES:
+            repeat = "none"
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO reminders
+                       (title, fire_at, repeat, repeat_interval, created_at, trigger_place)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    title,
+                    fire_at.isoformat(),
+                    repeat,
+                    repeat_interval,
+                    datetime.now().isoformat(),
+                    trigger_place,
+                ),
+            )
+            return cur.lastrowid
+
+    def check_due(self) -> list[dict]:
+        now_iso = datetime.now().isoformat()
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM reminders
+                   WHERE fired = 0
+                     AND fire_at <= ?
+                     AND (snoozed_until IS NULL OR snoozed_until <= ?)
+                   ORDER BY fire_at""",
+                (now_iso, now_iso),
+            ).fetchall()
+            due = []
+            for row in rows:
+                item = dict(row)
+                due.append(item)
+                repeat = item["repeat"]
+                if repeat == "none":
+                    self._conn.execute(
+                        "UPDATE reminders SET fired = 1 WHERE id = ?",
+                        (item["id"],),
+                    )
+                else:
+                    next_fire = self._next_occurrence(
+                        datetime.fromisoformat(item["fire_at"]),
+                        repeat,
+                        item["repeat_interval"],
+                    )
+                    self._conn.execute(
+                        "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
+                        (next_fire.isoformat(), item["id"]),
+                    )
+            return due
+
+    def list_upcoming(self, limit: int = 10) -> list[dict]:
+        rows = self._conn.execute(
+            """SELECT * FROM reminders WHERE fired = 0
+               ORDER BY fire_at LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_all(self, limit: int = 20) -> list[dict]:
+        rows = self._conn.execute(
+            """SELECT * FROM reminders ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def cancel(self, reminder_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM reminders WHERE id = ?", (reminder_id,)
+            )
+            return cur.rowcount > 0
+
+    def cancel_by_title(self, title: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM reminders WHERE lower(title) = lower(?)", (title,)
+            )
+            return cur.rowcount
+
+    def snooze(self, reminder_id: int, minutes: int = 10) -> bool:
+        until = datetime.now() + timedelta(minutes=minutes)
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE reminders SET snoozed_until = ?, fired = 0 WHERE id = ?",
+                (until.isoformat(), reminder_id),
+            )
+            return cur.rowcount > 0
+
+    def due_today(self) -> list[dict]:
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        rows = self._conn.execute(
+            """SELECT * FROM reminders
+               WHERE fired = 0 AND fire_at >= ? AND fire_at < ?
+               ORDER BY fire_at""",
+            (today_start.isoformat(), today_end.isoformat()),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def check_place_due(self, place_key: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM reminders
+                   WHERE fired = 0 AND trigger_place = ?
+                     AND (snoozed_until IS NULL OR snoozed_until <= ?)
+                   ORDER BY created_at""",
+                (place_key, datetime.now().isoformat()),
+            ).fetchall()
+            due = []
+            for row in rows:
+                item = dict(row)
+                due.append(item)
+                if item["repeat"] == "none":
+                    self._conn.execute(
+                        "UPDATE reminders SET fired = 1 WHERE id = ?",
+                        (item["id"],),
+                    )
+            return due
+
+    def count_active(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM reminders WHERE fired = 0"
+        ).fetchone()
+        return row[0] if row else 0
+
+    # ── internal ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _next_occurrence(current: datetime, repeat: str, interval: int) -> datetime:
+        if repeat == "daily":
+            return current + timedelta(days=1)
+        elif repeat == "weekly":
+            return current + timedelta(weeks=1)
+        elif repeat == "weekdays":
+            nxt = current + timedelta(days=1)
+            while nxt.weekday() >= 5:
+                nxt += timedelta(days=1)
+            return nxt
+        elif repeat == "custom" and interval > 0:
+            return current + timedelta(seconds=interval)
+        return current + timedelta(days=1)

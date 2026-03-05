@@ -35,12 +35,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from bantz.data.store import ReminderStore
+
 log = logging.getLogger("bantz.scheduler")
 
 _REPEAT_MODES = ("none", "daily", "weekly", "weekdays", "custom")
 
 
-class Scheduler:
+class Scheduler(ReminderStore):
     def __init__(self) -> None:
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.Lock()

@@ -22,7 +22,7 @@ import logging
 
 from bantz.config import config
 from bantz.core.time_context import time_ctx
-from bantz.core.memory import memory
+from bantz.data import data_layer
 from bantz.core.profile import profile
 from bantz.core.intent import cot_route
 from bantz.core.date_parser import resolve_date
@@ -139,10 +139,7 @@ class Brain:
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
-            memory.init(config.db_path)
-            memory.new_session()
-            from bantz.core.scheduler import scheduler
-            scheduler.init(config.db_path)
+            data_layer.init(config)
             self._memory_ready = True
 
     async def _ensure_graph(self) -> None:
@@ -598,7 +595,7 @@ class Brain:
         tc = time_ctx.snapshot()
 
         # Save user message ONCE — before any branching
-        memory.add("user", user_input)
+        data_layer.conversations.add("user", user_input)
 
         # ── Workflow detection: multi-tool chained commands (#34) ──
         from bantz.core.workflow import workflow_engine
@@ -614,7 +611,7 @@ class Brain:
                         "subject": d.get("subject", ""),
                         "body": d["body"],
                     }
-            memory.add("assistant", resp, tool_used="workflow")
+            data_layer.conversations.add("assistant", resp, tool_used="workflow")
             await self._graph_store(user_input, resp, "workflow")
             return BrainResult(response=resp, tool_used="workflow")
 
@@ -623,39 +620,39 @@ class Brain:
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing
             text = await _briefing.generate()
-            memory.add("assistant", text, tool_used="briefing")
+            data_layer.conversations.add("assistant", text, tool_used="briefing")
             return BrainResult(response=text, tool_used="briefing")
 
         if quick and quick["tool"] == "_location":
             text = await self._handle_location()
-            memory.add("assistant", text, tool_used="location")
+            data_layer.conversations.add("assistant", text, tool_used="location")
             return BrainResult(response=text, tool_used="location")
 
         if quick and quick["tool"] == "_save_place":
             text = await self._handle_save_place(quick["args"]["name"])
-            memory.add("assistant", text, tool_used="places")
+            data_layer.conversations.add("assistant", text, tool_used="places")
             return BrainResult(response=text, tool_used="places")
 
         if quick and quick["tool"] == "_list_places":
             text = await self._handle_list_places()
-            memory.add("assistant", text, tool_used="places")
+            data_layer.conversations.add("assistant", text, tool_used="places")
             return BrainResult(response=text, tool_used="places")
 
         if quick and quick["tool"] == "_delete_place":
             text = await self._handle_delete_place(quick["args"]["name"])
-            memory.add("assistant", text, tool_used="places")
+            data_layer.conversations.add("assistant", text, tool_used="places")
             return BrainResult(response=text, tool_used="places")
 
         if quick and quick["tool"] == "_schedule_today":
             from bantz.core.schedule import schedule as _sched
             text = _sched.format_today()
-            memory.add("assistant", text, tool_used="schedule")
+            data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_schedule_next":
             from bantz.core.schedule import schedule as _sched
             text = _sched.format_next()
-            memory.add("assistant", text, tool_used="schedule")
+            data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_schedule_date":
@@ -663,14 +660,14 @@ class Brain:
             from datetime import datetime as _dt
             target = _dt.fromisoformat(quick["args"]["date_iso"])
             text = _sched.format_for_date(target)
-            memory.add("assistant", text, tool_used="schedule")
+            data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_schedule_week":
             from bantz.core.schedule import schedule as _sched
             resolved = resolve_date(user_input)
             text = _sched.format_week(resolved)
-            memory.add("assistant", text, tool_used="schedule")
+            data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
         if quick and quick["tool"] == "_generate":
@@ -696,7 +693,7 @@ class Brain:
                     }
                 else:
                     text = "No draft to send. Compose a mail first."
-                    memory.add("assistant", text)
+                    data_layer.conversations.add("assistant", text)
                     return BrainResult(response=text, tool_used=None)
 
             plan = {"route": "tool", "tool_name": quick["tool"],
@@ -735,7 +732,7 @@ class Brain:
                 f"⚠️  Destructive operation: [{tool_name}] `{cmd_str}`\n"
                 f"Confirm? (yes/no)"
             )
-            memory.add("assistant", warn)
+            data_layer.conversations.add("assistant", warn)
             return BrainResult(
                 response=warn,
                 tool_used=tool_name,
@@ -748,7 +745,7 @@ class Brain:
         tool = registry.get(tool_name)
         if not tool:
             err = f"Tool not found: {tool_name}"
-            memory.add("assistant", err)
+            data_layer.conversations.add("assistant", err)
             return BrainResult(response=err, tool_used=None)
 
         result = await tool.execute(**tool_args)
@@ -768,7 +765,7 @@ class Brain:
                 "subject": d.get("subject", ""),
                 "body": d["body"],
             }
-            memory.add("assistant", result.output, tool_used=tool_name)
+            data_layer.conversations.add("assistant", result.output, tool_used=tool_name)
             return BrainResult(
                 response=result.output,
                 tool_used=tool_name,
@@ -793,7 +790,7 @@ class Brain:
 
         # Short output — non-streaming finalize
         resp = await self._finalize(en_input, result, tc)
-        memory.add("assistant", resp, tool_used=tool_name)
+        data_layer.conversations.add("assistant", resp, tool_used=tool_name)
         await self._graph_store(user_input, resp, tool_name,
                                 result.data if result else None)
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
@@ -803,7 +800,7 @@ class Brain:
         Chat mode with conversation history.
         history[-1] = the user message we just saved → exclude to avoid duplication.
         """
-        history = memory.context(n=12)
+        history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
 
@@ -838,7 +835,7 @@ class Brain:
         Streaming chat — yields tokens as they arrive from LLM.
         Post-processing (strip_markdown) runs on accumulated text at consumer side.
         """
-        history = memory.context(n=12)
+        history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
 
