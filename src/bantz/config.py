@@ -20,6 +20,10 @@ class Config(BaseSettings):
     embedding_enabled: bool = Field(True, alias="BANTZ_EMBEDDING_ENABLED")
     vector_search_weight: float = Field(0.5, alias="BANTZ_VECTOR_SEARCH_WEIGHT")
 
+    # ── Session Distillation ──────────────────────────────────────────────
+    distillation_enabled: bool = Field(True, alias="BANTZ_DISTILLATION_ENABLED")
+    distillation_min_exchanges: int = Field(5, alias="BANTZ_DISTILLATION_MIN_EXCHANGES")
+
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
     gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")

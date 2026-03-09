@@ -169,6 +169,17 @@ class Brain:
                 src = r.get("source", "?")
                 score = r.get("hybrid_score", 0)
                 lines.append(f"[{src} {score:.2f}] {r['role']}: {r['content'][:200]}")
+
+            # Append distillation context (#118)
+            try:
+                distills = await memory.search_distillations(user_msg, limit=2)
+                for d in distills:
+                    lines.append(
+                        f"[session-summary {d['score']:.2f}] {d['summary'][:200]}"
+                    )
+            except Exception:
+                pass
+
             return "Relevant past context:\n" + "\n".join(lines)
         except Exception:
             return ""
