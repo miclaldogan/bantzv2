@@ -67,6 +67,7 @@ You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs
 {time_hint}
 {profile_hint}
 {graph_hint}
+{vector_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
 1. You have NO access to emails, calendar events, schedule/timetable, live news, or any external data.
 2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
@@ -155,6 +156,31 @@ class Brain:
             except Exception:
                 pass
         return ""
+
+    async def _vector_context(self, user_msg: str, limit: int = 3) -> str:
+        """Get relevant past messages via semantic search (#116)."""
+        try:
+            from bantz.core.memory import memory
+            results = await memory.hybrid_search(user_msg, limit=limit)
+            if not results:
+                return ""
+            lines = []
+            for r in results:
+                src = r.get("source", "?")
+                score = r.get("hybrid_score", 0)
+                lines.append(f"[{src} {score:.2f}] {r['role']}: {r['content'][:200]}")
+            return "Relevant past context:\n" + "\n".join(lines)
+        except Exception:
+            return ""
+
+    def _fire_embeddings(self) -> None:
+        """Fire-and-forget: embed any queued messages from this exchange."""
+        try:
+            from bantz.core.memory import memory
+            if memory._embed_queue:
+                asyncio.ensure_future(memory.embed_pending())
+        except Exception:
+            pass
 
     async def _graph_store(self, user_msg: str, assistant_msg: str,
                            tool_used: str | None = None,
@@ -613,6 +639,7 @@ class Brain:
                     }
             data_layer.conversations.add("assistant", resp, tool_used="workflow")
             await self._graph_store(user_input, resp, "workflow")
+            self._fire_embeddings()
             return BrainResult(response=resp, tool_used="workflow")
 
         quick = self._quick_route(user_input, en_input)
@@ -793,6 +820,7 @@ class Brain:
         data_layer.conversations.add("assistant", resp, tool_used=tool_name)
         await self._graph_store(user_input, resp, tool_name,
                                 result.data if result else None)
+        self._fire_embeddings()
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
     async def _chat(self, en_input: str, tc: dict) -> str:
@@ -803,11 +831,13 @@ class Brain:
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
+        vector_hint = await self._vector_context(en_input)
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=graph_hint)},
+                style_hint=_style_hint(), graph_hint=graph_hint,
+                vector_hint=vector_hint)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -838,11 +868,13 @@ class Brain:
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
+        vector_hint = await self._vector_context(en_input)
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=graph_hint)},
+                style_hint=_style_hint(), graph_hint=graph_hint,
+                vector_hint=vector_hint)},
             *prior,
             {"role": "user", "content": en_input},
         ]

@@ -24,6 +24,8 @@ Usage:
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import sqlite3
 import threading
 from datetime import datetime
@@ -32,6 +34,8 @@ from typing import Optional
 
 from bantz.data.store import ConversationStore
 
+log = logging.getLogger("bantz.memory")
+
 
 class Memory(ConversationStore):
     def __init__(self) -> None:
@@ -39,6 +43,8 @@ class Memory(ConversationStore):
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.Lock()
         self._session_id: Optional[int] = None
+        self._vector_store = None  # VectorStore — lazy init
+        self._embed_queue: list[tuple[int, str]] = []  # (msg_id, content) pending embed
 
     # ── Init ──────────────────────────────────────────────────────────────
 
@@ -55,6 +61,7 @@ class Memory(ConversationStore):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._migrate()
+        self._init_vector_store()
 
     def _migrate(self) -> None:
         c = self._conn
@@ -93,6 +100,17 @@ class Memory(ConversationStore):
         except sqlite3.OperationalError:
             pass   # FTS5 not compiled in — search will fall back to LIKE
 
+    def _init_vector_store(self) -> None:
+        """Initialize the vector store table (shares our sqlite connection)."""
+        try:
+            from bantz.memory.vector_store import VectorStore
+            self._vector_store = VectorStore(self._conn, self._lock)
+            self._vector_store.migrate()
+            log.debug("Vector store initialized")
+        except Exception as exc:
+            log.debug("Vector store init failed: %s", exc)
+            self._vector_store = None
+
     # ── Session management ────────────────────────────────────────────────
 
     def new_session(self) -> int:
@@ -128,7 +146,10 @@ class Memory(ConversationStore):
         content: str,
         tool_used: Optional[str] = None,
     ) -> int:
-        """Save a message to the current session. Returns message id."""
+        """Save a message to the current session. Returns message id.
+
+        If embeddings are enabled, queues the message for async embedding.
+        """
         if not self._session_id:
             self.new_session()
 
@@ -143,7 +164,13 @@ class Memory(ConversationStore):
                 "UPDATE conversations SET last_active=? WHERE id=?",
                 (now, self._session_id),
             )
-        return cur.lastrowid
+        msg_id = cur.lastrowid
+
+        # Queue for async embedding (processed in embed_pending)
+        if role in ("user", "assistant") and len(content) > 10:
+            self._embed_queue.append((msg_id, content))
+
+        return msg_id
 
     # ── Reading ───────────────────────────────────────────────────────────
 
@@ -278,6 +305,173 @@ class Memory(ConversationStore):
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    # ── Vector / Semantic Search ──────────────────────────────────────────
+
+    @property
+    def vector_store(self):
+        """Access the underlying VectorStore (or None if unavailable)."""
+        return self._vector_store
+
+    async def embed_pending(self) -> int:
+        """Process the embed queue — call after each exchange.
+
+        Embeds queued messages via Ollama and stores vectors.
+        Returns the number of embeddings stored.
+        Fire-and-forget safe — errors are logged but don't propagate.
+        """
+        if not self._vector_store or not self._embed_queue:
+            return 0
+
+        from bantz.config import config
+        if not config.embedding_enabled:
+            self._embed_queue.clear()
+            return 0
+
+        from bantz.memory.embeddings import embedder
+
+        queue = self._embed_queue[:]
+        self._embed_queue.clear()
+        stored = 0
+
+        for msg_id, content in queue:
+            try:
+                vec = await embedder.embed(content)
+                if vec:
+                    self._vector_store.store(msg_id, vec, model=embedder.model)
+                    stored += 1
+            except Exception as exc:
+                log.debug("Embed msg %d failed: %s", msg_id, exc)
+
+        if stored:
+            log.debug("Embedded %d/%d messages", stored, len(queue))
+        return stored
+
+    async def semantic_search(
+        self,
+        query: str,
+        limit: int = 5,
+        min_score: float = 0.3,
+    ) -> list[dict]:
+        """Semantic search using vector cosine similarity.
+
+        Embeds the query, then finds closest messages by meaning.
+        Returns [] if embeddings are disabled or unavailable.
+        """
+        if not self._vector_store:
+            return []
+
+        from bantz.config import config
+        if not config.embedding_enabled:
+            return []
+
+        from bantz.memory.embeddings import embedder
+
+        query_vec = await embedder.embed(query)
+        if not query_vec:
+            return []
+
+        return self._vector_store.search(query_vec, limit=limit, min_score=min_score)
+
+    async def hybrid_search(
+        self,
+        query: str,
+        limit: int = 5,
+        vector_weight: Optional[float] = None,
+    ) -> list[dict]:
+        """Hybrid search combining FTS5 lexical + vector semantic results.
+
+        Merges and re-ranks results from both backends using a weighted score.
+        ``vector_weight`` controls the blend (0.0 = pure FTS, 1.0 = pure vector).
+        Defaults to ``config.vector_search_weight``.
+        """
+        from bantz.config import config
+        if vector_weight is None:
+            vector_weight = config.vector_search_weight
+        fts_weight = 1.0 - vector_weight
+
+        # Gather results from both backends
+        fts_results = self.search(query, limit=limit * 2)
+        sem_results = await self.semantic_search(query, limit=limit * 2, min_score=0.2)
+
+        # Build a lookup by message content (since FTS doesn't have message_id easily)
+        merged: dict[str, dict] = {}
+
+        # FTS results — assign a normalized score based on position
+        for i, r in enumerate(fts_results):
+            key = r.get("content", "")[:200]
+            fts_score = 1.0 - (i / max(len(fts_results), 1))
+            merged[key] = {
+                **r,
+                "fts_score": fts_score,
+                "vec_score": 0.0,
+                "hybrid_score": fts_score * fts_weight,
+                "source": "fts",
+            }
+
+        # Vector results — use actual cosine similarity
+        for r in sem_results:
+            key = r.get("content", "")[:200]
+            vec_score = r.get("score", 0.0)
+            if key in merged:
+                # Both backends found it — boost score
+                merged[key]["vec_score"] = vec_score
+                merged[key]["hybrid_score"] = (
+                    merged[key]["fts_score"] * fts_weight + vec_score * vector_weight
+                )
+                merged[key]["source"] = "both"
+            else:
+                merged[key] = {
+                    **r,
+                    "fts_score": 0.0,
+                    "vec_score": vec_score,
+                    "hybrid_score": vec_score * vector_weight,
+                    "source": "vector",
+                }
+
+        # Sort by hybrid score descending
+        ranked = sorted(merged.values(), key=lambda x: x["hybrid_score"], reverse=True)
+        return ranked[:limit]
+
+    async def backfill_embeddings(self, batch_size: int = 50) -> int:
+        """Backfill embeddings for messages that don't have them yet.
+
+        Useful for upgrading existing databases.  Returns count embedded.
+        """
+        if not self._vector_store:
+            return 0
+
+        from bantz.config import config
+        if not config.embedding_enabled:
+            return 0
+
+        from bantz.memory.embeddings import embedder
+
+        unembedded = self._vector_store.unembedded_messages(limit=batch_size)
+        if not unembedded:
+            return 0
+
+        stored = 0
+        for msg in unembedded:
+            try:
+                vec = await embedder.embed(msg["content"])
+                if vec:
+                    self._vector_store.store(msg["id"], vec, model=embedder.model)
+                    stored += 1
+            except Exception as exc:
+                log.debug("Backfill embed %d failed: %s", msg["id"], exc)
+
+        log.info("Backfilled %d/%d embeddings", stored, len(unembedded))
+        return stored
+
+    def vector_stats(self) -> dict:
+        """Vector store statistics for diagnostics."""
+        if not self._vector_store:
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            **self._vector_store.stats(),
+        }
 
 
 def _now() -> str:
