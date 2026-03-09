@@ -674,7 +674,17 @@ async def _doctor() -> None:
     # Habits
     from bantz.core.habits import habits as _hab
     print(f"✓ Habits: {_hab.status_line()}")
-
+    # RL Engine (#125)
+    rl_icon = "\u2713" if config.rl_enabled else "\u25cb"
+    if config.rl_enabled:
+        try:
+            from bantz.agent.rl_engine import rl_engine as _rl
+            _rl.init(config.db_path)
+            print(f"{rl_icon} RL Engine: {_rl.status_line()}")
+        except Exception:
+            print(f"{rl_icon} RL Engine: enabled but init failed")
+    else:
+        print(f"{rl_icon} RL Engine: disabled  \u2192 BANTZ_RL_ENABLED=true")
     # Places
     from bantz.core.places import places as _plc
     plc_icon = "✓" if _plc.is_configured() else "○"

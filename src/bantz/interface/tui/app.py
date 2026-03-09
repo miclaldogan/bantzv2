@@ -76,6 +76,7 @@ class BantzApp(App):
         self._start_reminder_checker()
         self._start_digest_checker()
         self._start_observer()
+        self._start_rl_suggestion_checker()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -242,6 +243,71 @@ class BantzApp(App):
             chat.add_system(f"Observer: monitoring stderr (threshold={config.observer_severity_threshold})")
         except Exception as exc:
             log.debug("Observer start failed: %s", exc)
+
+    def _start_rl_suggestion_checker(self) -> None:
+        """Start the RL suggestion loop (#125)."""
+        if not config.rl_enabled:
+            return
+        self.set_interval(config.rl_suggestion_interval, self._check_rl_suggestion)
+
+    @work(exclusive=False)
+    async def _check_rl_suggestion(self) -> None:
+        """Periodically ask the RL engine for a proactive suggestion."""
+        try:
+            from bantz.agent.rl_engine import rl_engine, encode_state
+            from bantz.core.time_context import time_ctx
+
+            if not rl_engine.initialized:
+                return
+
+            snap = time_ctx.snapshot()
+            import datetime
+            day = datetime.datetime.now().strftime("%A").lower()
+
+            # Get location if available
+            location = "home"
+            try:
+                from bantz.core.places import places
+                label = places.current_place_label()
+                if label:
+                    location = label.lower()
+            except Exception:
+                pass
+
+            # Get recent tool from memory
+            recent_tool = ""
+            try:
+                from bantz.core.memory import memory
+                recent = memory.recent(1)
+                if recent:
+                    recent_tool = recent[0].get("tool_used", "") or ""
+            except Exception:
+                pass
+
+            state = encode_state(
+                time_segment=snap["segment_en"],
+                day=day,
+                location=location,
+                recent_tool=recent_tool,
+            )
+            action = rl_engine.suggest(state)
+            if action:
+                _ACTION_LABELS = {
+                    "launch_docker": "\U0001f433 Docker ortamını başlatalım mı?",
+                    "open_workspace": "\U0001f4c2 Son çalıştığın workspace'i açayım mı?",
+                    "open_browser": "\U0001f310 Sık kullandığın siteleri açayım mı?",
+                    "focus_music": "\U0001f3b5 Çalışma müziği başlatayım mı?",
+                    "run_maintenance": "\U0001f9f9 Sistem bakımı yapayım mı?",
+                    "prepare_briefing": "\U0001f4cb Günlük brifing hazırlayayım mı?",
+                    "suggest_break": "\u2615 Bir mola versek iyi olabilir.",
+                    "daily_review": "\U0001f4ca Günün özetini çıkarayım mı?",
+                }
+                label = _ACTION_LABELS.get(action.value, f"Suggestion: {action.value}")
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_bantz(f"\U0001f4a1 {label}")
+                chat.scroll_end()
+        except Exception as exc:
+            log.debug("RL suggestion check failed: %s", exc)
 
     @work(exclusive=False)
     async def _check_digest(self) -> None:
