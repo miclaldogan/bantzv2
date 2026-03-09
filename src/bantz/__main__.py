@@ -26,12 +26,18 @@ def main() -> None:
     parser.add_argument("--daemon", action="store_true",
                         help="Run as headless daemon (scheduler + GPS, no TUI)")
     parser.add_argument("--doctor", action="store_true", help="System health check")
+    parser.add_argument("--cache-stats", action="store_true",
+                        help="Show spatial cache statistics")
     parser.add_argument("--setup", nargs="+", metavar="SERVICE",
                         help="Setup integrations: --setup google gmail")
     args = parser.parse_args()
 
     if args.doctor:
         asyncio.run(_doctor())
+        return
+
+    if args.cache_stats:
+        _cache_stats()
         return
 
     if args.setup:
@@ -494,6 +500,43 @@ def _setup_schedule() -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n✅ Schedule saved: {path}")
     print("Test: bantz --once 'my classes today'")
+
+
+def _cache_stats() -> None:
+    """Display spatial cache statistics (#121)."""
+    from bantz.config import config
+    from bantz.vision.spatial_cache import spatial_db
+
+    spatial_db.init(config.db_path)
+    stats = spatial_db.stats()
+
+    print("\n🗺  Spatial Cache Statistics")
+    print("─" * 50)
+    print(f"  Total entries : {stats['total_entries']} / {stats.get('max_entries', 1000)}")
+    print(f"  Total hits    : {stats['total_hits']}")
+    print(f"  Expired       : {stats['expired']}")
+    print(f"  TTL           : {stats.get('ttl_hours', 24)}h")
+
+    if stats.get("apps"):
+        print("\n  Applications:")
+        for app, cnt in stats["apps"].items():
+            print(f"    {app}: {cnt} elements")
+
+    if stats.get("sources"):
+        print("\n  Sources:")
+        for src, cnt in stats["sources"].items():
+            print(f"    {src}: {cnt} entries")
+
+    if stats.get("top_elements"):
+        print("\n  Top elements (by hits):")
+        for elem in stats["top_elements"]:
+            print(
+                f"    [{elem['source']}] {elem['app']}/{elem['label']} "
+                f"— {elem['hits']} hits (conf={elem['confidence']:.2f})"
+            )
+
+    print()
+    spatial_db.close()
 
 
 async def _doctor() -> None:

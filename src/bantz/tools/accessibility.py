@@ -517,6 +517,11 @@ class AccessibilityTool(BaseTool):
                 error="Specify both 'app' and 'label' to find an element.",
             )
 
+        # ── Check persistent spatial cache first (#121) ──────────────────
+        cached = self._spatial_lookup(app_name, label)
+        if cached is not None:
+            return cached
+
         element = find_element(app_name, label, role_filter=role)
         if element is None:
             # AT-SPI found nothing → VLM fallback (#120)
@@ -528,6 +533,17 @@ class AccessibilityTool(BaseTool):
             )
 
         center = element["center"]
+
+        # ── Store in persistent spatial cache (#121) ─────────────────────
+        self._spatial_store(
+            app_name, label,
+            x=center[0], y=center[1],
+            width=element["bounds"].get("width", 0),
+            height=element["bounds"].get("height", 0),
+            role=element.get("role", "other"),
+            source="atspi",
+        )
+
         return ToolResult(
             success=True,
             output=(
@@ -594,6 +610,54 @@ class AccessibilityTool(BaseTool):
         except Exception:
             return False
 
+    # ── Persistent spatial cache (#121) ───────────────────────────────────
+
+    @staticmethod
+    def _spatial_lookup(app_name: str, label: str) -> Optional[ToolResult]:
+        """Check the SQLite spatial cache for a previously-found element."""
+        try:
+            from bantz.vision.spatial_cache import spatial_db
+            entry = spatial_db.lookup(app_name, label)
+            if entry is None:
+                return None
+            cx, cy = entry.center
+            return ToolResult(
+                success=True,
+                output=(
+                    f"⚡ Found '{entry.element_label}' ({entry.role}) "
+                    f"in {entry.app_name}  (cached, {entry.source})\n"
+                    f"   Position: ({cx}, {cy})\n"
+                    f"   Bounds: {entry.width}x{entry.height}\n"
+                    f"   Confidence: {entry.effective_confidence:.2f}  "
+                    f"hits: {entry.hit_count}"
+                ),
+                data={
+                    "element": entry.to_dict(),
+                    "x": cx, "y": cy,
+                    "via": "cache",
+                },
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _spatial_store(
+        app_name: str, label: str, *,
+        x: int, y: int, width: int = 0, height: int = 0,
+        role: str = "other", source: str = "atspi",
+        confidence: float | None = None,
+    ) -> None:
+        """Store a found element in the persistent spatial cache."""
+        try:
+            from bantz.vision.spatial_cache import spatial_db
+            spatial_db.store(
+                app_name, label,
+                x=x, y=y, width=width, height=height,
+                role=role, source=source, confidence=confidence,
+            )
+        except Exception:
+            pass
+
     async def _vlm_fallback(
         self, action: str, app_name: str, label: str,
     ) -> ToolResult:
@@ -636,9 +700,20 @@ class AccessibilityTool(BaseTool):
             label=label if action == "find" else None,
         )
 
-        # Cache result
+        # Cache result (in-memory)
         if vlm_result.success:
             spatial_cache.put(cache_key, vlm_result)
+
+        # Store individual elements in persistent spatial cache (#121)
+        if vlm_result.success and vlm_result.elements:
+            for elem in vlm_result.elements:
+                self._spatial_store(
+                    app_name or "unknown", elem.label,
+                    x=elem.x, y=elem.y,
+                    width=elem.width, height=elem.height,
+                    role=elem.role, source="vlm",
+                    confidence=elem.confidence * 0.7,
+                )
 
         return self._vlm_result_to_tool(vlm_result, action, app_name, label)
 

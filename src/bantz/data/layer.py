@@ -107,6 +107,14 @@ class DataLayer:
         self.schedule = SQLiteScheduleStore(cfg.db_path)
         self.session = SQLiteSessionStore(cfg.db_path)
 
+        # ── Spatial cache for UI element coordinates (#121) ──────────────
+        try:
+            from bantz.vision.spatial_cache import spatial_db
+            spatial_db.init(cfg.db_path)
+            log.debug("Spatial cache initialized")
+        except Exception as exc:
+            log.debug("Spatial cache init skipped: %s", exc)
+
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
@@ -213,6 +221,12 @@ class DataLayer:
         """Shut down all stores cleanly."""
         if self.conversations is not None:
             self.conversations.close()
+        # Close spatial cache (#121)
+        try:
+            from bantz.vision.spatial_cache import spatial_db
+            spatial_db.close()
+        except Exception:
+            pass
         if self.graph is not None:
             import asyncio
 
