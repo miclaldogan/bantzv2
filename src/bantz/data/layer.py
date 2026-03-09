@@ -12,9 +12,13 @@ Initialized once during app startup — replaces scattered init() calls.
 At runtime the DataLayer wires the existing ``Memory`` and ``Scheduler``
 singletons (which now inherit from the ABCs) so that every module in the
 codebase — old or new — shares the same connections and session.
+
+Profile, places, schedule, and session now go through SQLite stores
+(migrated from JSON on first launch).
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -34,6 +38,12 @@ from bantz.data.json_store import (
     JSONScheduleStore,
     JSONSessionStore,
 )
+from bantz.data.sqlite_store import (
+    SQLitePlaceStore,
+    SQLiteProfileStore,
+    SQLiteScheduleStore,
+    SQLiteSessionStore,
+)
 
 if TYPE_CHECKING:
     from bantz.config import Config
@@ -47,10 +57,10 @@ class DataLayer:
     Attributes:
         conversations — messages & sessions      (SQLite via Memory)
         reminders     — scheduled reminders      (SQLite via Scheduler)
-        profile       — user identity/prefs      (JSON file)
-        places        — named GPS locations      (JSON file)
-        schedule      — weekly timetable         (JSON file)
-        session       — launch tracking          (JSON file)
+        profile       — user identity/prefs      (SQLite, auto-migrated from JSON)
+        places        — named GPS locations      (SQLite, auto-migrated from JSON)
+        schedule      — weekly timetable         (SQLite, auto-migrated from JSON)
+        session       — launch tracking          (SQLite, auto-migrated from JSON)
         graph         — knowledge graph          (Neo4j, optional)
     """
 
@@ -71,7 +81,8 @@ class DataLayer:
 
         Wires the existing ``Memory`` and ``Scheduler`` singletons so that
         they serve double duty as the DAL conversation/reminder stores.
-        JSON stores are created fresh for profile, places, schedule, session.
+        SQLite stores are created for profile, places, schedule, session,
+        with automatic migration from JSON on first run.
         """
         if self._initialized:
             return
@@ -90,19 +101,92 @@ class DataLayer:
         self.conversations = memory  # Memory IS-A ConversationStore
         self.reminders = scheduler  # Scheduler IS-A ReminderStore
 
-        # ── JSON stores ──────────────────────────────────────────────────
+        # ── SQLite stores for profile / places / schedule / session ──────
+        self.profile = SQLiteProfileStore(cfg.db_path)
+        self.places = SQLitePlaceStore(cfg.db_path)
+        self.schedule = SQLiteScheduleStore(cfg.db_path)
+        self.session = SQLiteSessionStore(cfg.db_path)
+
+        # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
             if cfg.data_dir
             else Path.home() / ".local" / "share" / "bantz"
         )
-        self.profile = JSONProfileStore(base_dir)
-        self.places = JSONPlaceStore(base_dir)
-        self.schedule = JSONScheduleStore(base_dir)
-        self.session = JSONSessionStore(base_dir)
+        self._auto_migrate_json(base_dir)
+
+        # ── Bind stores to core singletons ───────────────────────────────
+        from bantz.core.session import session_tracker
+        from bantz.core.profile import profile
+        from bantz.core.places import places
+        from bantz.core.schedule import schedule
+
+        session_tracker.bind_store(self.session)
+        profile.bind_store(self.profile)
+        places.bind_store(self.places)
+        schedule.bind_store(self.schedule)
 
         self._initialized = True
         log.info("DataLayer initialized  db=%s  data=%s", cfg.db_path, base_dir)
+
+    def _auto_migrate_json(self, base_dir: Path) -> None:
+        """Silently import JSON data into SQLite if tables are empty.
+
+        Ensures seamless upgrade for existing v2 users.
+        """
+        migrated = []
+
+        # ── profile.json → user_profile table ────────────────────────────
+        if not self.profile.exists():
+            pf = base_dir / "profile.json"
+            if pf.exists():
+                try:
+                    data = json.loads(pf.read_text("utf-8"))
+                    if data:
+                        self.profile.save(data)
+                        migrated.append("profile")
+                except Exception as exc:
+                    log.warning("Auto-migrate profile.json failed: %s", exc)
+
+        # ── places.json → places table ───────────────────────────────────
+        if not self.places.exists():
+            pf = base_dir / "places.json"
+            if pf.exists():
+                try:
+                    data = json.loads(pf.read_text("utf-8"))
+                    if data:
+                        self.places.save_all(data)
+                        migrated.append("places")
+                except Exception as exc:
+                    log.warning("Auto-migrate places.json failed: %s", exc)
+
+        # ── schedule.json → schedule_entries table ───────────────────────
+        if not self.schedule.exists():
+            pf = base_dir / "schedule.json"
+            if pf.exists():
+                try:
+                    data = json.loads(pf.read_text("utf-8"))
+                    if data:
+                        self.schedule.save(data)
+                        migrated.append("schedule")
+                except Exception as exc:
+                    log.warning("Auto-migrate schedule.json failed: %s", exc)
+
+        # ── session.json → session_state table ───────────────────────────
+        sess_data = self.session.load()
+        if not sess_data:
+            pf = base_dir / "session.json"
+            if pf.exists():
+                try:
+                    data = json.loads(pf.read_text("utf-8"))
+                    if data:
+                        self.session.save(data)
+                        migrated.append("session")
+                except Exception as exc:
+                    log.warning("Auto-migrate session.json failed: %s", exc)
+
+        if migrated:
+            log.info("Auto-migrated JSON → SQLite: %s", ", ".join(migrated))
 
     async def init_graph(self) -> None:
         """Initialize the optional graph store (Neo4j).

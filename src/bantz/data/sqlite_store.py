@@ -11,14 +11,22 @@ DataLayer wires the existing ``Memory`` and ``Scheduler`` singletons
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from bantz.data.store import ConversationStore, ReminderStore
+from bantz.data.store import (
+    ConversationStore,
+    PlaceStore,
+    ProfileStore,
+    ReminderStore,
+    ScheduleStore,
+    SessionStore,
+)
 
 log = logging.getLogger("bantz.data.sqlite")
 
@@ -443,3 +451,262 @@ class SQLiteReminderStore(ReminderStore):
         elif repeat == "custom" and interval > 0:
             return current + timedelta(seconds=interval)
         return current + timedelta(days=1)
+
+
+# ━━ Profile Store (SQLite) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLiteProfileStore(ProfileStore):
+    """SQLite-backed profile store — key/value table for user identity."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._lock = threading.Lock()
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_profile (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+    def load(self) -> dict[str, Any]:
+        rows = self._conn.execute(
+            "SELECT key, value FROM user_profile"
+        ).fetchall()
+        result: dict[str, Any] = {}
+        for row in rows:
+            try:
+                result[row["key"]] = json.loads(row["value"])
+            except (json.JSONDecodeError, TypeError):
+                result[row["key"]] = row["value"]
+        return result
+
+    def save(self, data: dict[str, Any]) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute("DELETE FROM user_profile")
+            for k, v in data.items():
+                self._conn.execute(
+                    "INSERT INTO user_profile(key, value, updated_at) VALUES (?,?,?)",
+                    (k, json.dumps(v, ensure_ascii=False), now),
+                )
+
+    def exists(self) -> bool:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM user_profile"
+        ).fetchone()
+        return row[0] > 0
+
+    @property
+    def path(self) -> Path:
+        return self._db_path
+
+
+# ━━ Place Store (SQLite) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLitePlaceStore(PlaceStore):
+    """SQLite-backed place store — named GPS locations."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._lock = threading.Lock()
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS places (
+                key    TEXT PRIMARY KEY,
+                label  TEXT NOT NULL,
+                lat    REAL NOT NULL DEFAULT 0.0,
+                lon    REAL NOT NULL DEFAULT 0.0,
+                radius REAL NOT NULL DEFAULT 100.0
+            )
+        """)
+
+    def load_all(self) -> dict[str, dict]:
+        rows = self._conn.execute(
+            "SELECT key, label, lat, lon, radius FROM places"
+        ).fetchall()
+        return {
+            row["key"]: {
+                "label": row["label"],
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "radius": row["radius"],
+            }
+            for row in rows
+        }
+
+    def save_all(self, data: dict[str, dict]) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM places")
+            for key, place in data.items():
+                self._conn.execute(
+                    "INSERT INTO places(key, label, lat, lon, radius) VALUES (?,?,?,?,?)",
+                    (
+                        key,
+                        place.get("label", key),
+                        place.get("lat", 0.0),
+                        place.get("lon", 0.0),
+                        place.get("radius", 100.0),
+                    ),
+                )
+
+    def upsert(self, key: str, place: dict) -> None:
+        """Insert or update a single place."""
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO places(key, label, lat, lon, radius)
+                   VALUES (?,?,?,?,?)""",
+                (
+                    key,
+                    place.get("label", key),
+                    place.get("lat", 0.0),
+                    place.get("lon", 0.0),
+                    place.get("radius", 100.0),
+                ),
+            )
+
+    def delete(self, key: str) -> bool:
+        """Delete a single place. Returns True if it existed."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM places WHERE key = ?", (key,))
+            return cur.rowcount > 0
+
+    def exists(self) -> bool:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM places"
+        ).fetchone()
+        return row[0] > 0
+
+    @property
+    def path(self) -> Path:
+        return self._db_path
+
+
+# ━━ Schedule Store (SQLite) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLiteScheduleStore(ScheduleStore):
+    """SQLite-backed schedule store — weekly timetable."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._lock = threading.Lock()
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_entries (
+                day      TEXT NOT NULL,
+                idx      INTEGER NOT NULL,
+                name     TEXT NOT NULL,
+                time     TEXT NOT NULL,
+                duration INTEGER NOT NULL DEFAULT 60,
+                location TEXT DEFAULT '',
+                type     TEXT DEFAULT '',
+                PRIMARY KEY (day, idx)
+            )
+        """)
+
+    def load(self) -> dict[str, list[dict]]:
+        rows = self._conn.execute(
+            "SELECT day, idx, name, time, duration, location, type "
+            "FROM schedule_entries ORDER BY day, idx"
+        ).fetchall()
+        result: dict[str, list[dict]] = {}
+        for row in rows:
+            entry = {
+                "name": row["name"],
+                "time": row["time"],
+                "duration": row["duration"],
+                "location": row["location"],
+                "type": row["type"],
+            }
+            result.setdefault(row["day"], []).append(entry)
+        return result
+
+    def save(self, data: dict[str, list[dict]]) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM schedule_entries")
+            for day, entries in data.items():
+                for idx, entry in enumerate(entries):
+                    self._conn.execute(
+                        """INSERT INTO schedule_entries
+                           (day, idx, name, time, duration, location, type)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (
+                            day, idx,
+                            entry.get("name", ""),
+                            entry.get("time", ""),
+                            entry.get("duration", 60),
+                            entry.get("location", ""),
+                            entry.get("type", ""),
+                        ),
+                    )
+
+    def exists(self) -> bool:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM schedule_entries"
+        ).fetchone()
+        return row[0] > 0
+
+    @property
+    def path(self) -> Path:
+        return self._db_path
+
+
+# ━━ Session Store (SQLite) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLiteSessionStore(SessionStore):
+    """SQLite-backed session state — launch tracking key/value."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._lock = threading.Lock()
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_state (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+    def load(self) -> dict:
+        rows = self._conn.execute(
+            "SELECT key, value FROM session_state"
+        ).fetchall()
+        result: dict = {}
+        for row in rows:
+            try:
+                result[row["key"]] = json.loads(row["value"])
+            except (json.JSONDecodeError, TypeError):
+                result[row["key"]] = row["value"]
+        return result
+
+    def save(self, data: dict) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute("DELETE FROM session_state")
+            for k, v in data.items():
+                self._conn.execute(
+                    "INSERT INTO session_state(key, value, updated_at) VALUES (?,?,?)",
+                    (k, json.dumps(v, ensure_ascii=False), now),
+                )
+
+    @property
+    def path(self) -> Path:
+        return self._db_path
