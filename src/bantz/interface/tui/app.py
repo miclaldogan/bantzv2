@@ -313,6 +313,10 @@ class BantzApp(App):
             # Intervention display processor — checks every 2 seconds
             self.set_interval(2, self._process_interventions)
 
+            # Auto-focus mode checker (#127) — polls app detector
+            if config.app_detector_enabled and config.app_detector_auto_focus:
+                self.set_interval(config.app_detector_polling_interval, self._check_auto_focus)
+
             chat = self.query_one("#chat-log", ChatLog)
             chat.add_system(
                 f"Interventions: rate={config.intervention_rate_limit}/h "
@@ -365,10 +369,20 @@ class BantzApp(App):
             )
             action = rl_engine.suggest(state)
             if action:
-                # Build explainability reason
+                # Build explainability reason with app context (#127)
                 reason = f"{snap['segment_en'].title()} {day.title()} routine"
                 if location != "home":
                     reason += f" at {location}"
+                try:
+                    from bantz.agent.app_detector import app_detector
+                    if app_detector.initialized:
+                        activity = app_detector.get_activity_category()
+                        reason += f" ({activity.value})"
+                        win = app_detector.get_active_window()
+                        if win and win.name:
+                            reason += f" — {win.name}"
+                except Exception:
+                    pass
 
                 iv = intervention_from_rl(
                     action_value=action.value,
@@ -454,6 +468,31 @@ class BantzApp(App):
                 rl_engine.reward(reward.value)
         except Exception as exc:
             log.debug("RL feedback failed: %s", exc)
+
+    @work(exclusive=False)
+    async def _check_auto_focus(self) -> None:
+        """Auto-enable/disable focus mode based on app detector (#127).
+
+        When the user is in a flow state (coding, media, video call),
+        focus mode is enabled which drops LOW/MEDIUM interventions.
+        """
+        try:
+            from bantz.agent.app_detector import app_detector
+            from bantz.agent.interventions import intervention_queue
+
+            if not app_detector.initialized or not intervention_queue.initialized:
+                return
+
+            should_focus = app_detector.should_enable_focus()
+            if should_focus != intervention_queue.focus:
+                intervention_queue.set_focus(should_focus)
+                if should_focus:
+                    activity = app_detector.get_activity_category()
+                    log.debug("Auto-focus ON: user is %s", activity.value)
+                else:
+                    log.debug("Auto-focus OFF: user appears idle/browsing")
+        except Exception as exc:
+            log.debug("Auto-focus check failed: %s", exc)
 
     @work(exclusive=False)
     async def _check_digest(self) -> None:

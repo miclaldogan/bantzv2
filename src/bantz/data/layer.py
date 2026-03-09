@@ -157,6 +157,18 @@ class DataLayer:
             except Exception as exc:
                 log.debug("Intervention queue init skipped: %s", exc)
 
+        # ── App detector (#127) ──────────────────────────────────────────
+        if cfg.app_detector_enabled:
+            try:
+                from bantz.agent.app_detector import app_detector
+                app_detector.init(
+                    cache_ttl=cfg.app_detector_cache_ttl,
+                    polling_interval=cfg.app_detector_polling_interval,
+                )
+                log.debug("App detector initialized")
+            except Exception as exc:
+                log.debug("App detector init skipped: %s", exc)
+
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
