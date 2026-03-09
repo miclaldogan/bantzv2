@@ -443,6 +443,14 @@ class BantzApp(App):
                 chat.add_bantz(msg)
             chat.scroll_end()
 
+            # Desktop notification (#153) — fire if TUI is not active
+            try:
+                from bantz.agent.notifier import notifier
+                if notifier.initialized:
+                    notifier.dispatch(iv)
+            except Exception as exc:
+                log.debug("Desktop notification dispatch failed: %s", exc)
+
         except Exception as exc:
             log.debug("Intervention processing failed: %s", exc)
 
