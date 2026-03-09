@@ -533,6 +533,74 @@ class Brain:
             if not any(k in both for k in ("mail", "calendar", "assignment")):
                 return {"tool": "_generate", "args": {}}
 
+        # Input Control (#122) — mouse/keyboard simulation
+        _is_input = any(k in both for k in (
+            "type ", "type text", "type into", "type in",
+            "scroll down", "scroll up", "scroll left", "scroll right",
+            "drag from", "drag to",
+            "press ctrl", "press alt", "hotkey",
+            "press enter", "press escape", "press tab",
+            "double click", "right click", "right-click", "double-click",
+            "mouse position", "where is the mouse", "where's the mouse",
+            "move mouse", "move cursor",
+        ))
+        if _is_input:
+            # Type text
+            type_m = re.search(
+                r'(?:type|write|enter|input)\s+(?:text\s+)?["\'](.+?)["\']',
+                both, re.IGNORECASE,
+            )
+            if type_m:
+                return {"tool": "input_control", "args": {"action": "type_text", "text": type_m.group(1)}}
+            if re.search(r'type\s+(?:text\s+)?(?:into|in)', both):
+                return {"tool": "input_control", "args": {"action": "type_text", "text": ""}}
+            # Scroll
+            if any(k in both for k in ("scroll down", "scroll up", "scroll left", "scroll right")):
+                direction = "down"
+                for d in ("up", "down", "left", "right"):
+                    if f"scroll {d}" in both:
+                        direction = d
+                        break
+                amt_m = re.search(r'scroll\s+\w+\s+(\d+)', both)
+                amount = int(amt_m.group(1)) if amt_m else 3
+                return {"tool": "input_control", "args": {"action": "scroll", "direction": direction, "amount": amount}}
+            # Hotkey
+            hotkey_m = re.search(
+                r'(?:press|hotkey|shortcut)\s+((?:ctrl|alt|shift|super|meta|win)\s*\+\s*\w+(?:\s*\+\s*\w+)*)',
+                both, re.IGNORECASE,
+            )
+            if hotkey_m:
+                return {"tool": "input_control", "args": {"action": "hotkey", "keys": hotkey_m.group(1).strip()}}
+            if any(k in both for k in ("press enter",)):
+                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "enter"}}
+            if any(k in both for k in ("press escape", "press esc")):
+                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "escape"}}
+            if any(k in both for k in ("press tab",)):
+                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "tab"}}
+            # Double click / right click
+            dbl_m = re.search(r'double[- ]?click\s+(?:at\s+)?(?:\(?(\d+)\s*,\s*(\d+)\)?)', both)
+            if dbl_m:
+                return {"tool": "input_control", "args": {"action": "double_click", "x": int(dbl_m.group(1)), "y": int(dbl_m.group(2))}}
+            rc_m = re.search(r'right[- ]?click\s+(?:at\s+)?(?:\(?(\d+)\s*,\s*(\d+)\)?)', both)
+            if rc_m:
+                return {"tool": "input_control", "args": {"action": "right_click", "x": int(rc_m.group(1)), "y": int(rc_m.group(2))}}
+            # Drag
+            drag_m = re.search(r'drag\s+(?:from\s+)?\(?(\d+)\s*,\s*(\d+)\)?\s+(?:to\s+)?\(?(\d+)\s*,\s*(\d+)\)?', both)
+            if drag_m:
+                return {"tool": "input_control", "args": {"action": "drag", "from_x": int(drag_m.group(1)), "from_y": int(drag_m.group(2)), "to_x": int(drag_m.group(3)), "to_y": int(drag_m.group(4))}}
+            # Mouse position
+            if any(k in both for k in ("mouse position", "where is the mouse", "where's the mouse")):
+                return {"tool": "input_control", "args": {"action": "get_position"}}
+            # Move mouse
+            mv_m = re.search(r'move\s+(?:mouse|cursor)\s+(?:to\s+)?\(?(\d+)\s*,\s*(\d+)\)?', both)
+            if mv_m:
+                return {"tool": "input_control", "args": {"action": "move_to", "x": int(mv_m.group(1)), "y": int(mv_m.group(2))}}
+            # Fallback: double_click / right_click without coordinates
+            if "double" in both and "click" in both:
+                return {"tool": "input_control", "args": {"action": "double_click", "x": 0, "y": 0}}
+            if "right" in both and "click" in both:
+                return {"tool": "input_control", "args": {"action": "right_click", "x": 0, "y": 0}}
+
         # Accessibility / AT-SPI (#119)
         _is_a11y = any(k in both for k in (
             "click the", "click on", "press the button",
