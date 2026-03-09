@@ -108,6 +108,12 @@ class Config(BaseSettings):
     rl_confidence_threshold: float = Field(0.7, alias="BANTZ_RL_CONFIDENCE_THRESHOLD")
     rl_suggestion_interval: int = Field(1800, alias="BANTZ_RL_SUGGESTION_INTERVAL")
 
+    # ── Proactive Interventions (#126) ────────────────────────────────────
+    intervention_rate_limit: int = Field(3, alias="BANTZ_INTERVENTION_RATE_LIMIT")
+    intervention_toast_ttl: float = Field(20.0, alias="BANTZ_INTERVENTION_TOAST_TTL")
+    intervention_quiet_mode: bool = Field(False, alias="BANTZ_INTERVENTION_QUIET_MODE")
+    intervention_focus_mode: bool = Field(False, alias="BANTZ_INTERVENTION_FOCUS_MODE")
+
     @property
     def db_path(self) -> Path:
         base = (

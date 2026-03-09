@@ -685,6 +685,17 @@ async def _doctor() -> None:
             print(f"{rl_icon} RL Engine: enabled but init failed")
     else:
         print(f"{rl_icon} RL Engine: disabled  \u2192 BANTZ_RL_ENABLED=true")
+    # Intervention Queue (#126)
+    iv_icon = "\u2713" if config.rl_enabled else "\u25cb"
+    if config.rl_enabled:
+        try:
+            from bantz.agent.interventions import intervention_queue as _ivq
+            _ivq.init(config.db_path, rate_limit=config.intervention_rate_limit, default_ttl=config.intervention_toast_ttl)
+            print(f"{iv_icon} Interventions: {_ivq.status_line()}")
+        except Exception:
+            print(f"{iv_icon} Interventions: enabled but init failed")
+    else:
+        print(f"{iv_icon} Interventions: disabled (requires RL)")
     # Places
     from bantz.core.places import places as _plc
     plc_icon = "✓" if _plc.is_configured() else "○"
