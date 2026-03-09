@@ -140,6 +140,23 @@ class DataLayer:
             except Exception as exc:
                 log.debug("RL engine init skipped: %s", exc)
 
+        # ── Intervention queue (#126) ────────────────────────────────────
+        if cfg.rl_enabled:
+            try:
+                from bantz.agent.interventions import intervention_queue
+                intervention_queue.init(
+                    cfg.db_path,
+                    rate_limit=cfg.intervention_rate_limit,
+                    default_ttl=cfg.intervention_toast_ttl,
+                )
+                if cfg.intervention_quiet_mode:
+                    intervention_queue.set_quiet(True)
+                if cfg.intervention_focus_mode:
+                    intervention_queue.set_focus(True)
+                log.debug("Intervention queue initialized")
+            except Exception as exc:
+                log.debug("Intervention queue init skipped: %s", exc)
+
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
@@ -268,6 +285,12 @@ class DataLayer:
         try:
             from bantz.agent.rl_engine import rl_engine
             rl_engine.close()
+        except Exception:
+            pass
+        # Close intervention queue (#126)
+        try:
+            from bantz.agent.interventions import intervention_queue
+            intervention_queue.close()
         except Exception:
             pass
         if self.graph is not None:

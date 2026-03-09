@@ -36,6 +36,8 @@ class BantzApp(App):
         Binding("ctrl+l", "clear_chat", "Clear"),
         Binding("ctrl+c", "copy_selection", "Copy"),
         Binding("escape", "focus_input", "Focus"),
+        Binding("ctrl+u", "toggle_quiet", "Quiet", show=False),
+        Binding("ctrl+f", "toggle_focus", "Focus mode", show=False),
     ]
 
     def __init__(self) -> None:
@@ -76,7 +78,7 @@ class BantzApp(App):
         self._start_reminder_checker()
         self._start_digest_checker()
         self._start_observer()
-        self._start_rl_suggestion_checker()
+        self._start_intervention_processor()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -171,6 +173,26 @@ class BantzApp(App):
             if not due:
                 return
 
+            # Route through intervention queue if available
+            try:
+                from bantz.agent.interventions import (
+                    intervention_queue,
+                    intervention_from_reminder,
+                )
+                if intervention_queue.initialized:
+                    for r in due:
+                        repeat_tag = r.get("repeat", "none")
+                        iv = intervention_from_reminder(
+                            title=r["title"],
+                            repeat=repeat_tag,
+                            ttl=config.intervention_toast_ttl,
+                        )
+                        intervention_queue.push(iv)
+                    return
+            except Exception:
+                pass
+
+            # Fallback: render directly
             chat = self.query_one("#chat-log", ChatLog)
             for r in due:
                 repeat_tag = f" (repeats {r['repeat']})" if r['repeat'] != 'none' else ''
@@ -206,14 +228,37 @@ class BantzApp(App):
         self.set_interval(60, self._check_digest)
 
     def _start_observer(self) -> None:
-        """Start the background stderr observer daemon (#124)."""
+        """Start the background stderr observer daemon (#124).
+
+        Routes error events through the intervention queue (#126) when
+        available, otherwise falls back to direct chat rendering.
+        """
         if not config.observer_enabled:
             return
         try:
             from bantz.agent.observer import observer, ErrorEvent, Severity
 
             def _on_error(event: ErrorEvent) -> None:
-                """Deliver observer notifications to the TUI chat panel."""
+                """Deliver observer notifications via intervention queue."""
+                # Try intervention queue first
+                try:
+                    from bantz.agent.interventions import (
+                        intervention_queue,
+                        intervention_from_observer,
+                    )
+                    if intervention_queue.initialized:
+                        iv = intervention_from_observer(
+                            raw_text=event.raw_text,
+                            severity=event.severity.value,
+                            analysis=event.analysis or "",
+                            ttl=config.intervention_toast_ttl,
+                        )
+                        intervention_queue.push(iv)
+                        return
+                except Exception:
+                    pass
+
+                # Fallback: render directly to chat
                 try:
                     chat = self.query_one("#chat-log", ChatLog)
                     if event.severity == Severity.CRITICAL:
@@ -244,17 +289,47 @@ class BantzApp(App):
         except Exception as exc:
             log.debug("Observer start failed: %s", exc)
 
-    def _start_rl_suggestion_checker(self) -> None:
-        """Start the RL suggestion loop (#125)."""
+    def _start_intervention_processor(self) -> None:
+        """Start the unified intervention processor (#126).
+
+        Combines RL suggestions, observer alerts, and reminders into a
+        single priority queue with rate limiting, TTL, and focus/quiet modes.
+        """
         if not config.rl_enabled:
             return
-        self.set_interval(config.rl_suggestion_interval, self._check_rl_suggestion)
+        try:
+            from bantz.agent.interventions import intervention_queue
+            if not intervention_queue.initialized:
+                return
+
+            # Apply config modes
+            if config.intervention_quiet_mode:
+                intervention_queue.set_quiet(True)
+            if config.intervention_focus_mode:
+                intervention_queue.set_focus(True)
+
+            # RL suggestion feeder — runs on the RL interval
+            self.set_interval(config.rl_suggestion_interval, self._feed_rl_suggestions)
+            # Intervention display processor — checks every 2 seconds
+            self.set_interval(2, self._process_interventions)
+
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system(
+                f"Interventions: rate={config.intervention_rate_limit}/h "
+                f"ttl={config.intervention_toast_ttl:.0f}s"
+            )
+        except Exception as exc:
+            log.debug("Intervention processor start failed: %s", exc)
 
     @work(exclusive=False)
-    async def _check_rl_suggestion(self) -> None:
-        """Periodically ask the RL engine for a proactive suggestion."""
+    async def _feed_rl_suggestions(self) -> None:
+        """Periodically ask the RL engine for a suggestion and push to queue."""
         try:
             from bantz.agent.rl_engine import rl_engine, encode_state
+            from bantz.agent.interventions import (
+                intervention_queue,
+                intervention_from_rl,
+            )
             from bantz.core.time_context import time_ctx
 
             if not rl_engine.initialized:
@@ -264,7 +339,6 @@ class BantzApp(App):
             import datetime
             day = datetime.datetime.now().strftime("%A").lower()
 
-            # Get location if available
             location = "home"
             try:
                 from bantz.core.places import places
@@ -274,7 +348,6 @@ class BantzApp(App):
             except Exception:
                 pass
 
-            # Get recent tool from memory
             recent_tool = ""
             try:
                 from bantz.core.memory import memory
@@ -292,22 +365,95 @@ class BantzApp(App):
             )
             action = rl_engine.suggest(state)
             if action:
-                _ACTION_LABELS = {
-                    "launch_docker": "\U0001f433 Docker ortamını başlatalım mı?",
-                    "open_workspace": "\U0001f4c2 Son çalıştığın workspace'i açayım mı?",
-                    "open_browser": "\U0001f310 Sık kullandığın siteleri açayım mı?",
-                    "focus_music": "\U0001f3b5 Çalışma müziği başlatayım mı?",
-                    "run_maintenance": "\U0001f9f9 Sistem bakımı yapayım mı?",
-                    "prepare_briefing": "\U0001f4cb Günlük brifing hazırlayayım mı?",
-                    "suggest_break": "\u2615 Bir mola versek iyi olabilir.",
-                    "daily_review": "\U0001f4ca Günün özetini çıkarayım mı?",
-                }
-                label = _ACTION_LABELS.get(action.value, f"Suggestion: {action.value}")
-                chat = self.query_one("#chat-log", ChatLog)
-                chat.add_bantz(f"\U0001f4a1 {label}")
-                chat.scroll_end()
+                # Build explainability reason
+                reason = f"{snap['segment_en'].title()} {day.title()} routine"
+                if location != "home":
+                    reason += f" at {location}"
+
+                iv = intervention_from_rl(
+                    action_value=action.value,
+                    state_key=state.key,
+                    reason=reason,
+                    ttl=config.intervention_toast_ttl,
+                )
+                intervention_queue.push(iv)
         except Exception as exc:
-            log.debug("RL suggestion check failed: %s", exc)
+            log.debug("RL suggestion feed failed: %s", exc)
+
+    @work(exclusive=False)
+    async def _process_interventions(self) -> None:
+        """Pop from intervention queue and display as toast.
+
+        Handles TTL auto-dismiss with mild RL penalty, and renders
+        source/reason labels for explainability.
+        """
+        try:
+            from bantz.agent.interventions import (
+                intervention_queue,
+                Outcome,
+                SOURCE_LABELS,
+            )
+
+            if not intervention_queue.initialized:
+                return
+
+            # Check if active intervention has expired (auto-dismiss)
+            if intervention_queue.has_active:
+                active = intervention_queue.active
+                if active and active.expired:
+                    iv = intervention_queue.expire_active()
+                    if iv:
+                        self._send_rl_feedback(iv, Outcome.AUTO_DISMISSED)
+                return
+
+            # Pop next intervention
+            iv = intervention_queue.pop()
+            if not iv:
+                return
+
+            # Render the intervention in chat
+            chat = self.query_one("#chat-log", ChatLog)
+            source_tag = SOURCE_LABELS.get(iv.source, iv.source)
+
+            msg_parts = [
+                f"\n{iv.title}",
+                f"[{source_tag}: {iv.reason}]",
+                f"Reply: **accept** / **dismiss** / **never**  _(auto-dismiss in {int(iv.remaining_ttl)}s)_",
+            ]
+            msg = "\n".join(msg_parts)
+
+            # Use add_bantz for routine/reminder, add_error for errors
+            if iv.type.value == "error_alert":
+                chat.add_error(msg)
+            else:
+                chat.add_bantz(msg)
+            chat.scroll_end()
+
+        except Exception as exc:
+            log.debug("Intervention processing failed: %s", exc)
+
+    def _send_rl_feedback(self, iv: "Intervention", outcome: "Outcome") -> None:
+        """Send reward feedback to the RL engine based on intervention outcome."""
+        if not iv.action or not iv.state_key:
+            return
+        try:
+            from bantz.agent.rl_engine import rl_engine, Reward
+            from bantz.agent.interventions import Outcome as Oc
+
+            reward_map = {
+                Oc.ACCEPTED: Reward.ACCEPT,
+                Oc.DISMISSED: Reward.DISMISS,
+                Oc.NEVER: Reward.BLACKLIST,
+                Oc.AUTO_DISMISSED: None,  # special: mild penalty
+            }
+            reward = reward_map.get(outcome)
+            if outcome == Oc.AUTO_DISMISSED:
+                # Mild penalty: user didn't see or ignored — not as harsh as dismiss
+                rl_engine.reward(-0.1)
+            elif reward is not None:
+                rl_engine.reward(reward.value)
+        except Exception as exc:
+            log.debug("RL feedback failed: %s", exc)
 
     @work(exclusive=False)
     async def _check_digest(self) -> None:
@@ -361,11 +507,58 @@ class BantzApp(App):
         chat = self.query_one("#chat-log", ChatLog)
         chat.add_user(text)
 
+        # Check if this is a response to an active intervention (#126)
+        if self._handle_intervention_response(text, chat):
+            return
+
         if self._pending is not None:
             await self._handle_confirm(text, chat)
             return
 
         self._start_processing(text, chat)
+
+    def _handle_intervention_response(self, text: str, chat: "ChatLog") -> bool:
+        """Check if user input is a response to an active intervention.
+
+        Returns True if the input was consumed as an intervention response.
+        """
+        try:
+            from bantz.agent.interventions import intervention_queue, Outcome
+        except Exception:
+            return False
+
+        if not intervention_queue.has_active:
+            return False
+
+        low = text.lower().strip()
+        _ACCEPT = {"accept", "yes", "y", "ok", "sure", "go", "do it"}
+        _DISMISS = {"dismiss", "no", "n", "skip", "not now", "later", "nah"}
+        _NEVER = {"never", "block", "stop", "never again", "don't"}
+
+        if low in _ACCEPT:
+            iv = intervention_queue.respond(Outcome.ACCEPTED)
+            if iv:
+                chat.add_system("✓ Accepted.")
+                self._send_rl_feedback(iv, Outcome.ACCEPTED)
+            return True
+        elif low in _DISMISS:
+            iv = intervention_queue.respond(Outcome.DISMISSED)
+            if iv:
+                chat.add_system("✗ Dismissed.")
+                self._send_rl_feedback(iv, Outcome.DISMISSED)
+            return True
+        elif low in _NEVER:
+            iv = intervention_queue.respond(Outcome.NEVER)
+            if iv:
+                chat.add_system("⊘ Blocked — will never suggest this again.")
+                self._send_rl_feedback(iv, Outcome.NEVER)
+            return True
+
+        # Not an intervention response — auto-dismiss and pass through
+        iv = intervention_queue.expire_active()
+        if iv:
+            self._send_rl_feedback(iv, Outcome.AUTO_DISMISSED)
+        return False
 
     @work(exclusive=False)
     async def _start_processing(self, text: str, chat: ChatLog) -> None:
@@ -495,6 +688,32 @@ class BantzApp(App):
 
     def action_focus_input(self) -> None:
         self.query_one("#chat-input", Input).focus()
+
+    def action_toggle_quiet(self) -> None:
+        """Toggle quiet mode — suppress non-critical interventions."""
+        try:
+            from bantz.agent.interventions import intervention_queue
+            if not intervention_queue.initialized:
+                return
+            intervention_queue.set_quiet(not intervention_queue.quiet)
+            state = "ON" if intervention_queue.quiet else "OFF"
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system(f"Quiet mode: {state}")
+        except Exception:
+            pass
+
+    def action_toggle_focus(self) -> None:
+        """Toggle focus mode — only HIGH/CRITICAL interventions pass."""
+        try:
+            from bantz.agent.interventions import intervention_queue
+            if not intervention_queue.initialized:
+                return
+            intervention_queue.set_focus(not intervention_queue.focus)
+            state = "ON" if intervention_queue.focus else "OFF"
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system(f"Focus mode: {state}")
+        except Exception:
+            pass
 
 
 def run() -> None:
