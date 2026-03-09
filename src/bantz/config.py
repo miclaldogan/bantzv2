@@ -30,6 +30,11 @@ class Config(BaseSettings):
     vlm_timeout: int = Field(5, alias="BANTZ_VLM_TIMEOUT")
     screenshot_quality: int = Field(70, alias="BANTZ_SCREENSHOT_QUALITY")
 
+    # ── Input Control (#122) ──────────────────────────────────────────────
+    input_control_enabled: bool = Field(False, alias="BANTZ_INPUT_CONTROL_ENABLED")
+    input_confirm_destructive: bool = Field(True, alias="BANTZ_INPUT_CONFIRM_DESTRUCTIVE")
+    input_type_interval_ms: int = Field(50, alias="BANTZ_INPUT_TYPE_INTERVAL_MS")
+
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
     gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")

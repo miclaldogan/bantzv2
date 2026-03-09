@@ -36,6 +36,10 @@ docs = [
 graph = [
     "neo4j>=5.0.0",
 ]
+automation = [
+    "pyautogui>=0.9.54",
+    "pynput>=1.7.0",
+]
 
 [project.scripts]
 bantz = "bantz.__main__:main"

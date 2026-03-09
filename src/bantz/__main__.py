@@ -554,6 +554,7 @@ async def _doctor() -> None:
     import bantz.tools.classroom
     import bantz.tools.reminder
     import bantz.tools.contacts
+    import bantz.tools.input_control
 
     print("Bantz v2 — System Check")
     print("─" * 44)
@@ -619,6 +620,30 @@ async def _doctor() -> None:
     from bantz.core.profile import profile as _prof
     icon = "✓" if _prof.is_configured() else "○"
     print(f"{icon} Profile: {_prof.status_line()}")
+
+    # Input Control (#122)
+    ic_ok = config.input_control_enabled
+    ic_backend = "disabled"
+    if ic_ok:
+        try:
+            from bantz.tools.input_control import _detect_backend
+            ic_backend = _detect_backend()
+        except Exception:
+            ic_backend = "error"
+    ic_icon = "✓" if ic_ok and ic_backend != "none" else "○"
+    if ic_ok:
+        print(f"{ic_icon} Input control: {ic_backend}  (confirm_destructive={config.input_confirm_destructive})")
+    else:
+        print(f"○ Input control: disabled  → set BANTZ_INPUT_CONTROL_ENABLED=true")
+
+    # Spatial Cache (#121)
+    try:
+        from bantz.vision.spatial_cache import spatial_db as _sc
+        _sc.init(config.db_path)
+        sc_stats = _sc.stats()
+        print(f"✓ Spatial cache: {sc_stats['total_entries']} entries, {sc_stats['total_hits']} hits")
+    except Exception:
+        print("○ Spatial cache: not initialized")
 
     # Telegram
     tg_ok = bool(config.telegram_bot_token)
