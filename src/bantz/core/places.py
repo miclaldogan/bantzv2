@@ -5,7 +5,7 @@ Known locations with labels — "dorm", "campus", "home", etc.
 Compare current GPS to known places.  Travel hints for schedule.
 Geofence detection, stationary tracking, proactive place-learning.
 
-Data: ~/.local/share/bantz/places.json
+Data stored via DAL (SQLite), with JSON fallback for backward compat.
 Setup: bantz --setup places
 
 Usage:
@@ -24,9 +24,12 @@ import math
 import time as _time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from bantz.core.location import Location, location_service
+
+if TYPE_CHECKING:
+    from bantz.data.store import PlaceStore
 
 log = logging.getLogger("bantz.places")
 
@@ -53,6 +56,7 @@ class PlaceService:
     def __init__(self) -> None:
         self._data: dict[str, dict] = {}
         self._loaded = False
+        self._store: PlaceStore | None = None
 
         # ── Geofence / stationary state ──────────────────────────────
         self._current_place_key: Optional[str] = None
@@ -68,10 +72,17 @@ class PlaceService:
         # Location-triggered reminders that fired
         self._place_fired: list[dict] = []
 
+    def bind_store(self, store: PlaceStore) -> None:
+        """Bind a DAL store for persistence (called by DataLayer)."""
+        self._store = store
+        self._loaded = False  # force reload on next access
+
     def _load(self) -> None:
         if self._loaded:
             return
-        if PLACES_PATH.exists():
+        if self._store:
+            self._data = self._store.load_all()
+        elif PLACES_PATH.exists():
             try:
                 self._data = json.loads(PLACES_PATH.read_text(encoding="utf-8"))
             except Exception:
@@ -79,7 +90,7 @@ class PlaceService:
         self._loaded = True
 
     def reload(self) -> None:
-        """Force reload from disk (after --setup places)."""
+        """Force reload from store (after --setup places)."""
         self._loaded = False
         self._data = {}
         self._load()
@@ -310,12 +321,15 @@ class PlaceService:
         return False
 
     def _persist(self) -> None:
-        """Write current data to disk."""
-        PLACES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PLACES_PATH.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        """Write current data to store or disk."""
+        if self._store:
+            self._store.save_all(self._data)
+        else:
+            PLACES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PLACES_PATH.write_text(
+                json.dumps(self._data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         self._loaded = True
 
     async def travel_hint(
@@ -375,11 +389,13 @@ class PlaceService:
         return dict(self._data)
 
     def save(self, data: dict[str, dict]) -> None:
-        """Write places to disk (used by --setup places)."""
+        """Write places to store (used by --setup places)."""
         self._data = data
         self._persist()
 
     def is_configured(self) -> bool:
+        if self._store:
+            return self._store.exists()
         return PLACES_PATH.exists()
 
     def status_line(self) -> str:

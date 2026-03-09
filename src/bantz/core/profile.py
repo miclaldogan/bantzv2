@@ -1,7 +1,7 @@
 """
 Bantz v2 — User Profile
 
-Stores user identity and preferences in ~/.local/share/bantz/profile.json.
+Stores user identity and preferences via DAL (SQLite), with JSON fallback.
 Used by brain.py for personalized prompts, briefing.py for section filtering,
 time_context.py / butler.py for named greetings.
 
@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bantz.data.store import ProfileStore as _ProfileStore
 
 
 _PROFILE_PATH = Path.home() / ".local" / "share" / "bantz" / "profile.json"
@@ -52,11 +55,21 @@ ALL_NEWS_SOURCES = ["hn", "google"]
 class Profile:
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+        self._store: _ProfileStore | None = None
         self._load()
+
+    def bind_store(self, store: _ProfileStore) -> None:
+        """Bind a DAL store for persistence (called by DataLayer)."""
+        self._store = store
+        self._load()  # reload from new store
 
     # ── Persistence ───────────────────────────────────────────────────────
 
     def _load(self) -> None:
+        if self._store:
+            self._data = self._store.load()
+            return
+        # JSON fallback
         if _PROFILE_PATH.exists():
             try:
                 self._data = json.loads(_PROFILE_PATH.read_text("utf-8"))
@@ -66,7 +79,6 @@ class Profile:
             self._data = {}
 
     def save(self, data: dict[str, Any]) -> None:
-        _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         merged = {**_DEFAULTS, **data}
         # Merge preferences sub-dict properly
         merged["preferences"] = {
@@ -74,6 +86,11 @@ class Profile:
             **data.get("preferences", {}),
         }
         self._data = merged
+        if self._store:
+            self._store.save(self._data)
+            return
+        # JSON fallback
+        _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _PROFILE_PATH.write_text(
             json.dumps(self._data, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -112,6 +129,8 @@ class Profile:
 
     @property
     def path(self) -> Path:
+        if self._store:
+            return self._store.path
         return _PROFILE_PATH
 
     # ── Prompt helpers ────────────────────────────────────────────────────

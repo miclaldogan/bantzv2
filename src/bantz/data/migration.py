@@ -1,10 +1,10 @@
 """
 Bantz v3 — Data Migration Utility
 
-Validates existing v2 JSON data files and optionally imports them into
-a unified SQLite schema.  Use this when moving to an all-SQLite backend.
+Validates existing v2 JSON data files and imports them into the unified
+SQLite schema.  Runs automatically on first launch (via DataLayer) or
+manually via CLI:
 
-CLI usage (future):
     python -m bantz.data.migration --validate
     python -m bantz.data.migration --migrate
     python -m bantz.data.migration --migrate --dry-run
@@ -62,12 +62,10 @@ def validate_json_files(data_dir: Path = DEFAULT_DATA_DIR) -> dict[str, Any]:
 
 
 _UNIFIED_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS kv_store (
-    namespace  TEXT NOT NULL,
-    key        TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS user_profile (
+    key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (namespace, key)
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS places (
@@ -78,7 +76,7 @@ CREATE TABLE IF NOT EXISTS places (
     radius REAL NOT NULL DEFAULT 100.0
 );
 
-CREATE TABLE IF NOT EXISTS schedule (
+CREATE TABLE IF NOT EXISTS schedule_entries (
     day      TEXT NOT NULL,
     idx      INTEGER NOT NULL,
     name     TEXT NOT NULL,
@@ -87,6 +85,12 @@ CREATE TABLE IF NOT EXISTS schedule (
     location TEXT DEFAULT '',
     type     TEXT DEFAULT '',
     PRIMARY KEY (day, idx)
+);
+
+CREATE TABLE IF NOT EXISTS session_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -114,11 +118,11 @@ def migrate_to_sqlite(
     # Create unified tables
     conn.executescript(_UNIFIED_SCHEMA)
 
-    # ── profile → kv_store ────────────────────────────────────────────
-    _migrate_kv(conn, data_dir / "profile.json", "profile", results, dry_run)
+    # ── profile → user_profile ────────────────────────────────────────
+    _migrate_kv(conn, data_dir / "profile.json", "user_profile", results, dry_run)
 
-    # ── session → kv_store ────────────────────────────────────────────
-    _migrate_kv(conn, data_dir / "session.json", "session", results, dry_run)
+    # ── session → session_state ───────────────────────────────────────
+    _migrate_kv(conn, data_dir / "session.json", "session_state", results, dry_run)
 
     # ── places → places table ─────────────────────────────────────────
     places_path = data_dir / "places.json"
@@ -148,7 +152,7 @@ def migrate_to_sqlite(
     else:
         results["places"] = {"status": "skipped", "reason": "file not found"}
 
-    # ── schedule → schedule table ─────────────────────────────────────
+    # ── schedule → schedule_entries table ─────────────────────────────
     schedule_path = data_dir / "schedule.json"
     if schedule_path.exists():
         try:
@@ -158,7 +162,7 @@ def migrate_to_sqlite(
                 for day, entries in data.items():
                     for idx, entry in enumerate(entries):
                         conn.execute(
-                            """INSERT OR REPLACE INTO schedule
+                            """INSERT OR REPLACE INTO schedule_entries
                                    (day, idx, name, time, duration, location, type)
                                VALUES (?, ?, ?, ?, ?, ?, ?)""",
                             (
@@ -191,13 +195,15 @@ def migrate_to_sqlite(
 def _migrate_kv(
     conn: sqlite3.Connection,
     json_path: Path,
-    namespace: str,
+    table_name: str,
     results: dict,
     dry_run: bool,
 ) -> None:
-    """Migrate a flat JSON file into the kv_store table."""
+    """Migrate a flat JSON file into a key/value table."""
+    # Derive a friendly name from the table name
+    name = table_name.replace("user_", "").replace("_state", "")
     if not json_path.exists():
-        results[namespace] = {"status": "skipped", "reason": "file not found"}
+        results[name] = {"status": "skipped", "reason": "file not found"}
         return
     try:
         data = json.loads(json_path.read_text("utf-8"))
@@ -205,13 +211,13 @@ def _migrate_kv(
         if not dry_run:
             for k, v in data.items():
                 conn.execute(
-                    """INSERT OR REPLACE INTO kv_store(namespace, key, value, updated_at)
-                       VALUES (?, ?, ?, ?)""",
-                    (namespace, k, json.dumps(v, ensure_ascii=False), now),
+                    f"""INSERT OR REPLACE INTO {table_name}(key, value, updated_at)
+                       VALUES (?, ?, ?)""",
+                    (k, json.dumps(v, ensure_ascii=False), now),
                 )
-        results[namespace] = {"migrated": len(data), "status": "ok"}
+        results[name] = {"migrated": len(data), "status": "ok"}
     except Exception as exc:
-        results[namespace] = {"status": "error", "error": str(exc)}
+        results[name] = {"status": "error", "error": str(exc)}
 
 
 # ━━ CLI entry point ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

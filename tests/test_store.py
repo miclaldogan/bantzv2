@@ -436,9 +436,9 @@ class TestMigration:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
-        # kv_store: profile
+        # user_profile table
         rows = conn.execute(
-            "SELECT * FROM kv_store WHERE namespace='profile'"
+            "SELECT * FROM user_profile"
         ).fetchall()
         assert len(rows) >= 1
         names = {r["key"] for r in rows}
@@ -449,8 +449,8 @@ class TestMigration:
         assert len(rows) == 1
         assert dict(rows[0])["key"] == "dorm"
 
-        # schedule table
-        rows = conn.execute("SELECT * FROM schedule").fetchall()
+        # schedule_entries table
+        rows = conn.execute("SELECT * FROM schedule_entries").fetchall()
         assert len(rows) == 1
         assert dict(rows[0])["name"] == "ML"
 
@@ -468,7 +468,7 @@ class TestMigration:
 
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
-            "SELECT * FROM kv_store WHERE namespace='profile'"
+            "SELECT * FROM user_profile"
         ).fetchall()
         assert len(rows) == 0
         conn.close()
@@ -515,6 +515,30 @@ class TestABCConformance:
         from bantz.data.store import SessionStore
 
         assert issubclass(JSONSessionStore, SessionStore)
+
+    def test_sqlite_profile_is_profile_store(self):
+        from bantz.data.store import ProfileStore
+        from bantz.data.sqlite_store import SQLiteProfileStore
+
+        assert issubclass(SQLiteProfileStore, ProfileStore)
+
+    def test_sqlite_place_is_place_store(self):
+        from bantz.data.store import PlaceStore
+        from bantz.data.sqlite_store import SQLitePlaceStore
+
+        assert issubclass(SQLitePlaceStore, PlaceStore)
+
+    def test_sqlite_schedule_is_schedule_store(self):
+        from bantz.data.store import ScheduleStore
+        from bantz.data.sqlite_store import SQLiteScheduleStore
+
+        assert issubclass(SQLiteScheduleStore, ScheduleStore)
+
+    def test_sqlite_session_is_session_store(self):
+        from bantz.data.store import SessionStore
+        from bantz.data.sqlite_store import SQLiteSessionStore
+
+        assert issubclass(SQLiteSessionStore, SessionStore)
 
     def test_memory_is_conversation_store(self):
         from bantz.data.store import ConversationStore

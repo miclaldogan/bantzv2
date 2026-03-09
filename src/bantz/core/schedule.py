@@ -1,7 +1,6 @@
 """
 Bantz v2 — University Schedule
-Reads weekly timetable from ~/.local/share/bantz/schedule.json.
-No DB needed — static JSON, fast read.
+Reads weekly timetable via DAL (SQLite), with JSON fallback for backward compat.
 
 Schedule format:
 {
@@ -23,7 +22,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from bantz.data.store import ScheduleStore
 
 
 SCHEDULE_PATH = Path.home() / ".local" / "share" / "bantz" / "schedule.json"
@@ -55,11 +57,19 @@ class Schedule:
     def __init__(self) -> None:
         self._data: dict = {}
         self._loaded = False
+        self._store: ScheduleStore | None = None
+
+    def bind_store(self, store: ScheduleStore) -> None:
+        """Bind a DAL store for persistence (called by DataLayer)."""
+        self._store = store
+        self._loaded = False  # force reload on next access
 
     def _load(self) -> None:
         if self._loaded:
             return
-        if SCHEDULE_PATH.exists():
+        if self._store:
+            self._data = self._store.load()
+        elif SCHEDULE_PATH.exists():
             try:
                 self._data = json.loads(SCHEDULE_PATH.read_text(encoding="utf-8"))
             except Exception:
@@ -203,6 +213,8 @@ class Schedule:
         return f"Next class: {emoji} {name}  {time}{loc_str}\n  ⏰ {when}"
 
     def is_configured(self) -> bool:
+        if self._store:
+            return self._store.exists()
         return SCHEDULE_PATH.exists()
 
     @staticmethod
