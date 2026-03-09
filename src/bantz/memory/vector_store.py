@@ -192,7 +192,8 @@ class VectorStore:
 
         Useful for backfilling embeddings on existing conversations.
         """
-        rows = self._conn.execute(
+        # Use column names explicitly — works with or without row_factory
+        cur = self._conn.execute(
             """SELECT m.id, m.role, m.content, m.created_at
                FROM messages m
                LEFT JOIN message_vectors mv ON mv.message_id = m.id
@@ -202,8 +203,9 @@ class VectorStore:
                ORDER BY m.created_at DESC
                LIMIT ?""",
             (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ── Cleanup ─────────────────────────────────────────────────────────
 
