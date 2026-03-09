@@ -15,6 +15,11 @@ class Config(BaseSettings):
     ollama_model: str = Field("qwen2.5:7b", alias="BANTZ_OLLAMA_MODEL")
     ollama_base_url: str = Field("http://localhost:11434", alias="BANTZ_OLLAMA_BASE_URL")
 
+    # ── Embeddings / Vector Memory ────────────────────────────────────────
+    embedding_model: str = Field("nomic-embed-text", alias="BANTZ_EMBEDDING_MODEL")
+    embedding_enabled: bool = Field(True, alias="BANTZ_EMBEDDING_ENABLED")
+    vector_search_weight: float = Field(0.5, alias="BANTZ_VECTOR_SEARCH_WEIGHT")
+
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
     gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")
