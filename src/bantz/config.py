@@ -99,6 +99,15 @@ class Config(BaseSettings):
     observer_analysis_model: str = Field("qwen2.5:0.5b", alias="BANTZ_OBSERVER_ANALYSIS_MODEL")
     observer_enable_llm: bool = Field(True, alias="BANTZ_OBSERVER_ENABLE_LLM")
 
+    # ── RL Engine (#125) ───────────────────────────────────────────────────
+    rl_enabled: bool = Field(False, alias="BANTZ_RL_ENABLED")
+    rl_learning_rate: float = Field(0.3, alias="BANTZ_RL_LEARNING_RATE")
+    rl_discount_factor: float = Field(0.9, alias="BANTZ_RL_DISCOUNT_FACTOR")
+    rl_exploration_rate: float = Field(0.15, alias="BANTZ_RL_EXPLORATION_RATE")
+    rl_exploration_min: float = Field(0.02, alias="BANTZ_RL_EXPLORATION_MIN")
+    rl_confidence_threshold: float = Field(0.7, alias="BANTZ_RL_CONFIDENCE_THRESHOLD")
+    rl_suggestion_interval: int = Field(1800, alias="BANTZ_RL_SUGGESTION_INTERVAL")
+
     @property
     def db_path(self) -> Path:
         base = (
