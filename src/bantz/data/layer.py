@@ -241,6 +241,12 @@ class DataLayer:
             navigator.close()
         except Exception:
             pass
+        # Stop observer daemon (#124)
+        try:
+            from bantz.agent.observer import observer
+            observer.stop()
+        except Exception:
+            pass
         if self.graph is not None:
             import asyncio
 

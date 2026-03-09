@@ -91,6 +91,14 @@ class Config(BaseSettings):
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
     telegram_proxy: str = Field("", alias="TELEGRAM_PROXY")
 
+    # ── Background Observer (#124) ────────────────────────────────────────
+    observer_enabled: bool = Field(False, alias="BANTZ_OBSERVER_ENABLED")
+    observer_severity_threshold: str = Field("warning", alias="BANTZ_OBSERVER_SEVERITY_THRESHOLD")
+    observer_batch_seconds: float = Field(5.0, alias="BANTZ_OBSERVER_BATCH_SECONDS")
+    observer_dedup_window: float = Field(60.0, alias="BANTZ_OBSERVER_DEDUP_WINDOW")
+    observer_analysis_model: str = Field("qwen2.5:0.5b", alias="BANTZ_OBSERVER_ANALYSIS_MODEL")
+    observer_enable_llm: bool = Field(True, alias="BANTZ_OBSERVER_ENABLE_LLM")
+
     @property
     def db_path(self) -> Path:
         base = (

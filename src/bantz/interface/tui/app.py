@@ -7,6 +7,7 @@ Left panel: chat.  Right panel: system status + clock.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -20,6 +21,7 @@ from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
 from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel
 
+log = logging.getLogger("bantz.tui")
 _STYLES_PATH = Path(__file__).parent / "styles.tcss"
 
 
@@ -73,12 +75,19 @@ class BantzApp(App):
         self._start_morning_briefing_timer()
         self._start_reminder_checker()
         self._start_digest_checker()
+        self._start_observer()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
         try:
             from bantz.core.gps_server import gps_server
             await gps_server.stop()
+        except Exception:
+            pass
+        # Stop observer daemon (#124)
+        try:
+            from bantz.agent.observer import observer
+            observer.stop()
         except Exception:
             pass
         self.exit()
@@ -194,6 +203,45 @@ class BantzApp(App):
 
     def _start_digest_checker(self) -> None:
         self.set_interval(60, self._check_digest)
+
+    def _start_observer(self) -> None:
+        """Start the background stderr observer daemon (#124)."""
+        if not config.observer_enabled:
+            return
+        try:
+            from bantz.agent.observer import observer, ErrorEvent, Severity
+
+            def _on_error(event: ErrorEvent) -> None:
+                """Deliver observer notifications to the TUI chat panel."""
+                try:
+                    chat = self.query_one("#chat-log", ChatLog)
+                    if event.severity == Severity.CRITICAL:
+                        icon = "\U0001f6a8"  # 🚨
+                        msg = f"{icon} **Terminal Error Detected**\n```\n{event.raw_text[:500]}\n```"
+                        if event.analysis:
+                            msg += f"\n\n**Analysis:** {event.analysis}"
+                        chat.add_error(msg)
+                    elif event.severity == Severity.WARNING:
+                        icon = "\u26a0\ufe0f"  # ⚠️
+                        chat.add_system(f"{icon} stderr: {event.raw_text[:200]}")
+                    else:
+                        chat.add_system(f"\u2139\ufe0f stderr: {event.raw_text[:120]}")
+                    chat.scroll_end()
+                except Exception:
+                    pass
+
+            observer.on_error = _on_error
+            observer.threshold = Severity(config.observer_severity_threshold)
+            observer.buffer._batch_sec = config.observer_batch_seconds
+            observer.buffer._dedup_window = config.observer_dedup_window
+            observer.classifier._model = config.observer_analysis_model
+            observer.classifier._enable_llm = config.observer_enable_llm
+            observer.start()
+
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system(f"Observer: monitoring stderr (threshold={config.observer_severity_threshold})")
+        except Exception as exc:
+            log.debug("Observer start failed: %s", exc)
 
     @work(exclusive=False)
     async def _check_digest(self) -> None:
