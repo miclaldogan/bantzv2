@@ -420,10 +420,11 @@ class TestQuickRoute:
         assert r["args"]["x"] == 500
 
     def test_click_the_still_goes_to_a11y(self):
-        """'click the Send button' should go to accessibility, not input_control."""
+        """'click the Send button' should go to gui_action (unified pipeline), not input_control."""
         r = self._route("click the Send button in Firefox")
         assert r is not None
-        assert r["tool"] == "accessibility"
+        # #123: gui_action is the unified pipeline that wraps AT-SPI
+        assert r["tool"] == "gui_action"
 
     def test_scroll_doesnt_match_random(self):
         r = self._route("what is a scrollbar?")

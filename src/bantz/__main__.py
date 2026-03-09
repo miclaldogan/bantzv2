@@ -645,6 +645,21 @@ async def _doctor() -> None:
     except Exception:
         print("○ Spatial cache: not initialized")
 
+    # Navigator Pipeline (#123)
+    try:
+        from bantz.vision.navigator import navigator as _nav
+        _nav.init(config.db_path)
+        nav_stats = _nav.stats()
+        total = nav_stats.get('total_attempts', 0)
+        methods = nav_stats.get('methods', [])
+        if total > 0:
+            summary = ', '.join(f"{m['method']}={m['successes']}/{m['attempts']}" for m in methods)
+            print(f"✓ Navigator: {total} attempts  ({summary})")
+        else:
+            print(f"✓ Navigator: ready (no attempts yet)")
+    except Exception:
+        print("○ Navigator: not initialized")
+
     # Telegram
     tg_ok = bool(config.telegram_bot_token)
     tg_icon = "✓" if tg_ok else "○"

@@ -115,6 +115,14 @@ class DataLayer:
         except Exception as exc:
             log.debug("Spatial cache init skipped: %s", exc)
 
+        # ── Navigation pipeline (#123) ───────────────────────────────────
+        try:
+            from bantz.vision.navigator import navigator
+            navigator.init(cfg.db_path)
+            log.debug("Navigator pipeline initialized")
+        except Exception as exc:
+            log.debug("Navigator init skipped: %s", exc)
+
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
@@ -225,6 +233,12 @@ class DataLayer:
         try:
             from bantz.vision.spatial_cache import spatial_db
             spatial_db.close()
+        except Exception:
+            pass
+        # Close navigator (#123)
+        try:
+            from bantz.vision.navigator import navigator
+            navigator.close()
         except Exception:
             pass
         if self.graph is not None:

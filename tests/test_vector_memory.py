@@ -24,6 +24,18 @@ import pytest
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+def _run(coro):
+    """Run an async coroutine safely — works even after event loop closed."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
 def _make_memory_db() -> sqlite3.Connection:
     """Create an in-memory SQLite DB with the Memory schema."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -280,13 +292,13 @@ class TestEmbedder:
     def test_embed_empty_returns_none(self):
         from bantz.memory.embeddings import Embedder
         emb = Embedder()
-        result = asyncio.get_event_loop().run_until_complete(emb.embed(""))
+        result = _run(emb.embed(""))
         assert result is None
 
     def test_embed_whitespace_returns_none(self):
         from bantz.memory.embeddings import Embedder
         emb = Embedder()
-        result = asyncio.get_event_loop().run_until_complete(emb.embed("   "))
+        result = _run(emb.embed("   "))
         assert result is None
 
     @patch("bantz.memory.embeddings.httpx.AsyncClient")
@@ -307,7 +319,7 @@ class TestEmbedder:
         mock_client_cls.return_value = mock_client
 
         emb = Embedder()
-        result = asyncio.get_event_loop().run_until_complete(emb.embed("hello"))
+        result = _run(emb.embed("hello"))
         assert result is not None
         assert len(result) == 768
         assert emb.dim == 768
@@ -335,7 +347,7 @@ class TestEmbedder:
         mock_client_cls.return_value = mock_client
 
         emb = Embedder()
-        result = asyncio.get_event_loop().run_until_complete(emb.embed("hello"))
+        result = _run(emb.embed("hello"))
         assert result is not None
         assert len(result) == 384
         assert emb.dim == 384
@@ -394,7 +406,7 @@ class TestMemoryVectorIntegration:
 
         with patch("bantz.config.config") as mock_cfg:
             mock_cfg.embedding_enabled = True
-            count = asyncio.get_event_loop().run_until_complete(
+            count = _run(
                 self.mem.embed_pending()
             )
 
@@ -416,7 +428,7 @@ class TestMemoryVectorIntegration:
 
         with patch("bantz.config.config") as mock_cfg:
             mock_cfg.embedding_enabled = True
-            results = asyncio.get_event_loop().run_until_complete(
+            results = _run(
                 self.mem.semantic_search("how is the weather", limit=2, min_score=-1.0)
             )
 
@@ -441,7 +453,7 @@ class TestMemoryVectorIntegration:
         with patch("bantz.config.config") as mock_cfg:
             mock_cfg.embedding_enabled = True
             mock_cfg.vector_search_weight = 0.5
-            results = asyncio.get_event_loop().run_until_complete(
+            results = _run(
                 self.mem.hybrid_search("weather", limit=3)
             )
 
@@ -455,7 +467,7 @@ class TestMemoryVectorIntegration:
         """semantic_search returns [] when embeddings disabled."""
         with patch("bantz.config.config") as mock_cfg:
             mock_cfg.embedding_enabled = False
-            results = asyncio.get_event_loop().run_until_complete(
+            results = _run(
                 self.mem.semantic_search("anything")
             )
         assert results == []
@@ -475,7 +487,7 @@ class TestMemoryVectorIntegration:
 
         with patch("bantz.config.config") as mock_cfg:
             mock_cfg.embedding_enabled = True
-            count = asyncio.get_event_loop().run_until_complete(
+            count = _run(
                 self.mem.backfill_embeddings(batch_size=10)
             )
 

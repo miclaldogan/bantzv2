@@ -379,7 +379,8 @@ class TestQuickRouteAccessibility:
     def test_click_button_route(self):
         result = self._quick("click the Send button in Firefox")
         assert result is not None
-        assert result["tool"] == "accessibility"
+        # #123: gui_action is the unified pipeline that wraps AT-SPI
+        assert result["tool"] == "gui_action"
 
     def test_list_apps_route(self):
         result = self._quick("list open apps")
