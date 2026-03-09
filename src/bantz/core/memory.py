@@ -100,6 +100,13 @@ class Memory(ConversationStore):
         except sqlite3.OperationalError:
             pass   # FTS5 not compiled in — search will fall back to LIKE
 
+        # Distillation table (#118)
+        try:
+            from bantz.memory.distiller import migrate_distillation_table
+            migrate_distillation_table(c, self._lock)
+        except Exception as exc:
+            log.debug("Distillation table migration skipped: %s", exc)
+
     def _init_vector_store(self) -> None:
         """Initialize the vector store table (shares our sqlite connection)."""
         try:
@@ -114,7 +121,17 @@ class Memory(ConversationStore):
     # ── Session management ────────────────────────────────────────────────
 
     def new_session(self) -> int:
-        """Start a new conversation session. Returns session id."""
+        """Start a new conversation session. Returns session id.
+
+        If a previous session exists and meets the distillation threshold,
+        fire-and-forget distillation of the old session (#118).
+        """
+        prev_session = self._session_id
+
+        # Fire distillation of previous session (async, non-blocking)
+        if prev_session is not None:
+            self._fire_distillation(prev_session)
+
         now = _now()
         with self._lock:
             cur = self._conn.execute(
@@ -123,6 +140,27 @@ class Memory(ConversationStore):
             )
             self._session_id = cur.lastrowid
         return self._session_id
+
+    def _fire_distillation(self, session_id: int) -> None:
+        """Fire-and-forget distillation of a completed session."""
+        try:
+            from bantz.config import config
+            if not config.distillation_enabled:
+                return
+
+            from bantz.memory.distiller import distill_session
+            asyncio.ensure_future(
+                distill_session(
+                    self._conn,
+                    self._lock,
+                    session_id,
+                    min_exchanges=config.distillation_min_exchanges,
+                    embed=config.embedding_enabled,
+                )
+            )
+            log.debug("Distillation fired for session %d", session_id)
+        except Exception as exc:
+            log.debug("Distillation fire failed: %s", exc)
 
     def resume_session(self, session_id: int) -> bool:
         """Resume an existing session by id. Returns False if not found."""
@@ -472,6 +510,43 @@ class Memory(ConversationStore):
             "enabled": True,
             **self._vector_store.stats(),
         }
+
+    # ── Distillation queries (#118) ───────────────────────────────────────
+
+    async def search_distillations(
+        self,
+        query: str,
+        limit: int = 3,
+        min_score: float = 0.3,
+    ) -> list[dict]:
+        """Search past session distillations by semantic similarity."""
+        if not self._conn:
+            return []
+
+        from bantz.config import config
+        if not config.embedding_enabled or not config.distillation_enabled:
+            return []
+
+        try:
+            from bantz.memory.embeddings import embedder
+            query_vec = await embedder.embed(query)
+            if not query_vec:
+                return []
+            from bantz.memory.distiller import search_distillations
+            return search_distillations(self._conn, query_vec, limit, min_score)
+        except Exception as exc:
+            log.debug("Distillation search failed: %s", exc)
+            return []
+
+    def distillation_stats(self) -> dict:
+        """Distillation statistics for diagnostics."""
+        if not self._conn:
+            return {"enabled": False}
+        try:
+            from bantz.memory.distiller import distillation_stats
+            return {"enabled": True, **distillation_stats(self._conn)}
+        except Exception:
+            return {"enabled": False}
 
 
 def _now() -> str:
