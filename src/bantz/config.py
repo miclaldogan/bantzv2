@@ -114,6 +114,12 @@ class Config(BaseSettings):
     intervention_quiet_mode: bool = Field(False, alias="BANTZ_INTERVENTION_QUIET_MODE")
     intervention_focus_mode: bool = Field(False, alias="BANTZ_INTERVENTION_FOCUS_MODE")
 
+    # ── App Detector (#127) ────────────────────────────────────────────────
+    app_detector_enabled: bool = Field(False, alias="BANTZ_APP_DETECTOR_ENABLED")
+    app_detector_cache_ttl: float = Field(5.0, alias="BANTZ_APP_DETECTOR_CACHE_TTL")
+    app_detector_polling_interval: int = Field(5, alias="BANTZ_APP_DETECTOR_POLLING_INTERVAL")
+    app_detector_auto_focus: bool = Field(True, alias="BANTZ_APP_DETECTOR_AUTO_FOCUS")
+
     @property
     def db_path(self) -> Path:
         base = (

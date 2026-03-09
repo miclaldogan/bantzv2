@@ -696,6 +696,20 @@ async def _doctor() -> None:
             print(f"{iv_icon} Interventions: enabled but init failed")
     else:
         print(f"{iv_icon} Interventions: disabled (requires RL)")
+    # App Detector (#127)
+    ad_icon = "✓" if config.app_detector_enabled else "○"
+    if config.app_detector_enabled:
+        try:
+            from bantz.agent.app_detector import app_detector as _ad
+            _ad.init(
+                cache_ttl=config.app_detector_cache_ttl,
+                polling_interval=config.app_detector_polling_interval,
+            )
+            print(f"{ad_icon} App Detector: {_ad.status_line()}")
+        except Exception:
+            print(f"{ad_icon} App Detector: enabled but init failed")
+    else:
+        print(f"{ad_icon} App Detector: disabled → BANTZ_APP_DETECTOR_ENABLED=true")
     # Places
     from bantz.core.places import places as _plc
     plc_icon = "✓" if _plc.is_configured() else "○"
