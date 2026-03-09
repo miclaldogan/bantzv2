@@ -120,6 +120,11 @@ class Config(BaseSettings):
     app_detector_polling_interval: int = Field(5, alias="BANTZ_APP_DETECTOR_POLLING_INTERVAL")
     app_detector_auto_focus: bool = Field(True, alias="BANTZ_APP_DETECTOR_AUTO_FOCUS")
 
+    # ── Desktop Notifications (#153) ─────────────────────────────────────
+    desktop_notifications: bool = Field(True, alias="BANTZ_DESKTOP_NOTIFICATIONS")
+    notification_icon: str = Field("", alias="BANTZ_NOTIFICATION_ICON")
+    notification_sound: bool = Field(False, alias="BANTZ_NOTIFICATION_SOUND")
+
     @property
     def db_path(self) -> Path:
         base = (

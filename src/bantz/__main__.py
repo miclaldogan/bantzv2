@@ -710,6 +710,21 @@ async def _doctor() -> None:
             print(f"{ad_icon} App Detector: enabled but init failed")
     else:
         print(f"{ad_icon} App Detector: disabled → BANTZ_APP_DETECTOR_ENABLED=true")
+    # Desktop Notifications (#153)
+    dn_icon = "✓" if config.desktop_notifications else "○"
+    if config.desktop_notifications:
+        try:
+            from bantz.agent.notifier import notifier as _dn
+            _dn.init(
+                enabled=config.desktop_notifications,
+                icon=config.notification_icon,
+                sound=config.notification_sound,
+            )
+            print(f"{dn_icon} Notifications: {_dn.status_line()}")
+        except Exception:
+            print(f"{dn_icon} Notifications: enabled but init failed")
+    else:
+        print(f"{dn_icon} Notifications: disabled → BANTZ_DESKTOP_NOTIFICATIONS=true")
     # Places
     from bantz.core.places import places as _plc
     plc_icon = "✓" if _plc.is_configured() else "○"

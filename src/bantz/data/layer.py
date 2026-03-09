@@ -169,6 +169,19 @@ class DataLayer:
             except Exception as exc:
                 log.debug("App detector init skipped: %s", exc)
 
+        # ── Desktop notifier (#153) ──────────────────────────────────────
+        if cfg.desktop_notifications:
+            try:
+                from bantz.agent.notifier import notifier
+                notifier.init(
+                    enabled=cfg.desktop_notifications,
+                    icon=cfg.notification_icon,
+                    sound=cfg.notification_sound,
+                )
+                log.debug("Desktop notifier initialized")
+            except Exception as exc:
+                log.debug("Desktop notifier init skipped: %s", exc)
+
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
             Path(cfg.data_dir)
