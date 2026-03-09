@@ -134,6 +134,10 @@ class Brain:
             import bantz.tools.accessibility  # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass  # AT-SPI2/gi deps may not be installed
+        try:
+            import bantz.tools.gui_action  # noqa: F401  (#123)
+        except (ImportError, ModuleNotFoundError):
+            pass
         self._bridge = None
         self._memory_ready = False
         self._graph_ready = False
@@ -521,6 +525,61 @@ class Brain:
                                     "what's today", "what do i have today")):
             return {"tool": "_briefing", "args": {}}
 
+        # GUI Action — unified navigate + act pipeline (#123)
+        # Must come BEFORE web_search since "search bar" contains "search".
+        # Order: specific (type, double_click, right_click) before general click.
+        _gui_type_m = re.search(
+            r"type\s+[\"'](.+?)[\"']\s+(?:into|in|on)\s+(?:the\s+)?(.+?)\s+(?:in|on|of)\s+(.+?)(?:\s*$|\s*please)",
+            both, re.IGNORECASE,
+        )
+        if _gui_type_m:
+            return {"tool": "gui_action", "args": {
+                "action": "type", "text": _gui_type_m.group(1),
+                "label": _gui_type_m.group(2).strip(),
+                "app": _gui_type_m.group(3).strip(),
+            }}
+        _gui_dbl_m = re.search(
+            r"double[- ]?click\s+(?:the\s+|on\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
+            both, re.IGNORECASE,
+        )
+        if _gui_dbl_m:
+            return {"tool": "gui_action", "args": {
+                "action": "double_click", "label": _gui_dbl_m.group(1).strip(),
+                "app": _gui_dbl_m.group(2).strip(),
+            }}
+        _gui_rc_m = re.search(
+            r"right[- ]?click\s+(?:the\s+|on\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
+            both, re.IGNORECASE,
+        )
+        if _gui_rc_m:
+            return {"tool": "gui_action", "args": {
+                "action": "right_click", "label": _gui_rc_m.group(1).strip(),
+                "app": _gui_rc_m.group(2).strip(),
+            }}
+        _gui_m = re.search(
+            r"(?:click|press|tap)\s+(?:the\s+|on\s+)?[\"']?(.+?)[\"']?"
+            r"\s+(?:button\s+|element\s+|link\s+|tab\s+|field\s+|input\s+)?"
+            r"(?:in|on|of)\s+(.+?)(?:\s*$|\s*please)",
+            both, re.IGNORECASE,
+        )
+        if _gui_m:
+            return {"tool": "gui_action", "args": {
+                "action": "click", "label": _gui_m.group(1).strip(),
+                "app": _gui_m.group(2).strip(),
+            }}
+        _gui_find_m = re.search(
+            r"(?:find|locate|navigate to|go to)\s+(?:the\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
+            both, re.IGNORECASE,
+        )
+        if _gui_find_m and any(k in both for k in (
+            "find the button", "find element", "find ui", "locate",
+            "navigate to", "go to the",
+        )):
+            return {"tool": "gui_action", "args": {
+                "action": "navigate", "label": _gui_find_m.group(1).strip(),
+                "app": _gui_find_m.group(2).strip(),
+            }}
+
         # Web search
         if any(k in both for k in ("search", "look up", "find online", "google",
                                     "is there any", "anything about")):
@@ -610,8 +669,8 @@ class Brain:
             "focus window", "focus app", "switch to",
             "element tree", "ui tree",
             "screenshot", "what's on my screen", "what is on my screen",
-            "what's on screen", "describe screen", "analyze screen",
-            "screen analysis", "vlm",
+            "what's on screen", "describe screen", "describe my screen",
+            "analyze screen", "screen analysis", "vlm",
         ))
         if _is_a11y:
             # Screenshot / VLM direct analysis (#120)
