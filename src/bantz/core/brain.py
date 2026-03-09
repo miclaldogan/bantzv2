@@ -130,6 +130,10 @@ class Brain:
             import bantz.tools.document     # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass  # PDF/DOCX deps may not be installed
+        try:
+            import bantz.tools.accessibility  # noqa: F401
+        except (ImportError, ModuleNotFoundError):
+            pass  # AT-SPI2/gi deps may not be installed
         self._bridge = None
         self._memory_ready = False
         self._graph_ready = False
@@ -528,6 +532,47 @@ class Brain:
                                     "write into", "write a note")):
             if not any(k in both for k in ("mail", "calendar", "assignment")):
                 return {"tool": "_generate", "args": {}}
+
+        # Accessibility / AT-SPI (#119)
+        _is_a11y = any(k in both for k in (
+            "click the", "click on", "press the button",
+            "find the button", "find element", "find ui",
+            "ui element", "accessibility", "at-spi", "atspi",
+            "list windows", "list apps", "open apps",
+            "focus window", "focus app", "switch to",
+            "element tree", "ui tree",
+        ))
+        if _is_a11y:
+            # Focus window
+            if any(k in both for k in ("focus", "switch to", "bring up", "activate")):
+                app_m = re.search(
+                    r"(?:focus|switch to|bring up|activate)\s+(?:window\s+)?(.+?)(?:\s*$|\s*please)",
+                    both, re.IGNORECASE,
+                )
+                app = app_m.group(1).strip() if app_m else ""
+                return {"tool": "accessibility", "args": {"action": "focus", "app": app}}
+            # List apps
+            if any(k in both for k in ("list windows", "list apps", "open apps", "running apps")):
+                return {"tool": "accessibility", "args": {"action": "list_apps"}}
+            # Element tree
+            if any(k in both for k in ("element tree", "ui tree", "accessibility tree")):
+                app_m = re.search(
+                    r"(?:element|ui|accessibility)\s+tree\s+(?:of\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
+                    both, re.IGNORECASE,
+                )
+                app = app_m.group(1).strip() if app_m else ""
+                return {"tool": "accessibility", "args": {"action": "tree", "app": app}}
+            # Find/click element (default)
+            app_m = re.search(
+                r"(?:click|press|find)\s+(?:the\s+|on\s+)?[\"']?(.+?)[\"']?\s+(?:button|element|link|tab|field|input|in|on)\s+(?:in\s+|on\s+)?(.+?)(?:\s*$|\s*please)",
+                both, re.IGNORECASE,
+            )
+            if app_m:
+                label = app_m.group(1).strip()
+                app = app_m.group(2).strip()
+                return {"tool": "accessibility", "args": {"action": "find", "app": app, "label": label}}
+            # Fallback: info
+            return {"tool": "accessibility", "args": {"action": "info"}}
 
         return None
 
