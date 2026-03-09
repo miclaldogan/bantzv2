@@ -541,8 +541,33 @@ class Brain:
             "list windows", "list apps", "open apps",
             "focus window", "focus app", "switch to",
             "element tree", "ui tree",
+            "screenshot", "what's on my screen", "what is on my screen",
+            "what's on screen", "describe screen", "analyze screen",
+            "screen analysis", "vlm",
         ))
         if _is_a11y:
+            # Screenshot / VLM direct analysis (#120)
+            if any(k in both for k in ("what's on my screen", "what is on my screen",
+                                        "what's on screen", "describe screen",
+                                        "describe my screen")):
+                app_m = re.search(
+                    r"(?:describe|what'?s on)\s+(?:my\s+)?(?:screen|display)\s+(?:in\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
+                    both, re.IGNORECASE,
+                )
+                app = app_m.group(1).strip() if app_m else ""
+                return {"tool": "accessibility", "args": {"action": "describe", "app": app}}
+            if any(k in both for k in ("screenshot", "analyze screen", "screen analysis", "vlm")):
+                app_m = re.search(
+                    r"(?:screenshot|analyze|vlm)\s+(?:of\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
+                    both, re.IGNORECASE,
+                )
+                app = app_m.group(1).strip() if app_m else ""
+                label_m = re.search(
+                    r"(?:find|locate)\s+(.+?)\s+(?:in|on)\s+",
+                    both, re.IGNORECASE,
+                )
+                label = label_m.group(1).strip() if label_m else ""
+                return {"tool": "accessibility", "args": {"action": "screenshot", "app": app, "label": label}}
             # Focus window
             if any(k in both for k in ("focus", "switch to", "bring up", "activate")):
                 app_m = re.search(

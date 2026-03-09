@@ -398,31 +398,46 @@ class AccessibilityTool(BaseTool):
         label = kwargs.get("label", "")
         role = kwargs.get("role")
 
+        # Actions that require AT-SPI
+        _atspi_actions = {"list_apps", "tree", "find", "focus", "info"}
+        # Actions that use VLM directly (no AT-SPI needed)
+        _vlm_actions = {"screenshot", "describe"}
+
+        if action in _vlm_actions:
+            if action == "screenshot":
+                return await self._screenshot_analyze(app, label)
+            elif action == "describe":
+                return await self._describe_screen(app)
+
         if not _init_atspi():
+            # AT-SPI unavailable — try VLM fallback for find/tree
+            if action in ("find", "tree") and self._vlm_available():
+                return await self._vlm_fallback(action, app, label)
             return ToolResult(
                 success=False,
                 output="",
                 error=(
                     "AT-SPI2 is not available. Install with:\n"
                     "  sudo apt install python3-gi gir1.2-atspi-2.0\n"
-                    "and make sure accessibility is enabled in your desktop settings."
+                    "and make sure accessibility is enabled in your desktop settings.\n"
+                    "Alternatively, set BANTZ_VLM_ENABLED=true for screenshot-based fallback."
                 ),
             )
 
         if action == "list_apps":
             return self._list_apps()
         elif action == "tree":
-            return self._get_tree(app)
+            return await self._get_tree(app)
         elif action == "find":
-            return self._find(app, label, role)
+            return await self._find(app, label, role)
         elif action == "focus":
             return self._focus(app)
         elif action == "info":
-            return self._info()
+            return await self._info()
         else:
             return ToolResult(
                 success=False, output="",
-                error=f"Unknown action: {action}. Use: list_apps, tree, find, focus, info",
+                error=f"Unknown action: {action}. Use: list_apps, tree, find, focus, info, screenshot, describe",
             )
 
     def _list_apps(self) -> ToolResult:
@@ -442,7 +457,7 @@ class AccessibilityTool(BaseTool):
             data={"apps": apps},
         )
 
-    def _get_tree(self, app_name: str) -> ToolResult:
+    async def _get_tree(self, app_name: str) -> ToolResult:
         if not app_name:
             return ToolResult(
                 success=False, output="",
@@ -451,6 +466,9 @@ class AccessibilityTool(BaseTool):
 
         tree = get_element_tree(app_name)
         if tree is None:
+            # AT-SPI found no tree → try VLM fallback (#120)
+            if self._vlm_available():
+                return await self._vlm_fallback("tree", app_name, "")
             return ToolResult(
                 success=False, output="",
                 error=f"Application '{app_name}' not found or no accessibility tree.",
@@ -492,7 +510,7 @@ class AccessibilityTool(BaseTool):
         for child in node.get("children", []):
             self._format_tree_lines(child, lines, indent + 1, max_lines)
 
-    def _find(self, app_name: str, label: str, role: Optional[str]) -> ToolResult:
+    async def _find(self, app_name: str, label: str, role: Optional[str]) -> ToolResult:
         if not app_name or not label:
             return ToolResult(
                 success=False, output="",
@@ -501,6 +519,9 @@ class AccessibilityTool(BaseTool):
 
         element = find_element(app_name, label, role_filter=role)
         if element is None:
+            # AT-SPI found nothing → VLM fallback (#120)
+            if self._vlm_available():
+                return await self._vlm_fallback("find", app_name, label)
             return ToolResult(
                 success=False, output="",
                 error=f"Element '{label}' not found in '{app_name}'.",
@@ -541,22 +562,209 @@ class AccessibilityTool(BaseTool):
             error=f"Could not focus '{app_name}'. Window not found or not supported.",
         )
 
-    def _info(self) -> ToolResult:
+    async def _info(self) -> ToolResult:
         """Return accessibility system info."""
         display = detect_display_server()
         apps = list_applications()
+        vlm_status = "enabled" if self._vlm_available() else "disabled"
         return ToolResult(
             success=True,
             output=(
                 f"🖥  Display: {display}\n"
                 f"♿ AT-SPI2: available\n"
-                f"📋 Accessible apps: {len(apps)}"
+                f"📋 Accessible apps: {len(apps)}\n"
+                f"🔭 VLM fallback: {vlm_status}"
             ),
             data={
                 "display_server": display,
                 "atspi_available": True,
                 "app_count": len(apps),
+                "vlm_enabled": self._vlm_available(),
             },
+        )
+
+    # ── VLM integration (#120) ────────────────────────────────────────────
+
+    @staticmethod
+    def _vlm_available() -> bool:
+        """Check if VLM fallback is enabled."""
+        try:
+            from bantz.config import config as _cfg
+            return _cfg.vlm_enabled
+        except Exception:
+            return False
+
+    async def _vlm_fallback(
+        self, action: str, app_name: str, label: str,
+    ) -> ToolResult:
+        """
+        VLM fallback: take a screenshot and analyse it with a remote VLM.
+        Triggered when AT-SPI returns no elements.
+        """
+        try:
+            from bantz.vision.remote_vlm import (
+                analyze_screenshot, spatial_cache, VLMResult,
+            )
+            from bantz.vision.screenshot import capture_window_base64, capture_base64
+        except ImportError:
+            return ToolResult(
+                success=False, output="",
+                error="Vision modules not available.",
+            )
+
+        # Check spatial cache first
+        cache_key = f"{app_name}:{action}:{label}"
+        cached = spatial_cache.get(cache_key)
+        if cached and cached.success:
+            return self._vlm_result_to_tool(cached, action, app_name, label, from_cache=True)
+
+        # Take screenshot
+        if app_name:
+            img_b64 = await capture_window_base64(app_name)
+        else:
+            img_b64 = await capture_base64()
+
+        if not img_b64:
+            return ToolResult(
+                success=False, output="",
+                error="Could not capture screenshot for VLM analysis.",
+            )
+
+        # Analyse
+        vlm_result = await analyze_screenshot(
+            img_b64,
+            label=label if action == "find" else None,
+        )
+
+        # Cache result
+        if vlm_result.success:
+            spatial_cache.put(cache_key, vlm_result)
+
+        return self._vlm_result_to_tool(vlm_result, action, app_name, label)
+
+    @staticmethod
+    def _vlm_result_to_tool(
+        vlm: Any, action: str, app_name: str, label: str,
+        from_cache: bool = False,
+    ) -> ToolResult:
+        """Convert a VLMResult into a ToolResult."""
+        # Import here to avoid circular
+        try:
+            from bantz.vision.remote_vlm import VLMResult
+        except ImportError:
+            pass
+
+        if not vlm.success:
+            return ToolResult(
+                success=False, output="",
+                error=f"VLM analysis failed: {vlm.error}",
+            )
+
+        cache_tag = " (cached)" if from_cache else ""
+        source_tag = f" [{vlm.source}, {vlm.latency_ms}ms{cache_tag}]"
+
+        if action == "find" and label:
+            elem = vlm.find(label) if vlm.find(label) else vlm.best
+            if elem:
+                cx, cy = elem.center
+                return ToolResult(
+                    success=True,
+                    output=(
+                        f"🔭 Found '{elem.label}' ({elem.role}) via VLM{source_tag}\n"
+                        f"   Position: ({cx}, {cy})\n"
+                        f"   Bounds: {elem.width}x{elem.height}\n"
+                        f"   Confidence: {elem.confidence:.2f}"
+                    ),
+                    data={
+                        "element": elem.to_dict(),
+                        "x": cx, "y": cy,
+                        "via": "vlm",
+                    },
+                )
+            return ToolResult(
+                success=False, output="",
+                error=f"VLM could not find '{label}' in the screenshot.",
+            )
+
+        # tree / generic — list all elements
+        if not vlm.elements:
+            if vlm.raw_text:
+                return ToolResult(
+                    success=True,
+                    output=f"🔭 VLM analysis{source_tag}:\n{vlm.raw_text[:1000]}",
+                    data={"raw_text": vlm.raw_text, "via": "vlm"},
+                )
+            return ToolResult(
+                success=False, output="",
+                error="VLM found no UI elements in the screenshot.",
+            )
+
+        lines = [f"🔭 {len(vlm.elements)} elements detected via VLM{source_tag}:"]
+        for e in vlm.elements[:20]:
+            cx, cy = e.center
+            lines.append(
+                f"  [{e.role}] \"{e.label}\" @ ({cx}, {cy}) "
+                f"{e.width}x{e.height} conf={e.confidence:.2f}"
+            )
+        if len(vlm.elements) > 20:
+            lines.append(f"  ... +{len(vlm.elements) - 20} more")
+        return ToolResult(
+            success=True,
+            output="\n".join(lines),
+            data={"elements": [e.to_dict() for e in vlm.elements], "via": "vlm"},
+        )
+
+    async def _screenshot_analyze(
+        self, app_name: str, label: str,
+    ) -> ToolResult:
+        """Direct screenshot + VLM analysis (user-requested)."""
+        if not self._vlm_available():
+            return ToolResult(
+                success=False, output="",
+                error="VLM is disabled. Set BANTZ_VLM_ENABLED=true.",
+            )
+        return await self._vlm_fallback(
+            "find" if label else "tree", app_name, label,
+        )
+
+    async def _describe_screen(self, app_name: str) -> ToolResult:
+        """Describe what is on screen using VLM."""
+        if not self._vlm_available():
+            return ToolResult(
+                success=False, output="",
+                error="VLM is disabled. Set BANTZ_VLM_ENABLED=true.",
+            )
+        try:
+            from bantz.vision.remote_vlm import describe_screen
+            from bantz.vision.screenshot import capture_window_base64, capture_base64
+        except ImportError:
+            return ToolResult(
+                success=False, output="",
+                error="Vision modules not available.",
+            )
+
+        if app_name:
+            img_b64 = await capture_window_base64(app_name)
+        else:
+            img_b64 = await capture_base64()
+
+        if not img_b64:
+            return ToolResult(
+                success=False, output="",
+                error="Could not capture screenshot.",
+            )
+
+        result = await describe_screen(img_b64)
+        if not result.success:
+            return ToolResult(
+                success=False, output="",
+                error=f"VLM describe failed: {result.error}",
+            )
+
+        return ToolResult(
+            success=True,
+            output=f"🔭 Screen description [{result.source}, {result.latency_ms}ms]:\n{result.raw_text[:2000]}",
+            data={"description": result.raw_text, "via": "vlm"},
         )
 
 

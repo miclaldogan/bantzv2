@@ -24,6 +24,12 @@ class Config(BaseSettings):
     distillation_enabled: bool = Field(True, alias="BANTZ_DISTILLATION_ENABLED")
     distillation_min_exchanges: int = Field(5, alias="BANTZ_DISTILLATION_MIN_EXCHANGES")
 
+    # ── Vision / Remote VLM ───────────────────────────────────────────────
+    vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")
+    vlm_endpoint: str = Field("http://localhost:8090", alias="BANTZ_VLM_ENDPOINT")
+    vlm_timeout: int = Field(5, alias="BANTZ_VLM_TIMEOUT")
+    screenshot_quality: int = Field(70, alias="BANTZ_SCREENSHOT_QUALITY")
+
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
     gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")
