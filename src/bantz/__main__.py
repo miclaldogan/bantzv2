@@ -660,6 +660,11 @@ async def _doctor() -> None:
     except Exception:
         print("○ Navigator: not initialized")
 
+    # Background Observer (#124)
+    obs_icon = "✓" if config.observer_enabled else "○"
+    obs_status = f"enabled (threshold={config.observer_severity_threshold}, model={config.observer_analysis_model})" if config.observer_enabled else "disabled  → BANTZ_OBSERVER_ENABLED=true"
+    print(f"{obs_icon} Observer: {obs_status}")
+
     # Telegram
     tg_ok = bool(config.telegram_bot_token)
     tg_icon = "✓" if tg_ok else "○"
