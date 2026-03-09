@@ -68,6 +68,7 @@ You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs
 {profile_hint}
 {graph_hint}
 {vector_hint}
+{desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
 1. You have NO access to emails, calendar events, schedule/timetable, live news, or any external data.
 2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
@@ -75,6 +76,7 @@ CRITICAL RULES — FOLLOW STRICTLY:
    Do NOT invent class names. Do NOT guess what classes they have.
 4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
 5. If unsure, say you don't know. NEVER guess or make up data.
+6. For desktop/app questions: use ONLY the Desktop Context above. If no desktop context is provided, say you can't detect apps right now.
 Respond in English. Plain text only.\
 """
 
@@ -150,6 +152,49 @@ class Brain:
         if not self._memory_ready:
             data_layer.init(config)
             self._memory_ready = True
+
+    def _desktop_context(self) -> str:
+        """Build desktop context from AppDetector for the system prompt."""
+        try:
+            from bantz.agent.app_detector import app_detector
+            if not app_detector.initialized:
+                return ""
+            ctx = app_detector.get_workspace_context()
+            if not ctx:
+                return ""
+
+            lines = ["Desktop Context (live data from AppDetector):"]
+
+            # Active window
+            win_info = ctx.get("active_window")
+            if win_info:
+                lines.append(f"  Active window: {win_info.get('name', '?')} — {win_info.get('title', '')}")
+
+            # Activity
+            activity = ctx.get("activity", "idle")
+            lines.append(f"  Activity: {activity}")
+
+            # Running apps
+            apps = ctx.get("apps", [])
+            if apps:
+                lines.append(f"  Running apps ({len(apps)}): {', '.join(apps[:15])}")
+
+            # IDE context
+            ide = ctx.get("ide")
+            if ide and ide.get("ide"):
+                lines.append(f"  IDE: {ide['ide']} — file: {ide.get('file', '?')} project: {ide.get('project', '?')}")
+
+            # Docker containers
+            docker = ctx.get("docker")
+            if docker:
+                running = [c for c in docker if c.get("state") == "running"]
+                if running:
+                    names = [c.get("name", c.get("image", "?")) for c in running]
+                    lines.append(f"  Docker ({len(running)} running): {', '.join(names[:10])}")
+
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     async def _ensure_graph(self) -> None:
         if not self._graph_ready and graph_memory:
@@ -937,9 +982,29 @@ class Brain:
         else:
             # Short ambiguous input with recent email context?
             # e.g. "medium" after listing emails → probably "emails from medium"
+            # BUT: "yes", "eh?", "aa", "ok" should NOT be routed to Gmail (#155)
             _words = en_input.strip().split()
-            if len(_words) <= 2 and self._last_messages:
-                # Treat as a contextual email follow-up (search by keyword)
+            _short_input = len(_words) <= 2
+            _email_followup = False
+
+            if _short_input and self._last_messages:
+                _input_lower = en_input.strip().lower()
+                # Only route if input looks like a sender reference
+                # (matches a sender name/domain from last messages, or is ordinal)
+                _ORDINALS = {"first", "1st", "second", "2nd", "third", "3rd",
+                             "fourth", "4th", "fifth", "5th", "last", "next",
+                             "previous", "that one", "this one"}
+                if _input_lower in _ORDINALS or any(w in _input_lower for w in _ORDINALS):
+                    _email_followup = True
+                else:
+                    # Check if input matches any sender name/domain in recent messages
+                    for msg in self._last_messages:
+                        sender = msg.get("from", "").lower()
+                        if _input_lower in sender or sender.split("@")[0] in _input_lower:
+                            _email_followup = True
+                            break
+
+            if _email_followup:
                 plan = {"route": "tool", "tool_name": "gmail",
                         "tool_args": {"action": "search", "from_sender": en_input.strip()},
                         "risk_level": "safe"}
@@ -1040,12 +1105,13 @@ class Brain:
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
         vector_hint = await self._vector_context(en_input)
+        desktop_hint = self._desktop_context()
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint)},
+                vector_hint=vector_hint, desktop_hint=desktop_hint)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1077,12 +1143,13 @@ class Brain:
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
         graph_hint = await self._graph_context(en_input)
         vector_hint = await self._vector_context(en_input)
+        desktop_hint = self._desktop_context()
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint)},
+                vector_hint=vector_hint, desktop_hint=desktop_hint)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1131,11 +1198,70 @@ class Brain:
 
 
 def _extract_city(text: str) -> str:
+    """Extract city name from weather-related user input.
+
+    Handles English and Turkish patterns:
+      "weather in Istanbul"          → "Istanbul"
+      "bugün hava nasıl"             → "" (no city, use GPS)
+      "ankara'da hava nasıl"         → "Ankara"
+      "what's the weather in Berlin" → "Berlin"
+      "izmir hava durumu"            → "Izmir"
+    """
+    t = text.strip()
+
+    # Turkish: "X'de/X'da/X'te/X'ta hava" or "X hava durumu"
+    m = re.search(
+        r"(\b\w[\wğüşıöçĞÜŞİÖÇ]+)\s*[''`]\s*(?:de|da|te|ta|deki|daki)\b",
+        t, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).title()
+
+    # Turkish: "X hava durumu" or "X'nin havası"
+    m = re.search(
+        r"(\b\w[\wğüşıöçĞÜŞİÖÇ]+)\s+hava\b",
+        t, re.IGNORECASE,
+    )
+    if m:
+        candidate = m.group(1).lower()
+        # Skip if it's "bugün" (today), "yarın" (tomorrow), or generic words
+        _SKIP_TR = {"bugün", "yarın", "şu", "bu", "o", "nasıl", "şimdi", "dışarıda"}
+        if candidate not in _SKIP_TR:
+            return m.group(1).title()
+
+    # English: "weather in X", "forecast for X", "temperature in X"
+    m = re.search(
+        r"(?:weather|forecast|temperature|rain|degrees)\s+(?:in|at|for|of)\s+(.+?)(?:\?|$|\.|\s+today|\s+tomorrow|\s+now)",
+        t, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip().title()
+
+    # English: "how's the weather in X"
+    m = re.search(
+        r"how(?:'s|\s+is)\s+(?:the\s+)?weather\s+in\s+(.+?)(?:\?|$|\.)",
+        t, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip().title()
+
+    # Fallback: strip all known weather/time words and see if anything remains
     cleaned = re.sub(
-        r"\b(weather|forecast|temperature|rain|degrees|how|today|tomorrow|is|the|in|at|for)\b",
-        "", text, flags=re.IGNORECASE,
-    ).strip()
-    return cleaned.title() if cleaned and len(cleaned) > 2 else ""
+        r"\b(weather|forecast|temperature|rain|raining|degrees|how|today|tomorrow|is|it|the|in|at|for|what|whats|what's|show|tell|me|check|get|please|now|will|does|going|to|be)\b",
+        "", t, flags=re.IGNORECASE,
+    )
+    # Also strip Turkish filler words
+    cleaned = re.sub(
+        r"\b(hava|durumu|nasıl|bugün|yarın|şu|şimdi|an|ne|kadar|derece|sıcaklık|yağmur|yağacak|mı|mi|mu|mü|olacak)\b",
+        "", cleaned, flags=re.IGNORECASE,
+    )
+    cleaned = cleaned.strip(" ?!.,;:'\"")
+
+    # Only return if it looks like a city name (1-3 words, starts with letter)
+    if cleaned and len(cleaned) > 1 and len(cleaned.split()) <= 3 and cleaned[0].isalpha():
+        return cleaned.title()
+
+    return ""  # empty → WeatherTool will auto-detect via GPS/location
 
 
 def _extract_mail_recipient(text: str) -> str:
