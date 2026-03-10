@@ -140,7 +140,7 @@ class SystemStatus(Vertical):
     def _collect_telemetry(self) -> None:
         """Runs in a thread — never blocks the Textual event loop."""
         snap = self._collector.collect()
-        self.call_from_thread(self._apply_snapshot, snap)
+        self.app.call_from_thread(self._apply_snapshot, snap)
 
     def _apply_snapshot(self, snap) -> None:
         """Apply collected data to widgets — runs on the main thread."""
