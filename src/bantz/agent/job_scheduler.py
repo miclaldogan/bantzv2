@@ -176,23 +176,11 @@ async def _job_maintenance() -> None:
 
 
 async def _job_reflection() -> None:
-    """Summarize today's conversations via distiller."""
-    log.info("🤔 Reflection starting...")
-    try:
-        from bantz.memory.distiller import distiller
-        if distiller.initialized:
-            summary = await distiller.distill_session()
-            if summary:
-                log.info("Reflection summary: %s", summary[:200])
-            else:
-                log.info("Reflection: no conversations to summarize")
-        else:
-            log.debug("Distiller not initialized — skipping reflection")
-    except ImportError:
-        log.debug("Distiller not available")
-    except Exception as exc:
-        log.warning("Reflection failed: %s", exc)
-    log.info("🤔 Reflection complete")
+    """Run the nightly memory reflection workflow (#130)."""
+    from bantz.agent.workflows.reflection import run_reflection
+    result = await run_reflection(dry_run=False)
+    log.info("🤔 Reflection finished: %d sessions, %d entities",
+             result.sessions, result.entities_extracted)
 
 
 async def _job_overnight_poll() -> None:
@@ -304,7 +292,7 @@ async def _fire_dynamic_reminder(title: str, repeat: str = "none") -> None:
 
 _JOB_REGISTRY: dict[str, tuple[Callable, str]] = {
     "maintenance": (_job_maintenance, "Nightly 6-step maintenance workflow"),
-    "reflection": (_job_reflection, "Summarize conversations"),
+    "reflection": (_job_reflection, "Nightly memory reflection workflow"),
     "overnight_poll": (_job_overnight_poll, "Check email/calendar"),
     "briefing_prep": (_job_briefing_prep, "Pre-fetch morning briefing data"),
     "reminder_check": (_job_reminder_check, "Check due reminders"),
