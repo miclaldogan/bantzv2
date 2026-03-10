@@ -828,6 +828,14 @@ class Brain:
         except Exception:
             return None
 
+    def _prepend_intervention(self, response: str) -> str:
+        """If an intervention was popped at process() start, prepend it (#124)."""
+        iv = getattr(self, "_pending_intervention", None)
+        if iv:
+            self._pending_intervention = None
+            return f"{iv}\n\n{response}"
+        return response
+
     # ── Maintenance & Reflection handlers (#129, #130) ────────────────
 
     async def _handle_maintenance(self, dry_run: bool = False) -> str:
@@ -964,6 +972,9 @@ class Brain:
         await self._ensure_graph()
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
+
+        # ── Surface pending observer/intervention alerts (#124) ──
+        self._pending_intervention = await self._check_intervention_queue()
 
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
@@ -1200,6 +1211,7 @@ class Brain:
 
         # Short output — non-streaming finalize
         resp = await self._finalize(en_input, result, tc)
+        resp = self._prepend_intervention(resp)
         data_layer.conversations.add("assistant", resp, tool_used=tool_name)
         await self._graph_store(user_input, resp, tool_name,
                                 result.data if result else None)

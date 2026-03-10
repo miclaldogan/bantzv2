@@ -241,6 +241,27 @@ class TestInterventionQueueHook:
             text = _run(b._check_intervention_queue())
         assert text is None
 
+    def test_prepend_intervention_with_text(self):
+        b = self._make_brain()
+        b._pending_intervention = "💡 [observer] High CPU\n   CPU at 95%"
+        result = b._prepend_intervention("It's sunny outside.")
+        assert result.startswith("💡 [observer]")
+        assert "It's sunny outside." in result
+        # Consumed after use
+        assert b._pending_intervention is None
+
+    def test_prepend_intervention_none(self):
+        b = self._make_brain()
+        b._pending_intervention = None
+        result = b._prepend_intervention("Hello")
+        assert result == "Hello"
+
+    def test_prepend_intervention_no_attr(self):
+        b = self._make_brain()
+        # No _pending_intervention set at all
+        result = b._prepend_intervention("Hello")
+        assert result == "Hello"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. Reminder → job_scheduler bridge (#128)
