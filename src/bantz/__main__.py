@@ -873,21 +873,40 @@ def _setup_systemd() -> None:
         return
 
     project_dir = Path(__file__).resolve().parent.parent.parent  # src/bantz → repo root
+    venv_python = Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "python"
+    env_file = project_dir / ".env"
     service_src = project_dir / "deploy" / "bantz@.service"
 
     if not service_src.exists():
         print(f"✗ Service template not found: {service_src}")
         return
 
-    # Read and substitute %i with actual user
-    content = service_src.read_text()
-    resolved = content.replace("%i", user)
+    # Build user-mode service (no User=, no ProtectSystem=strict)
+    content = f"""[Unit]
+Description=Bantz v2 — Personal AI Assistant (Daemon)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={project_dir}
+EnvironmentFile={env_file}
+ExecStart={venv_python} -m bantz --daemon
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bantz
+
+[Install]
+WantedBy=default.target
+"""
 
     # Install to user systemd directory
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     systemd_dir.mkdir(parents=True, exist_ok=True)
     target = systemd_dir / "bantz.service"
-    target.write_text(resolved)
+    target.write_text(content)
 
     print(f"✓ Service file installed: {target}")
     print()

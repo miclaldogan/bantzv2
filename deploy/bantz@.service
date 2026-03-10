@@ -17,9 +17,7 @@ SyslogIdentifier=bantz
 
 # Security hardening
 NoNewPrivileges=yes
-ProtectSystem=strict
 ReadWritePaths=/home/%i
-ProtectHome=no
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
