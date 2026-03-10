@@ -710,3 +710,54 @@ class SQLiteSessionStore(SessionStore):
     @property
     def path(self) -> Path:
         return self._db_path
+
+
+# ━━ Key-Value Store (SQLite) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class SQLiteKVStore:
+    """Simple key-value store backed by SQLite.
+
+    Used for lightweight state like briefing cache, feature flags, etc.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn = _connect(db_path)
+        self._lock = threading.Lock()
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+    def get(self, key: str, default: str = "") -> str:
+        row = self._conn.execute(
+            "SELECT value FROM kv_store WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set(self, key: str, value: str) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO kv_store(key, value, updated_at) VALUES (?,?,?)",
+                (key, value, now),
+            )
+
+    def delete(self, key: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
+
+    def all(self) -> dict[str, str]:
+        rows = self._conn.execute("SELECT key, value FROM kv_store").fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    @property
+    def path(self) -> Path:
+        return self._db_path

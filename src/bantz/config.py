@@ -86,6 +86,13 @@ class Config(BaseSettings):
     # ── Scheduler / Reminders ─────────────────────────────────────────────
     reminder_check_interval: int = Field(30, alias="BANTZ_REMINDER_CHECK_INTERVAL")
 
+    # ── Job Scheduler / APScheduler (#128) ────────────────────────────────
+    job_scheduler_enabled: bool = Field(True, alias="BANTZ_JOB_SCHEDULER_ENABLED")
+    night_maintenance_hour: int = Field(3, alias="BANTZ_MAINTENANCE_HOUR")
+    night_reflection_hour: int = Field(23, alias="BANTZ_REFLECTION_HOUR")
+    briefing_prep_hour: int = Field(6, alias="BANTZ_BRIEFING_PREP_HOUR")
+    overnight_poll_hours: str = Field("0,2,4,6", alias="BANTZ_OVERNIGHT_POLL_HOURS")
+
     # ── Telegram ──────────────────────────────────────────────────────────
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")

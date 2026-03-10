@@ -30,6 +30,10 @@ def main() -> None:
                         help="Show spatial cache statistics")
     parser.add_argument("--setup", nargs="+", metavar="SERVICE",
                         help="Setup integrations: --setup google gmail")
+    parser.add_argument("--jobs", action="store_true",
+                        help="List all scheduled APScheduler jobs")
+    parser.add_argument("--run-job", metavar="JOB_ID",
+                        help="Manually trigger a scheduled job by ID")
     args = parser.parse_args()
 
     if args.doctor:
@@ -42,6 +46,14 @@ def main() -> None:
 
     if args.setup:
         _handle_setup(args.setup)
+        return
+
+    if args.jobs:
+        asyncio.run(_list_jobs())
+        return
+
+    if args.run_job:
+        asyncio.run(_run_job(args.run_job))
         return
 
     if args.once:
@@ -739,7 +751,62 @@ async def _doctor() -> None:
     _sched.init(config.db_path)
     print(f"✓ {_sched.status_line()}")
 
+    # Job Scheduler — APScheduler (#128)
+    js_icon = "✓" if config.job_scheduler_enabled else "○"
+    if config.job_scheduler_enabled:
+        try:
+            from bantz.agent.job_scheduler import job_scheduler as _js
+            await _js.start(config.db_path, enable_night_jobs=True)
+            print(f"{js_icon} Job Scheduler: {_js.status_line()}")
+            await _js.shutdown()
+        except ImportError:
+            print(f"{js_icon} Job Scheduler: apscheduler not installed → pip install apscheduler")
+        except Exception as exc:
+            print(f"{js_icon} Job Scheduler: enabled but init failed: {exc}")
+    else:
+        print(f"{js_icon} Job Scheduler: disabled → BANTZ_JOB_SCHEDULER_ENABLED=true")
+
     print("─" * 44)
+
+
+async def _list_jobs() -> None:
+    """List all scheduled APScheduler jobs (bantz --jobs)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.agent.job_scheduler import job_scheduler
+    await job_scheduler.start(config.db_path, enable_night_jobs=True)
+    print(job_scheduler.format_jobs())
+    await job_scheduler.shutdown()
+
+
+async def _run_job(job_id: str) -> None:
+    """Manually trigger a job (bantz --run-job <id>)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.core.memory import memory
+    memory.init(config.db_path)
+    memory.new_session()
+
+    from bantz.core.scheduler import scheduler
+    scheduler.init(config.db_path)
+
+    from bantz.agent.job_scheduler import job_scheduler
+    await job_scheduler.start(config.db_path, enable_night_jobs=True)
+
+    ok = job_scheduler.run_job_now(job_id)
+    if ok:
+        print(f"✓ Triggered job: {job_id}")
+        # Give async jobs a moment to run
+        await asyncio.sleep(3)
+    else:
+        print(f"✗ Job not found: {job_id}")
+        print("Available jobs:")
+        for j in job_scheduler.list_jobs():
+            print(f"  {j['id']}")
+
+    await job_scheduler.shutdown()
 
 
 async def _once(query: str) -> None:
@@ -761,10 +828,17 @@ async def _once(query: str) -> None:
 
 
 async def _daemon() -> None:
-    """Run Bantz as a headless daemon — scheduler, GPS, and morning briefing.
+    """Run Bantz as a headless daemon — APScheduler-driven.
 
-    No TUI, no interactive input. Designed to run under systemd.
-    Reminders fire to journald logs (and optionally Telegram).
+    Replaces the old manual polling loops with APScheduler for:
+    - Reminder checks (30s interval)
+    - Night maintenance (3 AM cron)
+    - Night reflection (11 PM cron)
+    - Overnight email/cal poll (every 2h 00-07)
+    - Morning briefing prep (6 AM cron)
+
+    Key features: misfire_grace_time=86400, coalesce=True,
+    systemd-inhibit for night jobs, persistent SQLAlchemy job store.
     """
     import signal
     import logging
@@ -774,19 +848,34 @@ async def _daemon() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
     log = logging.getLogger("bantz.daemon")
-    log.info("Bantz daemon starting...")
+    log.info("Bantz daemon starting (APScheduler)...")
 
     from bantz.config import config
     config.ensure_dirs()
 
-    # Init memory + scheduler
+    # Init memory + legacy scheduler (for backward compat)
     from bantz.core.memory import memory
     memory.init(config.db_path)
     memory.new_session()
 
     from bantz.core.scheduler import scheduler
     scheduler.init(config.db_path)
-    log.info("Scheduler initialized: %s", scheduler.status_line())
+    log.info("Legacy scheduler: %s", scheduler.status_line())
+
+    # Init KV store for briefing cache
+    from bantz.data.sqlite_store import SQLiteKVStore
+    kv = SQLiteKVStore(config.db_path)
+
+    # Start APScheduler
+    if config.job_scheduler_enabled:
+        from bantz.agent.job_scheduler import job_scheduler
+        await job_scheduler.start(
+            config.db_path,
+            enable_night_jobs=True,
+        )
+        log.info("APScheduler: %s", job_scheduler.status_line())
+    else:
+        log.info("APScheduler disabled — falling back to legacy loops")
 
     # Start GPS server
     gps_ok = False
@@ -808,48 +897,56 @@ async def _daemon() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Periodic tasks
-    async def _reminder_loop():
-        """Check for due reminders periodically."""
-        interval = config.reminder_check_interval
-        while not stop_event.is_set():
-            try:
-                due = scheduler.check_due()
-                for r in due:
-                    repeat_tag = f" (repeats {r['repeat']})" if r["repeat"] != "none" else ""
-                    log.info("⏰ REMINDER: %s%s", r["title"], repeat_tag)
-                    memory.add("assistant", f"⏰ Reminder: {r['title']}{repeat_tag}", tool_used="reminder")
-            except Exception as exc:
-                log.debug("Reminder check error: %s", exc)
-            await asyncio.sleep(interval)
+    import os
+    log.info("Daemon running — APScheduler=%s. PID: %d",
+             "active" if config.job_scheduler_enabled else "off", os.getpid())
 
-    async def _briefing_loop():
-        """Check if morning briefing is due."""
-        while not stop_event.is_set():
-            try:
-                from bantz.personality.greeting import greeting_manager
-                text = await greeting_manager.morning_briefing_if_due()
-                if text:
-                    log.info("📋 Morning briefing:\n%s", text)
-                    memory.add("assistant", text, tool_used="briefing")
-            except Exception as exc:
-                log.debug("Briefing check error: %s", exc)
-            await asyncio.sleep(60)
+    # If APScheduler is disabled, fall back to legacy polling loops
+    tasks = []
+    if not config.job_scheduler_enabled:
+        async def _reminder_loop():
+            interval = config.reminder_check_interval
+            while not stop_event.is_set():
+                try:
+                    due = scheduler.check_due()
+                    for r in due:
+                        repeat_tag = f" (repeats {r['repeat']})" if r["repeat"] != "none" else ""
+                        log.info("⏰ REMINDER: %s%s", r["title"], repeat_tag)
+                        memory.add("assistant", f"⏰ Reminder: {r['title']}{repeat_tag}",
+                                   tool_used="reminder")
+                except Exception as exc:
+                    log.debug("Reminder check error: %s", exc)
+                await asyncio.sleep(interval)
 
-    log.info("Daemon running — scheduler (%ds), briefing (60s). PID: %d",
-             config.reminder_check_interval, asyncio.get_event_loop().__class__.__name__ and __import__("os").getpid())
+        async def _briefing_loop():
+            while not stop_event.is_set():
+                try:
+                    from bantz.personality.greeting import greeting_manager
+                    text = await greeting_manager.morning_briefing_if_due()
+                    if text:
+                        log.info("📋 Morning briefing:\n%s", text)
+                        memory.add("assistant", text, tool_used="briefing")
+                except Exception as exc:
+                    log.debug("Briefing check error: %s", exc)
+                await asyncio.sleep(60)
 
-    # Run loops until stop signal
-    tasks = [
-        asyncio.create_task(_reminder_loop()),
-        asyncio.create_task(_briefing_loop()),
-    ]
+        tasks = [
+            asyncio.create_task(_reminder_loop()),
+            asyncio.create_task(_briefing_loop()),
+        ]
 
+    # Wait for stop signal
     await stop_event.wait()
 
     # Cleanup
     for t in tasks:
         t.cancel()
+    if config.job_scheduler_enabled:
+        try:
+            from bantz.agent.job_scheduler import job_scheduler
+            await job_scheduler.shutdown()
+        except Exception:
+            pass
     if gps_ok:
         try:
             await gps_server.stop()
