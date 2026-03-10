@@ -40,8 +40,10 @@ def main() -> None:
                         help="Run nightly memory reflection now")
     parser.add_argument("--reflections", action="store_true",
                         help="View past daily reflections")
+    parser.add_argument("--overnight-poll", action="store_true",
+                        help="Run one overnight poll cycle (Gmail/Calendar/Classroom)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Simulate actions without changes (use with --maintenance/--reflect)")
+                        help="Simulate actions without changes (use with --maintenance/--reflect/--overnight-poll)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -74,6 +76,10 @@ def main() -> None:
 
     if args.reflections:
         _view_reflections()
+        return
+
+    if args.overnight_poll:
+        asyncio.run(_overnight_poll(args.dry_run))
         return
 
     if args.once:
@@ -893,6 +899,23 @@ def _view_reflections() -> None:
         unresolved = r.get("unresolved", [])
         if unresolved:
             print(f"   ❓ {', '.join(unresolved)}")
+
+
+async def _overnight_poll(dry_run: bool) -> None:
+    """Run one overnight poll cycle (bantz --overnight-poll)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.agent.workflows.overnight_poll import run_overnight_poll
+
+    tag = " (dry-run)" if dry_run else ""
+    print(f"📬 Running overnight poll{tag}...")
+    result = await run_overnight_poll(dry_run=dry_run)
+    print(result.summary_line())
+    if result.errors:
+        for src in (result.gmail, result.calendar, result.classroom):
+            if src and src.status != "ok":
+                print(f"  ⚠️ {src.source}: {src.status} — {src.error_message}")
 
 
 async def _once(query: str) -> None:

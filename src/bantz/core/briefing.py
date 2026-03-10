@@ -3,6 +3,11 @@ Bantz v2 — Daily Briefing
 Parallel API calls: calendar + classroom + gmail + weather + schedule.
 Any service failure is isolated — others still show.
 
+Overnight poll integration (#132):
+    When overnight poll data is cached in KV store, the briefing prefers
+    that data over live API calls (zero extra API cost at wake-up time).
+    Auth errors are reported gracefully (Rec #4).
+
 Usage:
     from bantz.core.briefing import briefing
     text = await briefing.generate()
@@ -10,6 +15,8 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +24,8 @@ from bantz.core.schedule import schedule
 from bantz.core.time_context import time_ctx
 from bantz.core.profile import profile as _profile
 from bantz.core.habits import habits as _habits
+
+log = logging.getLogger(__name__)
 
 
 class Briefing:
@@ -26,11 +35,27 @@ class Briefing:
         tc = time_ctx.snapshot()
         sections = _profile.briefing_sections  # user-selected sections
 
+        # ── Check for cached overnight poll data (#132) ───────────────────
+        overnight = self._read_overnight_cache()
+
         # Fire all external calls in parallel (skip disabled sections)
+        # If overnight cache has data for a source, use it instead of live call
         weather_coro = self._get_weather() if "weather" in sections else asyncio.sleep(0)
-        calendar_coro = self._get_calendar(now) if "calendar" in sections else asyncio.sleep(0)
-        gmail_coro = self._get_gmail() if "mail" in sections else asyncio.sleep(0)
-        classroom_coro = self._get_classroom() if "classroom" in sections else asyncio.sleep(0)
+
+        if overnight.get("calendar") and "calendar" in sections:
+            calendar_coro = self._wrap(self._calendar_from_cache(overnight["calendar"]))
+        else:
+            calendar_coro = self._get_calendar(now) if "calendar" in sections else asyncio.sleep(0)
+
+        if overnight.get("gmail") and "mail" in sections:
+            gmail_coro = self._wrap(self._gmail_from_cache(overnight["gmail"]))
+        else:
+            gmail_coro = self._get_gmail() if "mail" in sections else asyncio.sleep(0)
+
+        if overnight.get("classroom") and "classroom" in sections:
+            classroom_coro = self._wrap(self._classroom_from_cache(overnight["classroom"]))
+        else:
+            classroom_coro = self._get_classroom() if "classroom" in sections else asyncio.sleep(0)
 
         results = await asyncio.gather(
             weather_coro,
@@ -49,6 +74,10 @@ class Briefing:
         habit_str = self._get_habit_hint(now) if "habits" in sections else None
         reminder_str = self._get_reminders()
 
+        # Clear overnight cache after consumption
+        if overnight:
+            self._clear_overnight_cache()
+
         return self._format(
             tc=tc,
             now=now,
@@ -61,6 +90,99 @@ class Briefing:
             habits=habit_str,
             reminders=reminder_str,
         )
+
+    # ── Overnight cache readers (#132) ────────────────────────────────────
+
+    @staticmethod
+    async def _wrap(value):
+        """Wrap a sync return value as an awaitable for asyncio.gather."""
+        return value
+
+    def _read_overnight_cache(self) -> dict:
+        """Read overnight poll data from KV store (if available)."""
+        try:
+            from bantz.agent.workflows.overnight_poll import read_overnight_data
+            data = read_overnight_data()
+            if data.get("last_poll"):
+                return data
+        except Exception:
+            pass
+        return {}
+
+    def _clear_overnight_cache(self) -> None:
+        """Clear overnight data after briefing consumes it."""
+        try:
+            from bantz.agent.workflows.overnight_poll import clear_overnight_data
+            clear_overnight_data()
+        except Exception:
+            pass
+
+    def _gmail_from_cache(self, data: dict) -> Optional[str]:
+        """Format Gmail data from overnight cache.
+        Rec #4: Gracefully reports auth errors."""
+        status = data.get("status", "")
+        if status == "auth_error":
+            return ("I couldn't check your email overnight — "
+                    "Google revoked my access. Please re-authenticate Gmail.")
+        if status != "ok":
+            return None
+        d = data.get("data", {})
+        unread = d.get("unread", 0)
+        urgent_count = d.get("urgent_count", 0)
+        if unread == 0:
+            return "Inbox is clean"
+        parts = [f"{unread} unread emails"]
+        if urgent_count:
+            urgent = d.get("urgent", [])
+            subjects = [u.get("subject", "?")[:60] for u in urgent[:3]]
+            parts.append(f"🚨 {urgent_count} urgent: " + ", ".join(subjects))
+        return "  ".join(parts)
+
+    def _calendar_from_cache(self, data: dict) -> Optional[str]:
+        """Format Calendar data from overnight cache.
+        Rec #4: Gracefully reports auth errors."""
+        status = data.get("status", "")
+        if status == "auth_error":
+            return ("I don't know your schedule today — "
+                    "Google calendar access expired overnight. "
+                    "Please re-authenticate.")
+        if status != "ok":
+            return None
+        d = data.get("data", {})
+        events = d.get("events", [])
+        if not events:
+            return "No events on the calendar today"
+        lines = []
+        for ev in events[:3]:
+            loc = f" @ {ev['location']}" if ev.get("location") else ""
+            lines.append(f"  {ev.get('start', '')}  {ev.get('summary', '?')}{loc}")
+        return "\n    ".join(lines)
+
+    def _classroom_from_cache(self, data: dict) -> Optional[str]:
+        """Format Classroom data from overnight cache.
+        Rec #4: Gracefully reports auth errors."""
+        status = data.get("status", "")
+        if status == "auth_error":
+            return ("I couldn't check Classroom overnight — "
+                    "please re-authenticate your school account.")
+        if status != "ok":
+            return None
+        d = data.get("data", {})
+        due_today = d.get("due_today", [])
+        overdue = d.get("overdue", [])
+        due_tomorrow = d.get("due_tomorrow", [])
+        if not due_today and not overdue and not due_tomorrow:
+            return None
+        parts = []
+        if overdue:
+            parts.append(f"⚠️ {len(overdue)} overdue")
+        if due_today:
+            titles = [a.get("title", "?") for a in due_today[:2]]
+            parts.append(f"Due today: {', '.join(titles)}")
+        if due_tomorrow:
+            titles = [a.get("title", "?") for a in due_tomorrow[:2]]
+            parts.append(f"Due tomorrow: {', '.join(titles)}")
+        return "  ".join(parts)
 
     # ── Formatters ────────────────────────────────────────────────────────
 

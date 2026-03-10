@@ -184,31 +184,10 @@ async def _job_reflection() -> None:
 
 
 async def _job_overnight_poll() -> None:
-    """Check for new emails and calendar events overnight."""
-    log.info("📬 Overnight poll starting...")
-
-    # Email check
-    try:
-        from bantz.tools.gmail import GmailTool
-        gmail = GmailTool()
-        result = await gmail.execute(action="unread")
-        if result.success and result.data:
-            count = result.data.get("unread_count", 0)
-            log.info("Overnight email: %d unread", count)
-    except Exception as exc:
-        log.debug("Overnight email check: %s", exc)
-
-    # Calendar check
-    try:
-        from bantz.tools.calendar import CalendarTool
-        cal = CalendarTool()
-        result = await cal.execute(action="today")
-        if result.success:
-            log.info("Overnight calendar: %s", result.output[:200] if result.output else "no events")
-    except Exception as exc:
-        log.debug("Overnight calendar check: %s", exc)
-
-    log.info("📬 Overnight poll complete")
+    """Run the overnight poll workflow (#132)."""
+    from bantz.agent.workflows.overnight_poll import run_overnight_poll
+    result = await run_overnight_poll(dry_run=False)
+    log.info("📬 Overnight poll: %s", result.summary_line())
 
 
 async def _job_briefing_prep() -> None:
@@ -293,7 +272,7 @@ async def _fire_dynamic_reminder(title: str, repeat: str = "none") -> None:
 _JOB_REGISTRY: dict[str, tuple[Callable, str]] = {
     "maintenance": (_job_maintenance, "Nightly 6-step maintenance workflow"),
     "reflection": (_job_reflection, "Nightly memory reflection workflow"),
-    "overnight_poll": (_job_overnight_poll, "Check email/calendar"),
+    "overnight_poll": (_job_overnight_poll, "Overnight poll: Gmail/Calendar/Classroom → KV store"),
     "briefing_prep": (_job_briefing_prep, "Pre-fetch morning briefing data"),
     "reminder_check": (_job_reminder_check, "Check due reminders"),
 }
