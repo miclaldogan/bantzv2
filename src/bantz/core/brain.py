@@ -570,6 +570,30 @@ class Brain:
                                     "what's today", "what do i have today")):
             return {"tool": "_briefing", "args": {}}
 
+        # Maintenance (#129) — manual trigger
+        if re.search(
+            r"run\s+maintenance|sistemi?\s+temizle|system\s+cleanup|"
+            r"clean\s+(?:up\s+)?(?:the\s+)?system|bakım\s+yap|maintenance\s+run",
+            both,
+        ):
+            return {"tool": "_maintenance", "args": {"dry_run": "dry" in both}}
+
+        # Reflection (#130) — run reflection now (MUST come before list)
+        if re.search(
+            r"run\s+reflect|yansıma\s+yap|generate\s+reflect|"
+            r"reflect\s+(?:on\s+)?today|bugünü\s+özetle",
+            both,
+        ):
+            return {"tool": "_run_reflection", "args": {"dry_run": "dry" in both}}
+
+        # Reflection (#130) — show past reflections
+        if re.search(
+            r"show\s+reflect|list\s+reflect|past\s+reflect|"
+            r"dünkü\s+özet|geçmiş\s+özetler|son\s+yansımalar",
+            both,
+        ):
+            return {"tool": "_list_reflections", "args": {}}
+
         # GUI Action — unified navigate + act pipeline (#123)
         # Must come BEFORE web_search since "search bar" contains "search".
         # Order: specific (type, double_click, right_click) before general click.
@@ -773,6 +797,74 @@ class Brain:
 
         return None
 
+    # ── RL & Intervention hooks (#125, #126) ─────────────────────────
+
+    def _rl_reward_hook(self, tool_name: str, result: ToolResult) -> None:
+        """Fire-and-forget: give RL engine a positive reward on tool success."""
+        try:
+            from bantz.agent.rl_engine import rl_engine, encode_state
+            if not rl_engine.initialized:
+                return
+            tc = time_ctx.snapshot()
+            state = encode_state(
+                time_segment=tc.get("time_segment", "morning"),
+                day=tc.get("day_name", "monday").lower(),
+                location=tc.get("location", "home"),
+                recent_tool=tool_name,
+            )
+            reward_val = 1.0 if result.success else -0.5
+            rl_engine.reward(reward_val, next_state=state)
+        except Exception:
+            pass  # never crash the pipeline
+
+    async def _check_intervention_queue(self) -> str | None:
+        """Pop the next pending intervention and return its text, or None."""
+        try:
+            from bantz.agent.interventions import intervention_queue
+            iv = intervention_queue.pop()
+            if iv is None:
+                return None
+            return f"💡 [{iv.source}] {iv.title}\n   {iv.reason}"
+        except Exception:
+            return None
+
+    # ── Maintenance & Reflection handlers (#129, #130) ────────────────
+
+    async def _handle_maintenance(self, dry_run: bool = False) -> str:
+        """Run the maintenance workflow and return its summary."""
+        try:
+            from bantz.agent.workflows.maintenance import run_maintenance
+            report = await run_maintenance(dry_run=dry_run)
+            return report.summary()
+        except Exception as exc:
+            return f"❌ Maintenance failed: {exc}"
+
+    def _handle_list_reflections(self, limit: int = 5) -> str:
+        """List recent reflections from the KV store."""
+        try:
+            from bantz.agent.workflows.reflection import list_reflections
+            items = list_reflections(limit=limit)
+            if not items:
+                return "No reflections stored yet. They are generated nightly."
+            lines = ["🤔 Recent reflections:"]
+            for item in items:
+                date = item.get("date", "?")
+                summary = item.get("summary", "")[:120]
+                sessions = item.get("sessions", 0)
+                lines.append(f"  • {date} ({sessions} sessions): {summary}")
+            return "\n".join(lines)
+        except Exception as exc:
+            return f"❌ Could not load reflections: {exc}"
+
+    async def _handle_run_reflection(self, dry_run: bool = False) -> str:
+        """Run the reflection workflow and return its summary."""
+        try:
+            from bantz.agent.workflows.reflection import run_reflection
+            result = await run_reflection(dry_run=dry_run)
+            return result.summary_line()
+        except Exception as exc:
+            return f"❌ Reflection failed: {exc}"
+
     async def _generate_command(self, orig: str, en: str) -> str:
         raw = await ollama.chat([
             {"role": "system", "content": COMMAND_SYSTEM},
@@ -902,6 +994,21 @@ class Brain:
             text = await _briefing.generate()
             data_layer.conversations.add("assistant", text, tool_used="briefing")
             return BrainResult(response=text, tool_used="briefing")
+
+        if quick and quick["tool"] == "_maintenance":
+            text = await self._handle_maintenance(quick["args"].get("dry_run", False))
+            data_layer.conversations.add("assistant", text, tool_used="maintenance")
+            return BrainResult(response=text, tool_used="maintenance")
+
+        if quick and quick["tool"] == "_list_reflections":
+            text = self._handle_list_reflections()
+            data_layer.conversations.add("assistant", text, tool_used="reflection")
+            return BrainResult(response=text, tool_used="reflection")
+
+        if quick and quick["tool"] == "_run_reflection":
+            text = await self._handle_run_reflection(quick["args"].get("dry_run", False))
+            data_layer.conversations.add("assistant", text, tool_used="reflection")
+            return BrainResult(response=text, tool_used="reflection")
 
         if quick and quick["tool"] == "_location":
             text = await self._handle_location()
@@ -1049,6 +1156,9 @@ class Brain:
             return BrainResult(response=err, tool_used=None)
 
         result = await tool.execute(**tool_args)
+
+        # ── RL reward: positive signal on successful tool use (#125) ──
+        self._rl_reward_hook(tool_name, result)
 
         # ── Store tool results for contextual follow-ups (#56) ──
         if result.success and result.data:

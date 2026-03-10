@@ -44,6 +44,26 @@ class ReminderTool(BaseTool):
         else:
             return self._add(scheduler, kwargs, intent)
 
+    @staticmethod
+    def _bridge_to_job_scheduler(
+        title: str,
+        fire_at: datetime,
+        repeat: str = "none",
+    ) -> str | None:
+        """Forward reminder to APScheduler-based job_scheduler (#128).
+
+        Returns the APScheduler job ID if successful, None otherwise.
+        The old core/scheduler.py remains the source of truth for CRUD;
+        this bridge ensures APScheduler also fires the notification.
+        """
+        try:
+            from bantz.agent.job_scheduler import job_scheduler
+            if not job_scheduler._started:
+                return None
+            return job_scheduler.add_reminder(title, fire_at, repeat=repeat)
+        except Exception:
+            return None
+
     # ── Add ───────────────────────────────────────────────────────────────
 
     def _add(self, scheduler, kwargs: dict, intent: str) -> ToolResult:
@@ -79,6 +99,8 @@ class ReminderTool(BaseTool):
             rid = scheduler.add(title, fire_at, repeat=repeat, trigger_place=place_key)
             # Dual-write to Neo4j
             _store_reminder_neo4j(rid, title, trigger_place=place_key, repeat=repeat)
+            # Bridge to APScheduler (#128)
+            ReminderTool._bridge_to_job_scheduler(title, fire_at, repeat)
             return ToolResult(
                 success=True,
                 output=f"📍 Reminder #{rid} set: \"{title}\" — when you arrive at {place}",
@@ -96,6 +118,8 @@ class ReminderTool(BaseTool):
 
         # Dual-write to Neo4j
         _store_reminder_neo4j(rid, title, fire_at=fire_at, repeat=repeat)
+        # Bridge to APScheduler (#128)
+        ReminderTool._bridge_to_job_scheduler(title, fire_at, repeat)
 
         return ToolResult(
             success=True,
