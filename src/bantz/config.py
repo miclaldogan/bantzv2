@@ -141,6 +141,14 @@ class Config(BaseSettings):
     notification_icon: str = Field("", alias="BANTZ_NOTIFICATION_ICON")
     notification_sound: bool = Field(False, alias="BANTZ_NOTIFICATION_SOUND")
 
+    # ── TTS / Audio Briefing (#131) ──────────────────────────────────────
+    tts_enabled: bool = Field(False, alias="BANTZ_TTS_ENABLED")
+    tts_model: str = Field("en_US-lessac-medium", alias="BANTZ_TTS_MODEL")
+    tts_model_path: str = Field("", alias="BANTZ_TTS_MODEL_PATH")
+    tts_speaker: int = Field(0, alias="BANTZ_TTS_SPEAKER")
+    tts_rate: float = Field(1.0, alias="BANTZ_TTS_RATE")
+    tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
+
     @property
     def db_path(self) -> Path:
         base = (
