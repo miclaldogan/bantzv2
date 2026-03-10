@@ -677,7 +677,7 @@ class TestJobRegistry:
     def test_all_registrations_present(self):
         from bantz.agent.job_scheduler import _JOB_REGISTRY
         expected = {"maintenance", "reflection", "overnight_poll",
-                    "briefing_prep", "reminder_check"}
+                    "briefing_prep", "reminder_check", "briefing_watcher"}
         assert set(_JOB_REGISTRY.keys()) == expected
 
     def test_registry_entries_are_callable(self):

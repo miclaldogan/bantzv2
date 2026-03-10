@@ -266,6 +266,66 @@ async def _fire_dynamic_reminder(title: str, repeat: str = "none") -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Briefing watcher — IDLE → active TTS trigger (#131)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Module-level state for activity transition detection
+_last_activity: str = "idle"
+_briefing_spoken_today: str = ""  # date string — prevents double-fire
+
+
+async def _job_briefing_watcher() -> None:
+    """Poll AppDetector for IDLE → active transition.
+
+    When the user's first non-IDLE activity is detected after briefing_prep
+    has cached today's briefing, speak it via TTS.
+
+    Runs every 10s as an APScheduler interval job.
+    One-shot per day: once spoken, won't trigger again.
+    """
+    global _last_activity, _briefing_spoken_today
+
+    from bantz.config import config
+    if not config.tts_enabled or not config.tts_auto_briefing:
+        return
+
+    today = datetime.now().date().isoformat()
+    if _briefing_spoken_today == today:
+        return  # Already spoken today
+
+    # Only trigger after the briefing prep hour
+    now = datetime.now()
+    if now.hour < config.briefing_prep_hour:
+        return
+
+    try:
+        from bantz.agent.app_detector import app_detector, Activity
+        current = app_detector.get_activity_category()
+        prev = _last_activity
+        _last_activity = current.value
+
+        # Detect IDLE → non-IDLE transition
+        if prev == "idle" and current != Activity.IDLE:
+            log.info("🔊 Activity transition: IDLE → %s — checking briefing", current.value)
+            text = check_briefing_trigger()
+            if text:
+                _briefing_spoken_today = today
+                from bantz.agent.tts import tts_engine
+                await tts_engine.speak_background(text)
+                log.info("🔊 Morning briefing TTS triggered (%d chars)", len(text))
+
+                # Also send desktop notification
+                try:
+                    from bantz.agent.notifier import notifier
+                    if notifier.enabled:
+                        notifier.send("🌅 Good morning! Briefing playing…")
+                except Exception:
+                    pass
+    except Exception as exc:
+        log.debug("Briefing watcher error: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Job registry — maps job_id to (async_func, description)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -275,6 +335,7 @@ _JOB_REGISTRY: dict[str, tuple[Callable, str]] = {
     "overnight_poll": (_job_overnight_poll, "Overnight poll: Gmail/Calendar/Classroom → KV store"),
     "briefing_prep": (_job_briefing_prep, "Pre-fetch morning briefing data"),
     "reminder_check": (_job_reminder_check, "Check due reminders"),
+    "briefing_watcher": (_job_briefing_watcher, "Watch for IDLE→active to speak briefing"),
 }
 
 
@@ -353,6 +414,9 @@ class JobScheduler:
         # Always register reminder check (30s interval)
         self._register_reminder_check()
 
+        # Register briefing watcher (10s interval) for TTS auto-trigger (#131)
+        self._register_briefing_watcher()
+
         # APScheduler event listeners for history tracking
         from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
         self._scheduler.add_listener(self._on_job_executed, EVENT_JOB_EXECUTED)
@@ -420,6 +484,24 @@ class JobScheduler:
             jobstore="default",
         )
         log.info("Registered reminder check (30s interval)")
+
+    def _register_briefing_watcher(self) -> None:
+        """Register 10s interval job for IDLE→active TTS trigger (#131)."""
+        from bantz.config import config
+        if not config.tts_enabled:
+            return
+
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        self._scheduler.add_job(
+            _job_briefing_watcher,
+            IntervalTrigger(seconds=10),
+            id="briefing_watcher",
+            name="Watch for IDLE→active to speak briefing",
+            replace_existing=True,
+            jobstore="default",
+        )
+        log.info("Registered briefing watcher (10s interval, TTS)")
 
     # ── Dynamic reminder bridge ───────────────────────────────────────
 

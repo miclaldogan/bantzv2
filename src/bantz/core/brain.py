@@ -565,6 +565,13 @@ class Brain:
                 return {"tool": "reminder", "args": {"action": "snooze"}}
             return {"tool": "reminder", "args": {"action": "add", "intent": orig}}
 
+        # TTS stop (#131) — "shut up" / "sessiz ol" / "stop talking"
+        if re.search(
+            r"shut\s*up|be\s+quiet|stop\s+talk|sessiz\s+ol|sus\s+bantz|kapat\s+sesi",
+            both,
+        ):
+            return {"tool": "_tts_stop", "args": {}}
+
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
                                     "what's today", "what do i have today")):
@@ -1000,10 +1007,27 @@ class Brain:
 
         quick = self._quick_route(user_input, en_input)
 
+        if quick and quick["tool"] == "_tts_stop":
+            from bantz.agent.tts import tts_engine
+            if tts_engine.is_speaking:
+                tts_engine.stop()
+                text = "🔇 Stopped."
+            else:
+                text = "I'm not speaking right now."
+            data_layer.conversations.add("assistant", text, tool_used="tts")
+            return BrainResult(response=text, tool_used="tts")
+
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing
             text = await _briefing.generate()
             data_layer.conversations.add("assistant", text, tool_used="briefing")
+            # Speak via TTS if available (#131)
+            try:
+                from bantz.agent.tts import tts_engine
+                if tts_engine.available():
+                    await tts_engine.speak_background(text)
+            except Exception:
+                pass
             return BrainResult(response=text, tool_used="briefing")
 
         if quick and quick["tool"] == "_maintenance":
