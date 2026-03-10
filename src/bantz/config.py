@@ -93,6 +93,15 @@ class Config(BaseSettings):
     briefing_prep_hour: int = Field(6, alias="BANTZ_BRIEFING_PREP_HOUR")
     overnight_poll_hours: str = Field("0,2,4,6", alias="BANTZ_OVERNIGHT_POLL_HOURS")
 
+    # ── Overnight Poll / Urgent Keywords (#132) ───────────────────────────
+    # Comma-separated list of keywords that mark an email as urgent.
+    # Matched case-insensitively against sender + subject.
+    # Example: "final,deadline,acil,erasmus,gargantua,jetson"
+    urgent_keywords: str = Field(
+        "urgent,acil,deadline,final,emergency,important",
+        alias="BANTZ_URGENT_KEYWORDS",
+    )
+
     # ── Telegram ──────────────────────────────────────────────────────────
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
