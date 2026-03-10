@@ -36,8 +36,12 @@ def main() -> None:
                         help="Manually trigger a scheduled job by ID")
     parser.add_argument("--maintenance", action="store_true",
                         help="Run nightly maintenance workflow now")
+    parser.add_argument("--reflect", action="store_true",
+                        help="Run nightly memory reflection now")
+    parser.add_argument("--reflections", action="store_true",
+                        help="View past daily reflections")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Simulate actions without making changes (use with --maintenance)")
+                        help="Simulate actions without changes (use with --maintenance/--reflect)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -62,6 +66,14 @@ def main() -> None:
 
     if args.maintenance:
         asyncio.run(_maintenance(args.dry_run))
+        return
+
+    if args.reflect:
+        asyncio.run(_reflect(args.dry_run))
+        return
+
+    if args.reflections:
+        _view_reflections()
         return
 
     if args.once:
@@ -831,6 +843,56 @@ async def _maintenance(dry_run: bool) -> None:
     print(f"🔧 Running maintenance{tag}...")
     report = await run_maintenance(dry_run=dry_run)
     print(report.summary())
+
+
+async def _reflect(dry_run: bool) -> None:
+    """Run the nightly memory reflection workflow (bantz --reflect)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.core.memory import memory
+    memory.init(config.db_path)
+
+    from bantz.agent.workflows.reflection import run_reflection
+
+    tag = " (dry-run)" if dry_run else ""
+    print(f"🤔 Running reflection{tag}...")
+    result = await run_reflection(dry_run=dry_run)
+    print(result.summary_line())
+
+
+def _view_reflections() -> None:
+    """View past daily reflections (bantz --reflections)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.core.memory import memory
+    memory.init(config.db_path)
+
+    from bantz.agent.workflows.reflection import list_reflections
+
+    reflections = list_reflections(limit=10)
+    if not reflections:
+        print("No reflections yet. Run 'bantz --reflect' first.")
+        return
+
+    for r in reflections:
+        date = r.get("date", "?")
+        summary = r.get("summary", "")
+        sessions = r.get("sessions", 0)
+        msgs = r.get("total_messages", 0)
+        print(f"\n📅 {date} ({sessions} sessions, {msgs} msgs)")
+        if summary:
+            print(f"   {summary}")
+        reflection = r.get("reflection", "")
+        if reflection:
+            print(f"   💡 {reflection}")
+        decisions = r.get("decisions", [])
+        if decisions:
+            print(f"   Decisions: {', '.join(decisions)}")
+        unresolved = r.get("unresolved", [])
+        if unresolved:
+            print(f"   ❓ {', '.join(unresolved)}")
 
 
 async def _once(query: str) -> None:

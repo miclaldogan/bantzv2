@@ -645,11 +645,12 @@ class TestNightJobFunctions:
                 await _job_maintenance()
 
     @pytest.mark.asyncio
-    async def test_reflection_no_distiller(self):
-        """Reflection gracefully handles missing distiller."""
+    async def test_reflection_delegates_to_workflow(self):
+        """Reflection delegates to run_reflection workflow."""
         from bantz.agent.job_scheduler import _job_reflection
-        with patch.dict("sys.modules", {"bantz.memory.distiller": None}):
-            await _job_reflection()  # Should not raise
+        with patch("bantz.agent.workflows.reflection.run_reflection", new_callable=AsyncMock) as mock_run:
+            await _job_reflection()
+            mock_run.assert_awaited_once_with(dry_run=False)
 
     @pytest.mark.asyncio
     async def test_overnight_poll_no_gmail(self):
