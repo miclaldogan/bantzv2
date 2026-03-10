@@ -18,6 +18,7 @@ Screen {
     width: 1fr;
     border: solid #1a2a3a;
     padding: 1;
+    overflow-y: auto;
 }
 
 ChatLog {
@@ -46,9 +47,48 @@ Input:focus {
     border: solid #00ff88;
 }
 
+/* ── Telemetry Panel ────────────────────────────────────── */
+
 SystemStatus {
+    height: 1fr;
+    color: #aaccaa;
+}
+
+.section-head {
+    height: 1;
+    margin-top: 1;
+    color: #00ccff;
+}
+
+MetricRow {
     height: auto;
     color: #aaccaa;
+}
+
+MetricRow Sparkline {
+    height: 1;
+    margin: 0 0 0 5;
+    color: #00ff88;
+}
+
+MetricRow .metric-label {
+    width: 5;
+    color: #668866;
+}
+
+#thermal-alert {
+    height: auto;
+    color: #ff3333;
+}
+
+#vram-bar {
+    height: auto;
+    color: #aaccaa;
+}
+
+#clock-display {
+    height: auto;
+    margin-top: 1;
 }
 
 Header {
