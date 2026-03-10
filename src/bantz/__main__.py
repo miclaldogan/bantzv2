@@ -34,6 +34,10 @@ def main() -> None:
                         help="List all scheduled APScheduler jobs")
     parser.add_argument("--run-job", metavar="JOB_ID",
                         help="Manually trigger a scheduled job by ID")
+    parser.add_argument("--maintenance", action="store_true",
+                        help="Run nightly maintenance workflow now")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Simulate actions without making changes (use with --maintenance)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -54,6 +58,10 @@ def main() -> None:
 
     if args.run_job:
         asyncio.run(_run_job(args.run_job))
+        return
+
+    if args.maintenance:
+        asyncio.run(_maintenance(args.dry_run))
         return
 
     if args.once:
@@ -807,6 +815,22 @@ async def _run_job(job_id: str) -> None:
             print(f"  {j['id']}")
 
     await job_scheduler.shutdown()
+
+
+async def _maintenance(dry_run: bool) -> None:
+    """Run the 6-step nightly maintenance workflow (bantz --maintenance)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.core.memory import memory
+    memory.init(config.db_path)
+
+    from bantz.agent.workflows.maintenance import run_maintenance
+
+    tag = " (dry-run)" if dry_run else ""
+    print(f"🔧 Running maintenance{tag}...")
+    report = await run_maintenance(dry_run=dry_run)
+    print(report.summary())
 
 
 async def _once(query: str) -> None:

@@ -168,45 +168,11 @@ async def _run_with_retry(
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def _job_maintenance() -> None:
-    """Docker prune + temp cleanup + old log rotation."""
-    with inhibit_sleep("Bantz maintenance"):
-        log.info("🔧 Maintenance starting...")
-
-        # Docker prune (if available)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "system", "prune", "-f", "--volumes",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode == 0:
-                log.info("Docker prune: %s", stdout.decode().strip()[:200])
-            else:
-                log.warning("Docker prune failed: %s", stderr.decode().strip()[:200])
-        except FileNotFoundError:
-            log.debug("Docker not available — skipping prune")
-        except asyncio.TimeoutError:
-            log.warning("Docker prune timed out after 120s")
-
-        # Temp file cleanup
-        try:
-            tmp_dir = Path("/tmp")
-            cutoff = time.time() - 7 * 86400  # 7 days old
-            cleaned = 0
-            for f in tmp_dir.glob("bantz_*"):
-                try:
-                    if f.stat().st_mtime < cutoff:
-                        f.unlink()
-                        cleaned += 1
-                except OSError:
-                    pass
-            if cleaned:
-                log.info("Cleaned %d old temp files", cleaned)
-        except Exception as exc:
-            log.debug("Temp cleanup: %s", exc)
-
-        log.info("🔧 Maintenance complete")
+    """Run the full 6-step maintenance workflow (#129)."""
+    from bantz.agent.workflows.maintenance import run_maintenance
+    report = await run_maintenance(dry_run=False)
+    log.info("🔧 Maintenance finished: %d errors, %.1f MB freed",
+             report.errors, report.total_freed_mb)
 
 
 async def _job_reflection() -> None:
@@ -337,7 +303,7 @@ async def _fire_dynamic_reminder(title: str, repeat: str = "none") -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 _JOB_REGISTRY: dict[str, tuple[Callable, str]] = {
-    "maintenance": (_job_maintenance, "Docker prune, temp cleanup"),
+    "maintenance": (_job_maintenance, "Nightly 6-step maintenance workflow"),
     "reflection": (_job_reflection, "Summarize conversations"),
     "overnight_poll": (_job_overnight_poll, "Check email/calendar"),
     "briefing_prep": (_job_briefing_prep, "Pre-fetch morning briefing data"),
