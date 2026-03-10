@@ -72,6 +72,7 @@ class DataLayer:
         self.schedule: ScheduleStore = None  # type: ignore[assignment]
         self.session: SessionStore = None  # type: ignore[assignment]
         self.graph: Optional[GraphStore] = None
+        self.kv = None  # SQLiteKVStore — initialized in init()
         self._initialized = False
 
     # ── initialization ────────────────────────────────────────────────────
@@ -106,6 +107,10 @@ class DataLayer:
         self.places = SQLitePlaceStore(cfg.db_path)
         self.schedule = SQLiteScheduleStore(cfg.db_path)
         self.session = SQLiteSessionStore(cfg.db_path)
+
+        # ── Key-value store (#128) ───────────────────────────────────────
+        from bantz.data.sqlite_store import SQLiteKVStore
+        self.kv = SQLiteKVStore(cfg.db_path)
 
         # ── Spatial cache for UI element coordinates (#121) ──────────────
         try:
@@ -181,6 +186,12 @@ class DataLayer:
                 log.debug("Desktop notifier initialized")
             except Exception as exc:
                 log.debug("Desktop notifier init skipped: %s", exc)
+
+        # ── Job scheduler — APScheduler (#128) ───────────────────────────
+        # NOTE: job_scheduler.start() is async and must be called separately
+        # from the daemon. Here we only log that the config is ready.
+        if cfg.job_scheduler_enabled:
+            log.debug("Job scheduler enabled — will start in daemon mode")
 
         # ── Auto-migrate JSON → SQLite if tables are empty ───────────────
         base_dir = (
