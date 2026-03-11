@@ -46,6 +46,8 @@ def main() -> None:
                         help="Simulate actions without changes (use with --maintenance/--reflect/--overnight-poll)")
     parser.add_argument("--mood-history", action="store_true",
                         help="Show 24h mood transition history")
+    parser.add_argument("--config", action="store_true",
+                        help="Show current configuration (secrets masked)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -86,6 +88,10 @@ def main() -> None:
 
     if args.mood_history:
         _mood_history()
+        return
+
+    if args.config:
+        _show_config()
         return
 
     if args.once:
@@ -583,6 +589,86 @@ def _cache_stats() -> None:
     spatial_db.close()
 
 
+# ── Config display ────────────────────────────────────────────────────────
+
+_SECRET_FIELDS = frozenset({
+    "gemini_api_key", "neo4j_password", "telegram_bot_token",
+    "gps_relay_token",
+})
+
+
+def _mask(value: str) -> str:
+    """Mask a secret value: show first 4 chars + ****."""
+    if not value:
+        return "(empty)"
+    if len(value) <= 6:
+        return "****"
+    return value[:4] + "****"
+
+
+def _show_config() -> None:
+    """Print all configuration values with secrets masked."""
+    from bantz.config import Config, config
+
+    print("Bantz v2 — Current Configuration")
+    print("─" * 52)
+
+    section = ""
+    for name, field in Config.model_fields.items():
+        # Derive section from field comment / alias prefix
+        alias = field.alias or name
+        val = getattr(config, name)
+
+        # Section headers (group by config.py sections)
+        new_section = _section_for(name)
+        if new_section != section:
+            section = new_section
+            print(f"\n  ── {section} ──")
+
+        # Mask secrets
+        display = _mask(str(val)) if name in _SECRET_FIELDS else str(val)
+
+        # Pad for alignment
+        env_hint = f"  ({alias})" if alias != name else ""
+        print(f"  {name:<35s} = {display}{env_hint}")
+
+    print()
+
+
+def _section_for(field_name: str) -> str:
+    """Map a config field name to a human-readable section label."""
+    _MAP = [
+        (("ollama_",), "Ollama"),
+        (("embedding_", "vector_search_"), "Embeddings"),
+        (("distillation_",), "Distillation"),
+        (("vlm_", "screenshot_"), "Vision / VLM"),
+        (("input_control_", "input_confirm_", "input_type_"), "Input Control"),
+        (("gemini_",), "Gemini"),
+        (("language", "translation_"), "Language"),
+        (("shell_",), "Shell Security"),
+        (("location_",), "Location"),
+        (("gps_relay_",), "GPS Relay"),
+        (("neo4j_",), "Neo4j"),
+        (("data_dir",), "Storage"),
+        (("morning_briefing_",), "Morning Briefing"),
+        (("daily_digest_", "weekly_digest_"), "Digests"),
+        (("reminder_",), "Scheduler / Reminders"),
+        (("job_scheduler_", "night_", "briefing_prep_", "overnight_poll_hours",), "Job Scheduler"),
+        (("urgent_keywords",), "Overnight Poll"),
+        (("telegram_",), "Telegram"),
+        (("observer_",), "Observer"),
+        (("rl_",), "RL Engine"),
+        (("intervention_",), "Interventions"),
+        (("app_detector_",), "App Detector"),
+        (("desktop_notifications", "notification_",), "Notifications"),
+        (("tts_",), "TTS / Audio"),
+    ]
+    for prefixes, label in _MAP:
+        if any(field_name.startswith(p) or field_name == p for p in prefixes):
+            return label
+    return "General"
+
+
 async def _doctor() -> None:
     from bantz.llm.ollama import ollama
     from bantz.config import config
@@ -601,93 +687,116 @@ async def _doctor() -> None:
     import bantz.tools.input_control
 
     print("Bantz v2 — System Check")
-    print("─" * 44)
+    print("─" * 52)
 
     # Ollama
     ok = await ollama.is_available()
-    status = "connected" if ok else "UNREACHABLE"
-    print(f"{'✓' if ok else '✗'} Ollama ({config.ollama_base_url}): {status}")
-    print(f"  model: {config.ollama_model}")
+    if ok:
+        print(f"✅ Ollama: connected ({config.ollama_model})")
+    else:
+        print(f"❌ Ollama: UNREACHABLE ({config.ollama_base_url})")
 
     # Gemini
     from bantz.llm.gemini import gemini as _gem
     if _gem.is_enabled():
         gem_ok = await _gem.is_available()
-        gem_status = "connected" if gem_ok else "UNREACHABLE"
-        print(f"{'✓' if gem_ok else '✗'} Gemini ({config.gemini_model}): {gem_status}")
+        if gem_ok:
+            print(f"✅ Gemini: connected ({config.gemini_model})")
+        else:
+            print(f"❌ Gemini: UNREACHABLE")
     else:
-        print(f"○ Gemini: disabled  → bantz --setup gemini")
+        print(f"⚪ Gemini: disabled  → bantz --setup gemini")
+
+    # Neo4j
+    if config.neo4j_enabled:
+        try:
+            from bantz.data.layer import layer as _lay
+            _lay.init(config.db_path)
+            print(f"✅ Neo4j: connected ({config.neo4j_uri})")
+        except Exception:
+            print(f"❌ Neo4j: enabled but connection failed")
+    else:
+        print(f"⚪ Neo4j: disabled  → BANTZ_NEO4J_ENABLED=true")
+
+    # Vision / VLM
+    if config.vlm_enabled:
+        print(f"✅ Vision/VLM: enabled ({config.vlm_endpoint})")
+    else:
+        print(f"⚪ Vision/VLM: disabled  → BANTZ_VLM_ENABLED=true")
 
     # psutil
     import psutil
-    print(f"✓ psutil: CPU {psutil.cpu_percent(interval=0.3):.0f}%")
+    print(f"✅ psutil: CPU {psutil.cpu_percent(interval=0.3):.0f}%")
 
     # Tools
     names = [t["name"] for t in registry.all_schemas()]
-    print(f"✓ Tools ({len(names)}): {', '.join(names)}")
+    print(f"✅ Tools ({len(names)}): {', '.join(names)}")
 
     # Translation / Bridge
-    print(f"  translation_enabled: {config.translation_enabled}")
     if config.translation_enabled and config.language == "tr":
         try:
             from transformers import AutoTokenizer  # noqa: F401
-            print("✓ MarianMT: available")
+            print("✅ MarianMT: available")
         except ImportError:
-            print("✗ MarianMT: NOT installed  → pip install 'bantz[translation]'")
+            print("❌ MarianMT: NOT installed  → pip install 'bantz[translation]'")
+    else:
+        print(f"⚪ Translation: {'disabled' if not config.translation_enabled else f'not needed (lang={config.language})'}")
 
     # Location
     from bantz.core.location import location_service
     loc = await location_service.get()
     if loc.is_live:
-        print(f"✓ Location: {loc.display}  (via {loc.source})")
+        print(f"✅ Location: {loc.display}  (via {loc.source})")
     else:
-        print(f"○ Location: unknown  (no live source — enable phone GPS)")
+        print(f"⚪ Location: unknown  → enable phone GPS relay")
 
     # Google integrations
-    print("  Google integrations:")
     g_status = token_store.status()
     for svc, st in g_status.items():
-        icon = "✓" if st == "ok" else "○"
-        print(f"  {icon} {svc}: {st}")
+        icon = "✅" if st == "ok" else "⚪"
+        print(f"  {icon} Google {svc}: {st}")
     if any(st != "ok" for st in g_status.values()):
-        print("  → Run: bantz --setup google gmail  /  bantz --setup google classroom")
+        print("     → bantz --setup google gmail  /  bantz --setup google classroom")
 
     # Memory DB
     config.ensure_dirs()
     from bantz.core.memory import memory as _mem
     _mem.init(config.db_path)
     s = _mem.stats()
-    print(f"✓ Memory DB: {s['db_path']}")
-    print(f"  {s['total_conversations']} conversations  |  {s['total_messages']} total messages")
+    print(f"✅ Memory DB: {s['total_conversations']} conversations, {s['total_messages']} messages")
+
+    # Embeddings
+    if config.embedding_enabled:
+        print(f"✅ Embeddings: {config.embedding_model}  (weight={config.vector_search_weight})")
+    else:
+        print(f"⚪ Embeddings: disabled  → BANTZ_EMBEDDING_ENABLED=true")
 
     # Profile
     from bantz.core.profile import profile as _prof
-    icon = "✓" if _prof.is_configured() else "○"
-    print(f"{icon} Profile: {_prof.status_line()}")
+    if _prof.is_configured():
+        print(f"✅ Profile: {_prof.status_line()}")
+    else:
+        print(f"⚪ Profile: not configured  → bantz --setup profile")
 
     # Input Control (#122)
-    ic_ok = config.input_control_enabled
-    ic_backend = "disabled"
-    if ic_ok:
+    if config.input_control_enabled:
         try:
             from bantz.tools.input_control import _detect_backend
             ic_backend = _detect_backend()
+            print(f"✅ Input Control: {ic_backend}  (confirm_destructive={config.input_confirm_destructive})")
         except Exception:
-            ic_backend = "error"
-    ic_icon = "✓" if ic_ok and ic_backend != "none" else "○"
-    if ic_ok:
-        print(f"{ic_icon} Input control: {ic_backend}  (confirm_destructive={config.input_confirm_destructive})")
+            print(f"❌ Input Control: enabled but detection failed")
     else:
-        print(f"○ Input control: disabled  → set BANTZ_INPUT_CONTROL_ENABLED=true")
+        print(f"⚪ Input Control: disabled  → BANTZ_INPUT_CONTROL_ENABLED=true")
 
     # Spatial Cache (#121)
     try:
         from bantz.vision.spatial_cache import spatial_db as _sc
         _sc.init(config.db_path)
         sc_stats = _sc.stats()
-        print(f"✓ Spatial cache: {sc_stats['total_entries']} entries, {sc_stats['total_hits']} hits")
+        print(f"✅ Spatial Cache: {sc_stats['total_entries']} entries, {sc_stats['total_hits']} hits")
     except Exception:
-        print("○ Spatial cache: not initialized")
+        print("⚪ Spatial Cache: not initialized")
 
     # Navigator Pipeline (#123)
     try:
@@ -695,53 +804,44 @@ async def _doctor() -> None:
         _nav.init(config.db_path)
         nav_stats = _nav.stats()
         total = nav_stats.get('total_attempts', 0)
-        methods = nav_stats.get('methods', [])
         if total > 0:
+            methods = nav_stats.get('methods', [])
             summary = ', '.join(f"{m['method']}={m['successes']}/{m['attempts']}" for m in methods)
-            print(f"✓ Navigator: {total} attempts  ({summary})")
+            print(f"✅ Navigator: {total} attempts  ({summary})")
         else:
-            print(f"✓ Navigator: ready (no attempts yet)")
+            print(f"✅ Navigator: ready (no attempts yet)")
     except Exception:
-        print("○ Navigator: not initialized")
+        print("⚪ Navigator: not initialized")
 
     # Background Observer (#124)
-    obs_icon = "✓" if config.observer_enabled else "○"
-    obs_status = f"enabled (threshold={config.observer_severity_threshold}, model={config.observer_analysis_model})" if config.observer_enabled else "disabled  → BANTZ_OBSERVER_ENABLED=true"
-    print(f"{obs_icon} Observer: {obs_status}")
+    if config.observer_enabled:
+        print(f"✅ Observer: threshold={config.observer_severity_threshold}, model={config.observer_analysis_model}")
+    else:
+        print(f"⚪ Observer: disabled  → BANTZ_OBSERVER_ENABLED=true")
 
-    # Telegram
-    tg_ok = bool(config.telegram_bot_token)
-    tg_icon = "✓" if tg_ok else "○"
-    tg_status = "token set" if tg_ok else "not configured  → bantz --setup telegram"
-    print(f"{tg_icon} Telegram: {tg_status}")
-
-    # Habits
-    from bantz.core.habits import habits as _hab
-    print(f"✓ Habits: {_hab.status_line()}")
     # RL Engine (#125)
-    rl_icon = "\u2713" if config.rl_enabled else "\u25cb"
     if config.rl_enabled:
         try:
             from bantz.agent.rl_engine import rl_engine as _rl
             _rl.init(config.db_path)
-            print(f"{rl_icon} RL Engine: {_rl.status_line()}")
+            print(f"✅ RL Engine: {_rl.status_line()}")
         except Exception:
-            print(f"{rl_icon} RL Engine: enabled but init failed")
+            print(f"❌ RL Engine: enabled but init failed")
     else:
-        print(f"{rl_icon} RL Engine: disabled  \u2192 BANTZ_RL_ENABLED=true")
+        print(f"⚪ RL Engine: disabled  → BANTZ_RL_ENABLED=true")
+
     # Intervention Queue (#126)
-    iv_icon = "\u2713" if config.rl_enabled else "\u25cb"
     if config.rl_enabled:
         try:
             from bantz.agent.interventions import intervention_queue as _ivq
             _ivq.init(config.db_path, rate_limit=config.intervention_rate_limit, default_ttl=config.intervention_toast_ttl)
-            print(f"{iv_icon} Interventions: {_ivq.status_line()}")
+            print(f"✅ Interventions: {_ivq.status_line()}")
         except Exception:
-            print(f"{iv_icon} Interventions: enabled but init failed")
+            print(f"❌ Interventions: enabled but init failed")
     else:
-        print(f"{iv_icon} Interventions: disabled (requires RL)")
+        print(f"⚪ Interventions: disabled (requires RL)")
+
     # App Detector (#127)
-    ad_icon = "✓" if config.app_detector_enabled else "○"
     if config.app_detector_enabled:
         try:
             from bantz.agent.app_detector import app_detector as _ad
@@ -749,13 +849,13 @@ async def _doctor() -> None:
                 cache_ttl=config.app_detector_cache_ttl,
                 polling_interval=config.app_detector_polling_interval,
             )
-            print(f"{ad_icon} App Detector: {_ad.status_line()}")
+            print(f"✅ App Detector: {_ad.status_line()}")
         except Exception:
-            print(f"{ad_icon} App Detector: enabled but init failed")
+            print(f"❌ App Detector: enabled but init failed")
     else:
-        print(f"{ad_icon} App Detector: disabled → BANTZ_APP_DETECTOR_ENABLED=true")
+        print(f"⚪ App Detector: disabled  → BANTZ_APP_DETECTOR_ENABLED=true")
+
     # Desktop Notifications (#153)
-    dn_icon = "✓" if config.desktop_notifications else "○"
     if config.desktop_notifications:
         try:
             from bantz.agent.notifier import notifier as _dn
@@ -764,41 +864,68 @@ async def _doctor() -> None:
                 icon=config.notification_icon,
                 sound=config.notification_sound,
             )
-            print(f"{dn_icon} Notifications: {_dn.status_line()}")
+            print(f"✅ Notifications: {_dn.status_line()}")
         except Exception:
-            print(f"{dn_icon} Notifications: enabled but init failed")
+            print(f"❌ Notifications: enabled but init failed")
     else:
-        print(f"{dn_icon} Notifications: disabled → BANTZ_DESKTOP_NOTIFICATIONS=true")
+        print(f"⚪ Notifications: disabled  → BANTZ_DESKTOP_NOTIFICATIONS=true")
+
+    # TTS / Audio Briefing (#131)
+    if config.tts_enabled:
+        try:
+            from bantz.agent.tts import tts_engine as _tts
+            if _tts.available():
+                print(f"✅ TTS: ready (model={config.tts_model}, auto_briefing={config.tts_auto_briefing})")
+            else:
+                print(f"❌ TTS: enabled but piper/aplay not found")
+        except Exception:
+            print(f"❌ TTS: enabled but init failed")
+    else:
+        print(f"⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
+
+    # Telegram
+    if config.telegram_bot_token:
+        print(f"✅ Telegram: token set")
+    else:
+        print(f"⚪ Telegram: not configured  → bantz --setup telegram")
+
+    # Habits
+    from bantz.core.habits import habits as _hab
+    print(f"✅ Habits: {_hab.status_line()}")
+
     # Places
     from bantz.core.places import places as _plc
-    plc_icon = "✓" if _plc.is_configured() else "○"
-    print(f"{plc_icon} Places: {_plc.status_line()}")
+    if _plc.is_configured():
+        print(f"✅ Places: {_plc.status_line()}")
+    else:
+        print(f"⚪ Places: not configured  → bantz --setup places")
 
     # GPS
     from bantz.core.gps_server import gps_server
-    print(f"○ {gps_server.status_line()}")
+    gps_line = gps_server.status_line()
+    gps_icon = "✅" if config.gps_relay_token else "⚪"
+    print(f"{gps_icon} {gps_line}")
 
     # Scheduler
     from bantz.core.scheduler import scheduler as _sched
     _sched.init(config.db_path)
-    print(f"✓ {_sched.status_line()}")
+    print(f"✅ {_sched.status_line()}")
 
     # Job Scheduler — APScheduler (#128)
-    js_icon = "✓" if config.job_scheduler_enabled else "○"
     if config.job_scheduler_enabled:
         try:
             from bantz.agent.job_scheduler import job_scheduler as _js
             await _js.start(config.db_path, enable_night_jobs=True)
-            print(f"{js_icon} Job Scheduler: {_js.status_line()}")
+            print(f"✅ Job Scheduler: {_js.status_line()}")
             await _js.shutdown()
         except ImportError:
-            print(f"{js_icon} Job Scheduler: apscheduler not installed → pip install apscheduler")
+            print(f"❌ Job Scheduler: apscheduler not installed  → pip install apscheduler")
         except Exception as exc:
-            print(f"{js_icon} Job Scheduler: enabled but init failed: {exc}")
+            print(f"❌ Job Scheduler: enabled but init failed: {exc}")
     else:
-        print(f"{js_icon} Job Scheduler: disabled → BANTZ_JOB_SCHEDULER_ENABLED=true")
+        print(f"⚪ Job Scheduler: disabled  → BANTZ_JOB_SCHEDULER_ENABLED=true")
 
-    print("─" * 44)
+    print("─" * 52)
 
 
 async def _list_jobs() -> None:
