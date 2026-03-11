@@ -44,6 +44,8 @@ def main() -> None:
                         help="Run one overnight poll cycle (Gmail/Calendar/Classroom)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Simulate actions without changes (use with --maintenance/--reflect/--overnight-poll)")
+    parser.add_argument("--mood-history", action="store_true",
+                        help="Show 24h mood transition history")
     args = parser.parse_args()
 
     if args.doctor:
@@ -80,6 +82,10 @@ def main() -> None:
 
     if args.overnight_poll:
         asyncio.run(_overnight_poll(args.dry_run))
+        return
+
+    if args.mood_history:
+        _mood_history()
         return
 
     if args.once:
@@ -916,6 +922,42 @@ async def _overnight_poll(dry_run: bool) -> None:
         for src in (result.gmail, result.calendar, result.classroom):
             if src and src.status != "ok":
                 print(f"  ⚠️ {src.source}: {src.status} — {src.error_message}")
+
+
+def _mood_history() -> None:
+    """Show 24h mood transition history (bantz --mood-history)."""
+    from bantz.config import config
+    config.ensure_dirs()
+
+    from bantz.interface.tui.mood import MoodHistory, MOOD_FACES
+
+    history = MoodHistory()
+    history.init(config.db_path)
+
+    entries = history.recent(hours=24)
+    if not entries:
+        print("No mood transitions recorded yet. Start the TUI first.")
+        return
+
+    print("\n🎭 Bantz — Mood History (last 24h)")
+    print("─" * 50)
+    for e in entries:
+        ts = e["timestamp"][:19].replace("T", " ")
+        mood = e["mood"]
+        prev = e["prev_mood"]
+        face = MOOD_FACES.get(mood, "(?)")  # type: ignore[arg-type]
+        reason = e.get("reason", "")
+        cpu = e.get("cpu_pct", 0)
+        print(f"  {ts}  {prev:>8} → {mood:<8} {face}  CPU:{cpu:.0f}%  {reason}")
+
+    # Summary
+    summary = history.summary_24h()
+    if summary:
+        print(f"\n⏱ Time in mood (minutes):")
+        for mood, mins in sorted(summary.items(), key=lambda x: -x[1]):
+            face = MOOD_FACES.get(mood, "(?)")  # type: ignore[arg-type]
+            print(f"  {mood:<10} {face}  {mins:.0f} min")
+    print()
 
 
 async def _once(query: str) -> None:

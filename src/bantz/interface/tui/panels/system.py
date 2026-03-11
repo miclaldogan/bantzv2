@@ -16,6 +16,9 @@ from textual.reactive import reactive
 from textual.widgets import Label, Sparkline, Static
 
 from bantz.interface.tui.telemetry import TelemetryCollector
+from bantz.interface.tui.mood import (
+    mood_machine, Mood, ALL_MOOD_CLASSES, MOOD_FACES, MOOD_LABELS,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants
@@ -94,6 +97,7 @@ class SystemStatus(Vertical):
         self._collector = collector or TelemetryCollector()
 
     def compose(self) -> ComposeResult:
+        yield Static("", id="mood-indicator")
         yield Static("[bold cyan]── TELEMETRY ───────[/]", classes="section-head")
         yield MetricRow("CPU", "%", id="metric-cpu")
         yield MetricRow("RAM", "%", id="metric-ram")
@@ -116,9 +120,18 @@ class SystemStatus(Vertical):
 
     def on_mount(self) -> None:
         self._collector.start()
+        # Init mood history with app DB
+        try:
+            from bantz.config import config
+            if not mood_machine.history.initialized:
+                mood_machine.history.init(config.db_path)
+        except Exception:
+            pass
         self._collect_telemetry()
         self.set_interval(_REFRESH_INTERVAL, self._collect_telemetry)
         self.set_interval(1, self._tick_clock)
+        # Initial mood CSS class
+        self._apply_mood_class(mood_machine.current)
 
         # Hide GPU section if no GPU detected
         if not self._collector.gpu_available:
@@ -199,3 +212,56 @@ class SystemStatus(Vertical):
                 f"[dim]VRAM[/] [{color}]{'█' * filled}{'░' * (10 - filled)}[/] "
                 f"{used:.0f}/{total:.0f}MB"
             )
+
+        # ── Mood evaluation (#135) ──────────────────────────────────
+        self._evaluate_mood(snap)
+
+    def _evaluate_mood(self, snap) -> None:
+        """Run mood state machine and update TUI."""
+        # Get activity from AppDetector (graceful fallback)
+        activity = "idle"
+        try:
+            from bantz.agent.app_detector import app_detector
+            activity = app_detector.get_activity_category().value
+        except Exception:
+            pass
+
+        # Get observer error count (graceful fallback)
+        obs_errors = 0
+        try:
+            from bantz.agent.observer import observer
+            if observer.running:
+                obs_errors = observer.stats().get("total_events", 0)
+        except Exception:
+            pass
+
+        prev = mood_machine.current
+        mood_machine.evaluate(
+            cpu_pct=snap.cpu_pct,
+            ram_pct=snap.ram_pct,
+            thermal_alert=snap.thermal_alert,
+            activity=activity,
+            observer_error_count=obs_errors,
+        )
+
+        # Update mood indicator widget
+        try:
+            indicator = self.query_one("#mood-indicator", Static)
+            face = mood_machine.face
+            label = mood_machine.label
+            indicator.update(f"{face}  {label}")
+        except Exception:
+            pass
+
+        # Swap CSS class on app if mood changed
+        if mood_machine.current != prev:
+            self._apply_mood_class(mood_machine.current)
+
+    def _apply_mood_class(self, mood: Mood) -> None:
+        """Swap mood CSS class on the app screen — flicker-free."""
+        try:
+            for cls in ALL_MOOD_CLASSES:
+                self.app.remove_class(cls)
+            self.app.add_class(mood_machine.css_class)
+        except Exception:
+            pass

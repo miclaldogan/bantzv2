@@ -100,3 +100,105 @@ Footer {
     background: #0a1a0a;
     color: #446644;
 }
+
+/* ── Mood indicator ─────────────────────────────────────── */
+
+#mood-indicator {
+    height: 1;
+    text-align: center;
+    color: #00ff88;
+}
+
+/* ── Mood theme classes (#135) ──────────────────────────── */
+/* Applied to Screen via add_class / remove_class.          */
+/* CSS class swap is flicker-free in Textual.               */
+
+.mood-chill #chat-panel {
+    border: solid #00ff88;
+}
+.mood-chill Header {
+    background: #0a1a0a;
+    color: #00ff88;
+}
+.mood-chill Input {
+    border: solid #2a4a2a;
+    color: #00ff88;
+}
+.mood-chill Input:focus {
+    border: solid #00ff88;
+}
+.mood-chill #mood-indicator {
+    color: #00ff88;
+}
+
+.mood-focused #chat-panel {
+    border: solid #4488ff;
+}
+.mood-focused Header {
+    background: #0a0a1a;
+    color: #4488ff;
+}
+.mood-focused Input {
+    border: solid #2a2a5a;
+    color: #4488ff;
+}
+.mood-focused Input:focus {
+    border: solid #4488ff;
+}
+.mood-focused #mood-indicator {
+    color: #4488ff;
+}
+
+.mood-busy #chat-panel {
+    border: solid #ffaa00;
+}
+.mood-busy Header {
+    background: #1a1a0a;
+    color: #ffaa00;
+}
+.mood-busy Input {
+    border: solid #4a4a2a;
+    color: #ffaa00;
+}
+.mood-busy Input:focus {
+    border: solid #ffaa00;
+}
+.mood-busy #mood-indicator {
+    color: #ffaa00;
+}
+
+.mood-stressed #chat-panel {
+    border: solid #ff4444;
+}
+.mood-stressed Header {
+    background: #1a0a0a;
+    color: #ff4444;
+}
+.mood-stressed Input {
+    border: solid #4a2a2a;
+    color: #ff4444;
+}
+.mood-stressed Input:focus {
+    border: solid #ff4444;
+}
+.mood-stressed #mood-indicator {
+    color: #ff4444;
+}
+
+.mood-sleeping #chat-panel {
+    border: solid #8844cc;
+}
+.mood-sleeping Header {
+    background: #0a0a1a;
+    color: #8844cc;
+}
+.mood-sleeping Input {
+    border: solid #3a2a4a;
+    color: #8844cc;
+}
+.mood-sleeping Input:focus {
+    border: solid #8844cc;
+}
+.mood-sleeping #mood-indicator {
+    color: #8844cc;
+}
