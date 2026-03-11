@@ -437,13 +437,13 @@ class TestMoodReason:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestMoodTUIIntegration:
-    def test_system_status_has_mood_indicator(self):
-        """SystemStatus compose() should yield #mood-indicator."""
+    def test_system_status_no_duplicate_mood_indicator(self):
+        """Mood face lives in OperationsHeader only — SystemStatus must NOT yield #mood-indicator."""
         from bantz.interface.tui.panels.system import SystemStatus
         panel = SystemStatus()
         widgets = list(panel.compose())
         ids = [getattr(w, "id", None) for w in widgets]
-        assert "mood-indicator" in ids
+        assert "mood-indicator" not in ids
 
     def test_all_mood_classes_set(self):
         from bantz.interface.tui.mood import ALL_MOOD_CLASSES

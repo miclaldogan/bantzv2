@@ -112,14 +112,6 @@ Footer {
     color: #446644;
 }
 
-/* ── Mood indicator ─────────────────────────────────────── */
-
-#mood-indicator {
-    height: 1;
-    text-align: center;
-    color: #00ff88;
-}
-
 /* ── Mood theme classes (#135) ──────────────────────────── */
 /* Applied to Screen via add_class / remove_class.          */
 /* CSS class swap is flicker-free in Textual.               */
@@ -138,10 +130,6 @@ Footer {
 .mood-chill Input:focus {
     border: solid #00ff88;
 }
-.mood-chill #mood-indicator {
-    color: #00ff88;
-}
-
 .mood-focused #chat-panel {
     border: solid #4488ff;
 }
@@ -156,10 +144,6 @@ Footer {
 .mood-focused Input:focus {
     border: solid #4488ff;
 }
-.mood-focused #mood-indicator {
-    color: #4488ff;
-}
-
 .mood-busy #chat-panel {
     border: solid #ffaa00;
 }
@@ -174,10 +158,6 @@ Footer {
 .mood-busy Input:focus {
     border: solid #ffaa00;
 }
-.mood-busy #mood-indicator {
-    color: #ffaa00;
-}
-
 .mood-stressed #chat-panel {
     border: solid #ff4444;
 }
@@ -192,10 +172,6 @@ Footer {
 .mood-stressed Input:focus {
     border: solid #ff4444;
 }
-.mood-stressed #mood-indicator {
-    color: #ff4444;
-}
-
 .mood-sleeping #chat-panel {
     border: solid #8844cc;
 }
@@ -210,10 +186,6 @@ Footer {
 .mood-sleeping Input:focus {
     border: solid #8844cc;
 }
-.mood-sleeping #mood-indicator {
-    color: #8844cc;
-}
-
 /* ── Toast notifications (#137) ─────────────────────────── */
 
 ToastContainer {

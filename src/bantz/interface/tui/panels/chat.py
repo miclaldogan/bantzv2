@@ -33,7 +33,8 @@ class ChatLog(RichLog):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._streaming_buffer: str = ""
+        self._streaming_buffer: str = ""   # only the current incomplete line (delta)
+        self._full_text: str = ""          # full accumulated text for stream_end()
         self._stream_started: bool = False
 
     def add_user(self, text: str) -> None:
@@ -50,26 +51,43 @@ class ChatLog(RichLog):
     def stream_start(self) -> None:
         """Begin a streaming response."""
         self._streaming_buffer = ""
+        self._full_text = ""
         self._stream_started = True
         self.write("[bold cyan]◆ Bantz[/]  ...")
 
     def stream_token(self, token: str) -> None:
-        """Append a token to the current streaming response."""
-        self._streaming_buffer += token
-        parts = self._streaming_buffer.split("\n")
+        """Append a token — delta buffering (Option C).
+
+        Only the current incomplete line lives in ``_streaming_buffer``.
+        When a ``\\n`` arrives the completed line is written permanently
+        and the buffer is reset to the trailing fragment.  The last
+        (temporary) line is popped and re-written each call so the
+        terminal only touches one line per token — zero flicker.
+        """
+        # 1. Pop the previous temporary partial line
         if self.lines:
             self.lines.pop()
-        if len(parts) > 1:
+
+        self._streaming_buffer += token
+        self._full_text += token
+
+        # 2. Completed lines → write permanently
+        if "\n" in self._streaming_buffer:
+            parts = self._streaming_buffer.split("\n")
             for completed_line in parts[:-1]:
                 self.write(f"         {completed_line}")
-        partial = parts[-1] if parts else ""
-        self.write(f"         {partial}")
+            # Only keep the last incomplete fragment
+            self._streaming_buffer = parts[-1]
+
+        # 3. Current partial → temporary line (will be popped next call)
+        self.write(f"         {self._streaming_buffer}")
         self.scroll_end(animate=False)
 
     def stream_end(self) -> str:
         """Finish streaming — return the full accumulated text."""
-        text = self._streaming_buffer
+        text = self._full_text
         self._streaming_buffer = ""
+        self._full_text = ""
         self._stream_started = False
         return text
 

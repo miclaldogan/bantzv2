@@ -17,7 +17,7 @@ from textual.widgets import Label, Sparkline, Static
 
 from bantz.interface.tui.telemetry import TelemetryCollector
 from bantz.interface.tui.mood import (
-    mood_machine, Mood, ALL_MOOD_CLASSES, MOOD_FACES, MOOD_LABELS,
+    mood_machine, Mood, ALL_MOOD_CLASSES,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -97,7 +97,6 @@ class SystemStatus(Vertical):
         self._collector = collector or TelemetryCollector()
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="mood-indicator")
         yield Static("[bold cyan]── TELEMETRY ───────[/]", classes="section-head")
         yield MetricRow("CPU", "%", id="metric-cpu")
         yield MetricRow("RAM", "%", id="metric-ram")
@@ -243,15 +242,6 @@ class SystemStatus(Vertical):
             activity=activity,
             observer_error_count=obs_errors,
         )
-
-        # Update mood indicator widget
-        try:
-            indicator = self.query_one("#mood-indicator", Static)
-            face = mood_machine.face
-            label = mood_machine.label
-            indicator.update(f"{face}  {label}")
-        except Exception:
-            pass
 
         # Swap CSS class on app if mood changed
         if mood_machine.current != prev:
