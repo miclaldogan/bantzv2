@@ -123,7 +123,10 @@ def _handle_setup(parts: list[str]) -> None:
         _setup_gemini()
         return
     if len(parts) >= 1 and parts[0].lower() == "systemd":
-        _setup_systemd()
+        if len(parts) >= 2 and parts[1].lower() == "--check":
+            _systemd_check()
+        else:
+            _setup_systemd()
         return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
@@ -139,6 +142,7 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup places")
         print("  bantz --setup gemini")
         print("  bantz --setup systemd")
+        print("  bantz --setup systemd --check")
 
 
 def _setup_telegram() -> None:
@@ -925,6 +929,26 @@ async def _doctor() -> None:
     else:
         print(f"⚪ Job Scheduler: disabled  → BANTZ_JOB_SCHEDULER_ENABLED=true")
 
+    # systemd service (#173) — quick summary
+    import os as _os
+    from pathlib import Path as _Path
+    _user = _os.environ.get("USER", "")
+    _svc_path = _Path.home() / ".config" / "systemd" / "user" / "bantz.service"
+    if _svc_path.exists():
+        import subprocess as _sp
+        _active = _sp.run(
+            ["systemctl", "--user", "is-active", "bantz.service"],
+            capture_output=True, text=True,
+        )
+        _state = _active.stdout.strip()
+        if _state == "active":
+            _linger = "linger=yes" if _check_linger(_user) else "linger=no"
+            print(f"✅ systemd: active ({_linger})  → bantz --setup systemd --check")
+        else:
+            print(f"⚪ systemd: {_state}  → systemctl --user start bantz.service")
+    else:
+        print(f"⚪ systemd: not installed  → bantz --setup systemd")
+
     print("─" * 52)
 
 
@@ -1234,13 +1258,13 @@ async def _daemon() -> None:
 
 
 def _setup_systemd() -> None:
-    """Install Bantz systemd user service."""
+    """Install Bantz systemd user service with linger + verification."""
     import os
-    import shutil
+    import subprocess
     from pathlib import Path
 
     print("\n🦌 Bantz — systemd Service Setup")
-    print("─" * 44)
+    print("─" * 52)
 
     user = os.environ.get("USER", "")
     if not user:
@@ -1248,13 +1272,8 @@ def _setup_systemd() -> None:
         return
 
     project_dir = Path(__file__).resolve().parent.parent.parent  # src/bantz → repo root
-    venv_python = Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "python"
+    venv_python = project_dir / ".venv" / "bin" / "python"
     env_file = project_dir / ".env"
-    service_src = project_dir / "deploy" / "bantz@.service"
-
-    if not service_src.exists():
-        print(f"✗ Service template not found: {service_src}")
-        return
 
     # Build user-mode service (no User=, no ProtectSystem=strict)
     content = f"""[Unit]
@@ -1283,31 +1302,260 @@ WantedBy=default.target
     target = systemd_dir / "bantz.service"
     target.write_text(content)
 
-    print(f"✓ Service file installed: {target}")
-    print()
-    print("To enable and start:")
-    print(f"  systemctl --user daemon-reload")
-    print(f"  systemctl --user enable bantz.service")
-    print(f"  systemctl --user start bantz.service")
-    print()
-    print("To check status:")
-    print(f"  systemctl --user status bantz.service")
-    print(f"  journalctl --user -u bantz.service -f")
-    print()
-    print("To enable on boot (persist after logout):")
-    print(f"  loginctl enable-linger {user}")
+    print(f"✅ Service file installed: {target}")
     print()
 
-    # Ask if user wants to enable now
-    answer = input("Enable and start now? [y/N] ").strip().lower()
-    if answer in ("y", "yes"):
-        os.system("systemctl --user daemon-reload")
-        os.system("systemctl --user enable bantz.service")
-        os.system("systemctl --user start bantz.service")
-        print("✓ Service enabled and started!")
-        os.system("systemctl --user status bantz.service --no-pager")
+    # Ensure linger for 24/7 operation
+    _ensure_linger(user)
+    print()
+
+    # Ask if user wants to enable + start now
+    answer = input("Enable and start now? [Y/n] ").strip().lower()
+    if answer in ("", "y", "yes"):
+        ok = True
+        ok = _systemctl("daemon-reload") and ok
+        ok = _systemctl("enable", "bantz.service") and ok
+        ok = _systemctl("start", "bantz.service") and ok
+        if ok:
+            print()
+            _verify_service()
+        else:
+            print("\n⚠  Some steps failed. Check errors above.")
     else:
-        print("Setup complete — enable manually when ready.")
+        print("Setup complete — enable manually when ready:")
+        print("  systemctl --user daemon-reload")
+        print("  systemctl --user enable bantz.service")
+        print("  systemctl --user start bantz.service")
+
+
+# ── systemd helpers ────────────────────────────────────────────────────────
+
+
+def _check_linger(user: str) -> bool:
+    """Check if loginctl linger is enabled for user.
+
+    Uses ``loginctl show-user`` (official systemd API) instead of
+    probing the filesystem directly.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["loginctl", "show-user", user, "--property=Linger"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            # Output: "Linger=yes" or "Linger=no"
+            return "Linger=yes" in result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return False
+
+
+def _ensure_linger(user: str) -> bool:
+    """Check and enable loginctl linger for persistent user services."""
+    if _check_linger(user):
+        print(f"✅ Linger: already enabled for {user}")
+        return True
+
+    print("⚠  Linger is NOT enabled.")
+    print("   Without linger, Bantz stops when you log out.")
+    print(f"   This will run: loginctl enable-linger {user}")
+    answer = input("   Enable linger for 24/7 operation? [Y/n] ").strip().lower()
+    if answer not in ("", "y", "yes"):
+        print("   Skipped. Service will stop on logout.")
+        return False
+
+    import subprocess
+    # NOTE: capture_output=False intentionally — if polkit prompts for a
+    # password, the user must see the prompt and be able to type it.
+    # With capture_output=True the terminal would freeze silently.
+    result = subprocess.run(
+        ["loginctl", "enable-linger", user],
+        capture_output=False, text=True,
+    )
+    if result.returncode == 0:
+        # Double-check via the official API
+        if _check_linger(user):
+            print(f"✅ Linger enabled for {user}")
+            return True
+        # Command succeeded but check fails (rare edge case)
+        print(f"✅ Linger command succeeded for {user}")
+        return True
+    else:
+        print(f"❌ Failed to enable linger (exit code {result.returncode})")
+        print(f"   Try manually: sudo loginctl enable-linger {user}")
+        return False
+
+
+def _systemctl(*args: str) -> bool:
+    """Run systemctl --user <args> with proper error handling.
+
+    Uses subprocess.run for safe execution with error capture.
+    Returns True on success, False on failure with stderr printed.
+    """
+    import subprocess
+    cmd = ["systemctl", "--user", *args]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        print(f"❌ systemctl --user {' '.join(args)}: {stderr or f'exit code {result.returncode}'}")
+        return False
+    return True
+
+
+def _verify_service() -> None:
+    """Check that bantz.service is active and healthy."""
+    import subprocess
+    result = subprocess.run(
+        ["systemctl", "--user", "is-active", "bantz.service"],
+        capture_output=True, text=True,
+    )
+    state = result.stdout.strip()
+    if state == "active":
+        print(f"✅ bantz.service is running")
+        # Show compact status (let output go to terminal)
+        subprocess.run(
+            ["systemctl", "--user", "status", "bantz.service", "--no-pager", "-l"],
+            capture_output=False,
+        )
+    else:
+        print(f"⚠  Service state: {state}")
+        print("   Check logs: journalctl --user -u bantz.service -n 20")
+
+
+def _systemd_check() -> None:
+    """Full systemd health diagnostic (bantz --setup systemd --check)."""
+    import os
+    import subprocess
+    from pathlib import Path
+
+    print("\nBantz — systemd Health Check")
+    print("─" * 52)
+
+    user = os.environ.get("USER", "")
+
+    # 1. Service file
+    service_path = Path.home() / ".config" / "systemd" / "user" / "bantz.service"
+    if service_path.exists():
+        print(f"✅ Service file: {service_path}")
+    else:
+        print(f"❌ Service file: NOT FOUND — run: bantz --setup systemd")
+        return
+
+    # 2. Linger
+    if _check_linger(user):
+        print(f"✅ Linger: enabled for {user}")
+    else:
+        print(f"⚪ Linger: disabled — run: loginctl enable-linger {user}")
+
+    # 3. Service state
+    result = subprocess.run(
+        ["systemctl", "--user", "is-active", "bantz.service"],
+        capture_output=True, text=True,
+    )
+    state = result.stdout.strip()
+    if state == "active":
+        print(f"✅ Service: active (running)")
+    elif state == "inactive":
+        print(f"⚪ Service: inactive — run: systemctl --user start bantz.service")
+    else:
+        print(f"❌ Service: {state}")
+
+    # 4. Detailed properties (PID, Memory, uptime)
+    if state == "active":
+        props = subprocess.run(
+            ["systemctl", "--user", "show", "bantz.service",
+             "--property=MainPID,MemoryCurrent,ActiveEnterTimestamp"],
+            capture_output=True, text=True,
+        )
+        if props.returncode == 0:
+            prop_map: dict[str, str] = {}
+            for line in props.stdout.strip().splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    prop_map[k] = v
+
+            pid = prop_map.get("MainPID", "?")
+            print(f"   PID: {pid}")
+
+            # Memory (bytes → human-readable)
+            mem_raw = prop_map.get("MemoryCurrent", "")
+            if mem_raw and mem_raw.isdigit() and int(mem_raw) > 0:
+                mem_mb = int(mem_raw) / (1024 * 1024)
+                print(f"   Memory: {mem_mb:.1f}M")
+            elif mem_raw == "[not set]" or not mem_raw:
+                print("   Memory: (cgroup accounting not available)")
+
+            # Uptime
+            ts_raw = prop_map.get("ActiveEnterTimestamp", "")
+            if ts_raw:
+                try:
+                    from datetime import datetime
+                    # systemd outputs local time like "Thu 2025-01-09 14:30:00 TRT"
+                    # Parse with dateutil for flexibility, fall back to showing raw
+                    _uptime_str = _format_uptime(ts_raw)
+                    print(f"   Uptime: {_uptime_str}")
+                except Exception:
+                    print(f"   Started: {ts_raw}")
+
+    # 5. Journal errors (last 24h)
+    journal = subprocess.run(
+        ["journalctl", "--user", "-u", "bantz.service",
+         "--since", "24 hours ago", "-p", "err", "--no-pager", "-q"],
+        capture_output=True, text=True,
+    )
+    if journal.returncode == 0:
+        error_lines = [l for l in journal.stdout.strip().splitlines() if l.strip()]
+        print(f"   Journal errors (24h): {len(error_lines)}")
+        if error_lines:
+            for line in error_lines[-3:]:  # Show last 3
+                print(f"     {line}")
+    else:
+        print("   Journal: could not read (journalctl error)")
+
+    # 6. Enabled on boot?
+    enabled_result = subprocess.run(
+        ["systemctl", "--user", "is-enabled", "bantz.service"],
+        capture_output=True, text=True,
+    )
+    en_state = enabled_result.stdout.strip()
+    if en_state == "enabled":
+        print(f"✅ Boot: enabled (starts on login)")
+    else:
+        print(f"⚪ Boot: {en_state} — run: systemctl --user enable bantz.service")
+
+    print("─" * 52)
+
+
+def _format_uptime(timestamp_str: str) -> str:
+    """Parse systemd ActiveEnterTimestamp and return human-readable uptime."""
+    from datetime import datetime, timezone
+    import re
+
+    # Strip timezone abbreviation (e.g. "TRT", "UTC", "CET")
+    # systemd format: "Thu 2025-01-09 14:30:00 TRT"
+    cleaned = re.sub(r"\s+[A-Z]{2,5}\s*$", "", timestamp_str.strip())
+    # Try common systemd datetime formats
+    for fmt in (
+        "%a %Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            started = datetime.strptime(cleaned, fmt)
+            delta = datetime.now() - started
+            days = delta.days
+            hours, rem = divmod(delta.seconds, 3600)
+            minutes = rem // 60
+            parts = []
+            if days > 0:
+                parts.append(f"{days}d")
+            if hours > 0:
+                parts.append(f"{hours}h")
+            parts.append(f"{minutes}m")
+            return " ".join(parts)
+        except ValueError:
+            continue
+    return timestamp_str  # fallback: return raw
 
 
 if __name__ == "__main__":
