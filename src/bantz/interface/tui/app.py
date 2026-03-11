@@ -233,6 +233,13 @@ class BantzApp(App):
                     memory.add("assistant", text, tool_used="reminder")
                 except Exception:
                     pass
+                # TTS: speak reminders aloud (#171)
+                try:
+                    from bantz.agent.tts import tts_engine
+                    if tts_engine.available():
+                        await tts_engine.speak_background(text)
+                except Exception:
+                    pass
             chat.scroll_end()
         except Exception:
             pass
@@ -250,6 +257,13 @@ class BantzApp(App):
                 chat.scroll_end()
                 try:
                     memory.add("assistant", text, tool_used="briefing")
+                except Exception:
+                    pass
+                # TTS: speak the briefing if available (#131/#171)
+                try:
+                    from bantz.agent.tts import tts_engine
+                    if config.tts_auto_briefing and tts_engine.available():
+                        await tts_engine.speak_background(text)
                 except Exception:
                     pass
         except Exception:

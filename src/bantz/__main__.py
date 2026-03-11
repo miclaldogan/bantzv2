@@ -1264,6 +1264,13 @@ async def _daemon() -> None:
                     if text:
                         log.info("📋 Morning briefing:\n%s", text)
                         memory.add("assistant", text, tool_used="briefing")
+                        # TTS: speak the briefing in daemon mode (#171)
+                        try:
+                            from bantz.agent.tts import tts_engine
+                            if config.tts_auto_briefing and tts_engine.available():
+                                await tts_engine.speak_background(text)
+                        except Exception:
+                            pass
                 except Exception as exc:
                     log.debug("Briefing check error: %s", exc)
                 await asyncio.sleep(60)
