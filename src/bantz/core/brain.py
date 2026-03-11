@@ -45,6 +45,33 @@ except ImportError:
     graph_memory = None  # neo4j driver not installed
 
 
+# ── Toast notification hook (#137) ──────────────────────────────────
+# Set by the TUI app on mount: ``brain_mod._toast_callback = app._on_brain_toast``
+_toast_callback = None
+
+
+def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> None:
+    """Push a toast notification to the TUI from brain / background context.
+
+    Uses the same ``App.current`` pattern as ollama._notify_health (#136).
+    Falls back to the callback if set, or does nothing if headless.
+    """
+    if _toast_callback:
+        try:
+            _toast_callback(title, reason, toast_type)
+            return
+        except Exception:
+            pass
+    # Fallback: try App.current directly
+    try:
+        from textual.app import App as _App
+        app = _App.current
+        if app and hasattr(app, "push_toast"):
+            app.call_from_thread(app.push_toast, title, reason, toast_type)
+    except Exception:
+        pass
+
+
 def _style_hint() -> str:
     """Return a style instruction based on profile response_style and pronoun."""
     style = profile.response_style
@@ -825,7 +852,10 @@ class Brain:
             pass  # never crash the pipeline
 
     async def _check_intervention_queue(self) -> str | None:
-        """Pop the next pending intervention and return its text, or None."""
+        """[Deprecated — #137] Queue is now consumed by TUI toast system.
+
+        Kept for backward compat in case headless mode needs it.
+        """
         try:
             from bantz.agent.interventions import intervention_queue
             iv = intervention_queue.pop()
@@ -836,12 +866,25 @@ class Brain:
             return None
 
     def _prepend_intervention(self, response: str) -> str:
-        """If an intervention was popped at process() start, prepend it (#124)."""
+        """[Deprecated — #137] Toast system renders interventions separately.
+
+        Kept for backward compat in case headless mode needs it.
+        """
         iv = getattr(self, "_pending_intervention", None)
         if iv:
             self._pending_intervention = None
             return f"{iv}\n\n{response}"
         return response
+
+    def _push_toast(
+        self, title: str, reason: str = "", toast_type: str = "info",
+    ) -> None:
+        """Push a toast notification from brain context (#137).
+
+        Delegates to the module-level ``_notify_toast()`` which routes
+        to the TUI via callback or App.current.
+        """
+        _notify_toast(title, reason, toast_type)
 
     # ── Maintenance & Reflection handlers (#129, #130) ────────────────
 
@@ -980,8 +1023,9 @@ class Brain:
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
 
-        # ── Surface pending observer/intervention alerts (#124) ──
-        self._pending_intervention = await self._check_intervention_queue()
+        # NOTE: Intervention queue is now consumed by the TUI's toast
+        # system (#137) instead of being popped here.  Brain no longer
+        # prepends intervention text to chat responses.
 
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
@@ -1235,7 +1279,6 @@ class Brain:
 
         # Short output — non-streaming finalize
         resp = await self._finalize(en_input, result, tc)
-        resp = self._prepend_intervention(resp)
         data_layer.conversations.add("assistant", resp, tool_used=tool_name)
         await self._graph_store(user_input, resp, tool_name,
                                 result.data if result else None)

@@ -26,6 +26,14 @@ from bantz.interface.tui.panels.header import (
     ServiceStatus,
     MemoryCountUpdated,
 )
+from bantz.interface.tui.widgets.toast import (
+    ToastContainer,
+    ToastType,
+    ToastData,
+    ToastAccepted,
+    ToastDismissed,
+    ToastExpired,
+)
 
 log = logging.getLogger("bantz.tui")
 _STYLES_PATH = Path(__file__).parent / "styles.tcss"
@@ -65,6 +73,7 @@ class BantzApp(App):
                     )
             with Vertical(id="right-panel"):
                 yield SystemStatus()
+        yield ToastContainer(id="toast-container")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -86,6 +95,7 @@ class BantzApp(App):
         self._start_digest_checker()
         self._start_observer()
         self._start_intervention_processor()
+        self._wire_brain_toast_hook()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -403,7 +413,7 @@ class BantzApp(App):
 
     @work(exclusive=False)
     async def _process_interventions(self) -> None:
-        """Pop from intervention queue and display as toast.
+        """Pop from intervention queue and display as toast (#137).
 
         Handles TTL auto-dismiss with mild RL penalty, and renders
         source/reason labels for explainability.
@@ -432,23 +442,16 @@ class BantzApp(App):
             if not iv:
                 return
 
-            # Render the intervention in chat
-            chat = self.query_one("#chat-log", ChatLog)
-            source_tag = SOURCE_LABELS.get(iv.source, iv.source)
-
-            msg_parts = [
-                f"\n{iv.title}",
-                f"[{source_tag}: {iv.reason}]",
-                f"Reply: **accept** / **dismiss** / **never**  _(auto-dismiss in {int(iv.remaining_ttl)}s)_",
-            ]
-            msg = "\n".join(msg_parts)
-
-            # Use add_bantz for routine/reminder, add_error for errors
-            if iv.type.value == "error_alert":
-                chat.add_error(msg)
-            else:
-                chat.add_bantz(msg)
-            chat.scroll_end()
+            # Push to toast container (#137) instead of ChatLog
+            try:
+                container = self.query_one("#toast-container", ToastContainer)
+                container.push_toast(iv)
+            except Exception:
+                # Fallback: render directly in chat
+                chat = self.query_one("#chat-log", ChatLog)
+                source_tag = SOURCE_LABELS.get(iv.source, iv.source)
+                chat.add_bantz(f"{iv.title}\n[{source_tag}: {iv.reason}]")
+                chat.scroll_end()
 
             # Desktop notification (#153) — fire if TUI is not active
             try:
@@ -597,6 +600,7 @@ class BantzApp(App):
         """Check if user input is a response to an active intervention.
 
         Returns True if the input was consumed as an intervention response.
+        Also removes the corresponding toast widget (#137).
         """
         try:
             from bantz.agent.interventions import intervention_queue, Outcome
@@ -616,25 +620,37 @@ class BantzApp(App):
             if iv:
                 chat.add_system("✓ Accepted.")
                 self._send_rl_feedback(iv, Outcome.ACCEPTED)
+                self._remove_intervention_toast(iv)
             return True
         elif low in _DISMISS:
             iv = intervention_queue.respond(Outcome.DISMISSED)
             if iv:
                 chat.add_system("✗ Dismissed.")
                 self._send_rl_feedback(iv, Outcome.DISMISSED)
+                self._remove_intervention_toast(iv)
             return True
         elif low in _NEVER:
             iv = intervention_queue.respond(Outcome.NEVER)
             if iv:
                 chat.add_system("⊘ Blocked — will never suggest this again.")
                 self._send_rl_feedback(iv, Outcome.NEVER)
+                self._remove_intervention_toast(iv)
             return True
 
         # Not an intervention response — auto-dismiss and pass through
         iv = intervention_queue.expire_active()
         if iv:
             self._send_rl_feedback(iv, Outcome.AUTO_DISMISSED)
+            self._remove_intervention_toast(iv)
         return False
+
+    def _remove_intervention_toast(self, iv: "Intervention") -> None:
+        """Remove the toast widget showing this intervention (#137)."""
+        try:
+            container = self.query_one("#toast-container", ToastContainer)
+            container.remove_by_intervention(iv)
+        except Exception:
+            pass
 
     @work(exclusive=False)
     async def _start_processing(self, text: str, chat: ChatLog) -> None:
@@ -765,6 +781,14 @@ class BantzApp(App):
             pass
 
     def action_focus_input(self) -> None:
+        """Escape: dismiss top toast if any, otherwise focus input (#137)."""
+        try:
+            container = self.query_one("#toast-container", ToastContainer)
+            if container.has_toasts:
+                container.dismiss_top()
+                return
+        except Exception:
+            pass
         self.query_one("#chat-input", Input).focus()
 
     def action_toggle_quiet(self) -> None:
@@ -798,6 +822,85 @@ class BantzApp(App):
         try:
             panel = self.query_one("#right-panel")
             panel.display = not panel.display
+        except Exception:
+            pass
+
+    # ── Toast message handlers (#137) ──────────────────────────────────
+
+    def on_toast_accepted(self, event: ToastAccepted) -> None:
+        """User accepted an action toast → RL reward + queue response."""
+        try:
+            from bantz.agent.interventions import intervention_queue, Outcome
+            if intervention_queue.has_active and intervention_queue.active is event.intervention:
+                iv = intervention_queue.respond(Outcome.ACCEPTED)
+                if iv:
+                    self._send_rl_feedback(iv, Outcome.ACCEPTED)
+                    chat = self.query_one("#chat-log", ChatLog)
+                    chat.add_system("✓ Accepted.")
+        except Exception:
+            pass
+
+    def on_toast_dismissed(self, event: ToastDismissed) -> None:
+        """User dismissed a toast → RL penalty + queue response."""
+        try:
+            from bantz.agent.interventions import intervention_queue, Outcome
+            if intervention_queue.has_active and intervention_queue.active is event.intervention:
+                iv = intervention_queue.respond(Outcome.DISMISSED)
+                if iv:
+                    self._send_rl_feedback(iv, Outcome.DISMISSED)
+        except Exception:
+            pass
+
+    def on_toast_expired(self, event: ToastExpired) -> None:
+        """Toast auto-expired after TTL → mild RL penalty."""
+        try:
+            from bantz.agent.interventions import intervention_queue, Outcome
+            if intervention_queue.has_active and intervention_queue.active is event.intervention:
+                iv = intervention_queue.expire_active()
+                if iv:
+                    self._send_rl_feedback(iv, Outcome.AUTO_DISMISSED)
+        except Exception:
+            pass
+
+    # ── Public toast API (#137) ────────────────────────────────────────
+
+    def push_toast(
+        self, title: str, reason: str = "", toast_type: str = "info",
+    ) -> None:
+        """Push a simple (non-intervention) toast.  Thread-safe.
+
+        Called from brain, observer, or any background context via
+        ``app.call_from_thread(app.push_toast, ...)``.
+        """
+        _TYPE_MAP = {
+            "info": ToastType.INFO,
+            "success": ToastType.SUCCESS,
+            "warning": ToastType.WARNING,
+            "error": ToastType.ERROR,
+            "action": ToastType.ACTION,
+        }
+        try:
+            tt = _TYPE_MAP.get(toast_type, ToastType.INFO)
+            data = ToastData(title=title, reason=reason)
+            container = self.query_one("#toast-container", ToastContainer)
+            container.push_toast(data, tt)
+        except Exception:
+            pass
+
+    def _wire_brain_toast_hook(self) -> None:
+        """Connect brain._notify_toast to this app's push_toast (#137)."""
+        try:
+            from bantz.core import brain as brain_mod
+            brain_mod._toast_callback = self._on_brain_toast
+        except Exception:
+            pass
+
+    def _on_brain_toast(
+        self, title: str, reason: str = "", toast_type: str = "info",
+    ) -> None:
+        """Receive toast events from brain context (possibly threaded)."""
+        try:
+            self.call_from_thread(self.push_toast, title, reason, toast_type)
         except Exception:
             pass
 

@@ -2,6 +2,7 @@
 
 Screen {
     background: #0d0d0d;
+    layers: default toast;
 }
 
 #main-layout {
@@ -211,4 +212,55 @@ Footer {
 }
 .mood-sleeping #mood-indicator {
     color: #8844cc;
+}
+
+/* ── Toast notifications (#137) ─────────────────────────── */
+
+ToastContainer {
+    dock: bottom;
+    width: 100%;
+    height: auto;
+    max-height: 12;
+    padding: 0 2;
+    layer: toast;
+}
+
+ToastWidget {
+    width: 100%;
+    height: auto;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    background: #1a1a2a;
+    border: solid #333333;
+    offset-y: 0;
+    transition: offset 300ms in_out_cubic;
+}
+
+.toast-enter {
+    offset-y: 5;
+}
+
+.toast--info {
+    border: solid #00ccff;
+    color: #aaddff;
+}
+
+.toast--success {
+    border: solid #00ff88;
+    color: #aaffcc;
+}
+
+.toast--warning {
+    border: solid #ffaa00;
+    color: #ffddaa;
+}
+
+.toast--error {
+    border: solid #ff4444;
+    color: #ffaaaa;
+}
+
+.toast--action {
+    border: solid #4488ff;
+    color: #aaccff;
 }
