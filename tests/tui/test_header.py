@@ -298,7 +298,7 @@ class TestAppHeaderIntegration:
 class TestHeaderCSS:
     def _read_css(self) -> str:
         from pathlib import Path
-        p = Path(__file__).parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
+        p = Path(__file__).parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
         return p.read_text()
 
     def test_ops_header_css_exists(self):

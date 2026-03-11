@@ -30,6 +30,7 @@ translation = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
 ]
 docs = [
@@ -57,3 +58,33 @@ target-version = "py311"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["bantz"]
+omit = [
+    "src/bantz/__main__.py",
+    "src/bantz/interface/tui/app.py",
+    "src/bantz/tools/gmail.py",
+    "src/bantz/tools/calendar.py",
+    "src/bantz/tools/classroom.py",
+    "src/bantz/tools/document.py",
+    "src/bantz/tools/news.py",
+    "src/bantz/tools/weather.py",
+    "src/bantz/tools/web_search.py",
+    "src/bantz/tools/reminder.py",
+    "src/bantz/tools/filesystem.py",
+    "src/bantz/tools/system.py",
+    "src/bantz/auth/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 65
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__",
+    "pass",
+    "except ImportError",
+    "except Exception",
+]
