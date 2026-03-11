@@ -366,7 +366,16 @@ class Brain:
             return {"tool": "system", "args": {"metric": "all"}}
 
         # Folder/directory sizes — route to shell du, NEVER to chat
-        if re.search(r"(big|large|size|how big|which.*bigger|folder.*size|directory.*size)", both):
+        # Requires BOTH a size keyword AND a disk-context keyword to avoid
+        # false positives (e.g. "how big is EDITH" → no disk context → skip).
+        _SIZE_KW = re.search(
+            r"\b(big|large|size|bigger|largest|biggest|heaviest)\b", both,
+        )
+        _DISK_CTX = re.search(
+            r"\b(folder|directory|dir|file|disk|storage|path|home|~/)"
+            r"|\b(dosya|klasör|dizin|depolama)\b", both,
+        )
+        if _SIZE_KW and _DISK_CTX:
             # Extract path if mentioned, default to home
             path_match = re.search(r"(?:in|under|of|check)\s+(~/?\S+|/\S+|home)", both)
             target = path_match.group(1) if path_match else "~"
@@ -683,10 +692,21 @@ class Brain:
                 "app": _gui_find_m.group(2).strip(),
             }}
 
-        # Web search
-        if any(k in both for k in ("search", "look up", "find online", "google",
-                                    "is there any", "anything about")):
-            return {"tool": "web_search", "args": {"query": orig}}
+        # Web search — STRICT command-prefix only.
+        # Natural-language search intents ("can you search this", "look it up")
+        # deliberately fall through to cot_route() where the LLM extracts a
+        # clean query.  Only explicit imperative commands match here.
+        _ws_match = re.search(
+            r"^(?:search|google|look\s*up|araştır|ara|arat)\s*:?\s+(.+)",
+            o, re.IGNORECASE,
+        ) or re.search(
+            r"^(?:search|google|look\s*up|araştır|ara|arat)\s*:?\s+(.+)",
+            e, re.IGNORECASE,
+        )
+        if _ws_match:
+            query = _ws_match.group(1).strip()
+            if len(query) >= 2:
+                return {"tool": "web_search", "args": {"query": query}}
 
         # Shell generation for file operations
         if any(k in both for k in ("create file", "create folder", "create directory",
