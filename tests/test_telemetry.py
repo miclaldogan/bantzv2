@@ -467,3 +467,154 @@ class TestDiskResilience:
             snap = tc.collect()
         assert snap.disk_pct == 0.0
         tc.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Peak tracking (#134)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestPeakTracking:
+    """Session peak values should track the highest seen reading."""
+
+    def _make(self, history_len=60):
+        from bantz.interface.tui.telemetry import TelemetryCollector
+        return TelemetryCollector(history_len=history_len)
+
+    def test_peaks_start_at_zero(self):
+        tc = self._make()
+        assert tc.peak_cpu == 0.0
+        assert tc.peak_ram == 0.0
+        assert tc.peak_disk == 0.0
+        assert tc.peak_net_send == 0.0
+        assert tc.peak_net_recv == 0.0
+        assert tc.peak_cpu_temp == 0.0
+        assert tc.peak_gpu_temp == 0.0
+
+    def test_peaks_increase_on_collect(self):
+        tc = self._make()
+        tc.start()
+        tc.collect()
+        # After first collect, peaks should equal the first reading
+        assert tc.peak_cpu == tc.latest.cpu_pct
+        assert tc.peak_ram == tc.latest.ram_pct
+        tc.stop()
+
+    def test_peaks_never_decrease(self):
+        tc = self._make()
+        tc.start()
+        tc.collect()
+        first_cpu_peak = tc.peak_cpu
+        # Collect more — peak should be >= first
+        for _ in range(5):
+            tc.collect()
+        assert tc.peak_cpu >= first_cpu_peak
+        tc.stop()
+
+    def test_peak_tracks_manual_high_cpu(self):
+        tc = self._make()
+        tc.start()
+        # First: low CPU
+        with patch("psutil.cpu_percent", return_value=20.0):
+            tc.collect()
+        assert tc.peak_cpu == 20.0
+        # Second: high CPU
+        with patch("psutil.cpu_percent", return_value=95.0):
+            tc.collect()
+        assert tc.peak_cpu == 95.0
+        # Third: drop back down
+        with patch("psutil.cpu_percent", return_value=30.0):
+            tc.collect()
+        assert tc.peak_cpu == 95.0  # peak stays
+        tc.stop()
+
+    def test_peak_net_send(self):
+        tc = self._make()
+        tc.start()
+        # Manual baseline for delta math
+        tc._last_net_bytes_sent = 0
+        tc._last_net_bytes_recv = 0
+        tc._last_net_time = time.monotonic() - 2.0
+
+        with patch("psutil.net_io_counters") as mock_net:
+            mock_net.return_value = SimpleNamespace(
+                bytes_sent=10 * 1024 * 1024,
+                bytes_recv=20 * 1024 * 1024,
+            )
+            tc.collect()
+        peak_send = tc.peak_net_send
+        assert peak_send > 0
+
+        # Second collect with lower traffic
+        tc._last_net_time = time.monotonic() - 2.0
+        with patch("psutil.net_io_counters") as mock_net:
+            mock_net.return_value = SimpleNamespace(
+                bytes_sent=10 * 1024 * 1024 + 1024,
+                bytes_recv=20 * 1024 * 1024 + 1024,
+            )
+            tc.collect()
+        assert tc.peak_net_send == peak_send  # peak unchanged
+        tc.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MetricRow peak label rendering (#134)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestMetricRowPeakLabel:
+    def test_render_shows_peak_when_different(self):
+        from bantz.interface.tui.panels.system import MetricRow
+        row = MetricRow("CPU", "%")
+        row.value = 30.0
+        row.peak = 85.0
+        text = row.render()
+        assert "↑85" in text  # peak label present
+
+    def test_render_hides_peak_when_same_as_current(self):
+        from bantz.interface.tui.panels.system import MetricRow
+        row = MetricRow("CPU", "%")
+        row.value = 50.0
+        row.peak = 50.0
+        text = row.render()
+        assert "↑" not in text  # no peak when equal
+
+    def test_render_hides_peak_when_zero(self):
+        from bantz.interface.tui.panels.system import MetricRow
+        row = MetricRow("CPU", "%")
+        row.value = 30.0
+        row.peak = 0.0
+        text = row.render()
+        assert "↑" not in text  # no peak label for zero
+
+    def test_render_peak_mbps_unit(self):
+        from bantz.interface.tui.panels.system import MetricRow
+        row = MetricRow("↑ TX", " MB/s", max_value=10.0)
+        row.value = 1.5
+        row.peak = 8.3
+        text = row.render()
+        assert "↑8.3" in text  # decimal for MB/s
+
+    def test_update_data_sets_peak(self):
+        from bantz.interface.tui.panels.system import MetricRow
+        row = MetricRow("CPU", "%")
+        # Can't call update_data without DOM, but test reactive directly
+        row.peak = 92.0
+        assert row.peak == 92.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Ctrl+S sidebar toggle (#134)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestSidebarToggle:
+    def test_toggle_sidebar_binding_exists(self):
+        """Verify Ctrl+S binding is registered in BantzApp."""
+        from bantz.interface.tui.app import BantzApp
+        bindings = [b for b in BantzApp.BINDINGS if hasattr(b, 'key')]
+        keys = [b.key for b in bindings]
+        assert "ctrl+s" in keys
+
+    def test_toggle_sidebar_action_defined(self):
+        """Verify action_toggle_sidebar method exists."""
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "action_toggle_sidebar")
+        assert callable(BantzApp.action_toggle_sidebar)

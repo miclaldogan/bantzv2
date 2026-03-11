@@ -36,6 +36,7 @@ class BantzApp(App):
         Binding("ctrl+l", "clear_chat", "Clear"),
         Binding("ctrl+c", "copy_selection", "Copy"),
         Binding("escape", "focus_input", "Focus"),
+        Binding("ctrl+s", "toggle_sidebar", "Sidebar"),
         Binding("ctrl+u", "toggle_quiet", "Quiet", show=False),
         Binding("ctrl+f", "toggle_focus", "Focus mode", show=False),
     ]
@@ -759,6 +760,14 @@ class BantzApp(App):
             state = "ON" if intervention_queue.focus else "OFF"
             chat = self.query_one("#chat-log", ChatLog)
             chat.add_system(f"Focus mode: {state}")
+        except Exception:
+            pass
+
+    def action_toggle_sidebar(self) -> None:
+        """Toggle the right system-status panel visibility (#134)."""
+        try:
+            panel = self.query_one("#right-panel")
+            panel.display = not panel.display
         except Exception:
             pass
 

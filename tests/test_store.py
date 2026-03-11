@@ -259,7 +259,9 @@ class TestSQLiteReminderStore:
         assert reminder_store.snooze(rid, minutes=15) is True
 
     def test_due_today(self, reminder_store: SQLiteReminderStore):
-        reminder_store.add("today task", datetime.now() + timedelta(hours=1))
+        # Pin to noon today — avoids midnight-crossover when test runs after 23:00
+        noon_today = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        reminder_store.add("today task", noon_today)
         today = reminder_store.due_today()
         assert len(today) >= 1
 

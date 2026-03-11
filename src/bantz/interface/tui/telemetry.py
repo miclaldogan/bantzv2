@@ -156,6 +156,15 @@ class TelemetryCollector:
         self.cpu_temp_history: deque[float] = deque(maxlen=history_len)
         self.gpu_temp_history: deque[float] = deque(maxlen=history_len)
 
+        # Peak values for session (#134)
+        self.peak_cpu: float = 0.0
+        self.peak_ram: float = 0.0
+        self.peak_disk: float = 0.0
+        self.peak_net_send: float = 0.0
+        self.peak_net_recv: float = 0.0
+        self.peak_cpu_temp: float = 0.0
+        self.peak_gpu_temp: float = 0.0
+
         # Net I/O delta tracking
         self._last_net_bytes_sent: int = 0
         self._last_net_bytes_recv: int = 0
@@ -259,6 +268,15 @@ class TelemetryCollector:
         self.net_recv_history.append(snap.net_recv_mbps)
         self.cpu_temp_history.append(snap.cpu_temp)
         self.gpu_temp_history.append(snap.gpu_temp)
+
+        # Update session peaks (#134)
+        self.peak_cpu = max(self.peak_cpu, snap.cpu_pct)
+        self.peak_ram = max(self.peak_ram, snap.ram_pct)
+        self.peak_disk = max(self.peak_disk, snap.disk_pct)
+        self.peak_net_send = max(self.peak_net_send, snap.net_send_mbps)
+        self.peak_net_recv = max(self.peak_net_recv, snap.net_recv_mbps)
+        self.peak_cpu_temp = max(self.peak_cpu_temp, snap.cpu_temp)
+        self.peak_gpu_temp = max(self.peak_gpu_temp, snap.gpu_temp)
 
         self.latest = snap
         return snap

@@ -50,20 +50,29 @@ class MetricRow(Static):
         yield Label(self._label, classes="metric-label")
         yield Sparkline([], id=f"spark-{self.id}" if self.id else None)
 
-    def update_data(self, value: float, history: list[float]) -> None:
+    peak: reactive[float] = reactive(0.0)
+
+    def update_data(self, value: float, history: list[float], peak: float = 0.0) -> None:
         self.value = value
+        self.peak = peak
         spark = self.query_one(Sparkline)
         spark.data = list(history)
         self.refresh()
 
     def render(self) -> str:
-        # Return the current value as a compact bar
+        # Return the current value as a compact bar with peak label
         pct = min(self.value / self._max_value * 100, 100) if self._max_value else 0
         filled = int(pct / 100 * 10)
         color = "green" if pct < 60 else "yellow" if pct < 85 else "red"
+        peak_str = ""
+        if self.peak > 0 and self.peak != self.value:
+            if self._unit == "%":
+                peak_str = f" [dim](↑{self.peak:.0f})[/]"
+            else:
+                peak_str = f" [dim](↑{self.peak:.1f})[/]"
         if self._unit == "%":
-            return f"[dim]{self._label:<4}[/] [{color}]{'█' * filled}{'░' * (10 - filled)}[/] {self.value:.0f}{self._unit}"
-        return f"[dim]{self._label:<4}[/] [{color}]{'█' * filled}{'░' * (10 - filled)}[/] {self.value:.1f}{self._unit}"
+            return f"[dim]{self._label:<4}[/] [{color}]{'█' * filled}{'░' * (10 - filled)}[/] {self.value:.0f}{self._unit}{peak_str}"
+        return f"[dim]{self._label:<4}[/] [{color}]{'█' * filled}{'░' * (10 - filled)}[/] {self.value:.1f}{self._unit}{peak_str}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -148,26 +157,26 @@ class SystemStatus(Vertical):
 
         # Core metrics
         self.query_one("#metric-cpu", MetricRow).update_data(
-            snap.cpu_pct, list(c.cpu_history)
+            snap.cpu_pct, list(c.cpu_history), c.peak_cpu
         )
         self.query_one("#metric-ram", MetricRow).update_data(
-            snap.ram_pct, list(c.ram_history)
+            snap.ram_pct, list(c.ram_history), c.peak_ram
         )
         self.query_one("#metric-disk", MetricRow).update_data(
-            snap.disk_pct, list(c.disk_history)
+            snap.disk_pct, list(c.disk_history), c.peak_disk
         )
 
         # Network
         self.query_one("#metric-net-tx", MetricRow).update_data(
-            snap.net_send_mbps, list(c.net_send_history)
+            snap.net_send_mbps, list(c.net_send_history), c.peak_net_send
         )
         self.query_one("#metric-net-rx", MetricRow).update_data(
-            snap.net_recv_mbps, list(c.net_recv_history)
+            snap.net_recv_mbps, list(c.net_recv_history), c.peak_net_recv
         )
 
         # Thermal
         self.query_one("#metric-cpu-temp", MetricRow).update_data(
-            snap.cpu_temp, list(c.cpu_temp_history)
+            snap.cpu_temp, list(c.cpu_temp_history), c.peak_cpu_temp
         )
         alert = self.query_one("#thermal-alert", Static)
         if snap.thermal_alert:
@@ -178,7 +187,7 @@ class SystemStatus(Vertical):
         # GPU
         if c.gpu_available:
             self.query_one("#metric-gpu-temp", MetricRow).update_data(
-                snap.gpu_temp, list(c.gpu_temp_history)
+                snap.gpu_temp, list(c.gpu_temp_history), c.peak_gpu_temp
             )
             vram = self.query_one("#vram-bar", Static)
             pct = c.vram_pct()
