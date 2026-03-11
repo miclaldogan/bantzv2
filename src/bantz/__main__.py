@@ -666,6 +666,7 @@ def _section_for(field_name: str) -> str:
         (("app_detector_",), "App Detector"),
         (("desktop_notifications", "notification_",), "Notifications"),
         (("tts_",), "TTS / Audio"),
+        (("wake_word_", "picovoice_",), "Wake Word"),
     ]
     for prefixes, label in _MAP:
         if any(field_name.startswith(p) or field_name == p for p in prefixes):
@@ -886,6 +887,26 @@ async def _doctor() -> None:
             print(f"❌ TTS: enabled but init failed")
     else:
         print(f"⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
+
+    # Wake Word Detection (#165)
+    if config.wake_word_enabled:
+        if not config.picovoice_access_key:
+            print(f"❌ Wake Word: enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
+        else:
+            try:
+                from bantz.agent.wake_word import wake_listener
+                diag = wake_listener.diagnose()
+                if diag["porcupine_available"]:
+                    if diag["pyaudio_available"]:
+                        print(f"✅ Wake Word: ready (sensitivity={config.wake_word_sensitivity})")
+                    else:
+                        print(f"❌ Wake Word: pvporcupine OK but pyaudio not found")
+                else:
+                    print(f"❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
+            except Exception as exc:
+                print(f"❌ Wake Word: init failed — {exc}")
+    else:
+        print(f"⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
 
     # Telegram
     if config.telegram_bot_token:

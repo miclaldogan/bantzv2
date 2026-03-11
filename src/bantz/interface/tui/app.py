@@ -34,9 +34,16 @@ from bantz.interface.tui.widgets.toast import (
     ToastDismissed,
     ToastExpired,
 )
+from textual.message import Message
 
 log = logging.getLogger("bantz.tui")
 _STYLES_PATH = Path(__file__).parent / "styles.tcss"
+
+
+# ── Messages ────────────────────────────────────────────────────────
+
+class WakeWordDetected(Message):
+    """Fired (from the audio thread via call_from_thread) when the user says the wake word."""
 
 
 class BantzApp(App):
@@ -96,6 +103,7 @@ class BantzApp(App):
         self._start_observer()
         self._start_intervention_processor()
         self._wire_brain_toast_hook()
+        self._start_wake_word_listener()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -108,6 +116,12 @@ class BantzApp(App):
         try:
             from bantz.agent.observer import observer
             observer.stop()
+        except Exception:
+            pass
+        # Stop wake word listener (#165)
+        try:
+            from bantz.agent.wake_word import wake_listener
+            wake_listener.stop()
         except Exception:
             pass
         self.exit()
@@ -916,6 +930,46 @@ class BantzApp(App):
                 )
         except Exception:
             pass
+
+    # ── Wake Word Listener (#165) ─────────────────────────────────────
+
+    def _start_wake_word_listener(self) -> None:
+        """Start the always-on wake word listener in a dedicated thread."""
+        if not config.wake_word_enabled:
+            return
+        if not config.picovoice_access_key:
+            log.warning("Wake word enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
+            return
+
+        try:
+            from bantz.agent.wake_word import wake_listener
+
+            def _on_wake() -> None:
+                """Called from the audio thread — relay to Textual main thread."""
+                try:
+                    self.call_from_thread(self.post_message, WakeWordDetected())
+                except Exception:
+                    pass
+
+            ok = wake_listener.start(on_wake=_on_wake)
+            if ok:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_system("Wake Word: listening for \"Hey Bantz\"")
+        except Exception as exc:
+            log.debug("Wake word start failed: %s", exc)
+
+    def on_wake_word_detected(self, _msg: WakeWordDetected) -> None:
+        """Handle wake word detection — focus input + notify user."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_bantz("Yes boss? 🎤")
+            chat.scroll_end()
+
+            # Focus the input so user can type immediately
+            inp = self.query_one("#chat-input", Input)
+            inp.focus()
+        except Exception as exc:
+            log.debug("Wake word handler error: %s", exc)
 
 
 def run() -> None:
