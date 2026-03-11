@@ -224,6 +224,17 @@ class TTSEngine:
 
         self._stop_requested = False
         self._speaking = True
+
+        # Audio ducking: lower other apps' volume while we speak
+        ducked = False
+        try:
+            from bantz.config import config
+            if config.audio_duck_enabled:
+                from bantz.agent.audio_ducker import audio_ducker
+                ducked = audio_ducker.duck()
+        except Exception as exc:
+            log.debug("TTS: audio duck failed — %s", exc)
+
         try:
             sentences = split_sentences(text)
             if not sentences:
@@ -265,6 +276,13 @@ class TTSEngine:
         except Exception as exc:
             log.error("TTS: speak error — %s", exc)
         finally:
+            # Restore ducked audio
+            if ducked:
+                try:
+                    from bantz.agent.audio_ducker import audio_ducker
+                    audio_ducker.restore()
+                except Exception as exc:
+                    log.debug("TTS: audio restore failed — %s", exc)
             self._speaking = False
             self._playing = None
 
@@ -326,9 +344,17 @@ class TTSEngine:
     # ── Internal: Playback ──────────────────────────────────────────────
 
     async def _play(self, wav_data: bytes) -> None:
-        """Play raw WAV data via aplay (16-bit, 22050 Hz mono for Piper)."""
+        """Play raw WAV data via aplay (16-bit, 22050 Hz mono for Piper).
+
+        Sets PULSE_PROP so PulseAudio/PipeWire labels this stream as
+        'BantzTTS' — the audio ducker uses this to skip Bantz's own audio.
+        """
         if not wav_data or not self._aplay_path:
             return
+
+        import os
+        env = os.environ.copy()
+        env["PULSE_PROP"] = "application.name='BantzTTS'"
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -340,6 +366,7 @@ class TTSEngine:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=env,
             )
             self._playing = proc
             await proc.communicate(input=wav_data)

@@ -666,6 +666,7 @@ def _section_for(field_name: str) -> str:
         (("app_detector_",), "App Detector"),
         (("desktop_notifications", "notification_",), "Notifications"),
         (("tts_",), "TTS / Audio"),
+        (("audio_duck_",), "Audio Ducking"),
         (("wake_word_", "picovoice_",), "Wake Word"),
     ]
     for prefixes, label in _MAP:
@@ -887,6 +888,20 @@ async def _doctor() -> None:
             print(f"❌ TTS: enabled but init failed")
     else:
         print(f"⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
+
+    # Audio Ducking (#171)
+    if config.audio_duck_enabled:
+        try:
+            from bantz.agent.audio_ducker import audio_ducker as _ducker
+            diag = _ducker.diagnose()
+            if diag["pactl_available"]:
+                print(f"✅ Audio Ducking: ready (duck to {config.audio_duck_pct}%)")
+            else:
+                print(f"❌ Audio Ducking: enabled but pactl not found")
+        except Exception as exc:
+            print(f"❌ Audio Ducking: init failed — {exc}")
+    else:
+        print(f"⚪ Audio Ducking: disabled  → BANTZ_AUDIO_DUCK_ENABLED=true")
 
     # Wake Word Detection (#165)
     if config.wake_word_enabled:

@@ -149,6 +149,10 @@ class Config(BaseSettings):
     tts_rate: float = Field(1.0, alias="BANTZ_TTS_RATE")
     tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
 
+    # ── Audio Ducking (#171) ──────────────────────────────────────────────
+    audio_duck_enabled: bool = Field(False, alias="BANTZ_AUDIO_DUCK_ENABLED")
+    audio_duck_pct: int = Field(30, alias="BANTZ_AUDIO_DUCK_PCT")
+
     # ── Wake Word Detection (#165) ───────────────────────────────────────
     wake_word_enabled: bool = Field(False, alias="BANTZ_WAKE_WORD_ENABLED")
     picovoice_access_key: str = Field("", alias="BANTZ_PICOVOICE_ACCESS_KEY")
