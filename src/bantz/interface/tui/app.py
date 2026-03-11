@@ -13,13 +13,19 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Footer, Input, Static
 from textual import work
 
 from bantz.core.brain import brain, BrainResult
 from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
 from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel
+from bantz.interface.tui.panels.header import (
+    OperationsHeader,
+    ServiceHealthChanged,
+    ServiceStatus,
+    MemoryCountUpdated,
+)
 
 log = logging.getLogger("bantz.tui")
 _STYLES_PATH = Path(__file__).parent / "styles.tcss"
@@ -47,7 +53,7 @@ class BantzApp(App):
         self._busy = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield OperationsHeader(id="ops-header")
         with Horizontal(id="main-layout"):
             with Vertical(id="chat-panel"):
                 yield ChatLog(id="chat-log", highlight=True, markup=True)
@@ -544,6 +550,28 @@ class BantzApp(App):
             chat.add_error(f"Ollama unreachable: {config.ollama_base_url}")
             chat.add_system("  → Is `ollama serve` running?")
 
+    def notify_service_health(
+        self, service: str, status: ServiceStatus, detail: str = "",
+    ) -> None:
+        """Fire a ServiceHealthChanged event for the OperationsHeader.
+
+        Call from anywhere: ``app.notify_service_health('ollama', ServiceStatus.UP)``
+        This is the event-driven health hook — no periodic pinging needed.
+        """
+        try:
+            header = self.query_one("#ops-header", OperationsHeader)
+            header.post_message(ServiceHealthChanged(service, status, detail))
+        except Exception:
+            pass
+
+    def notify_memory_counts(self, messages: int, sessions: int) -> None:
+        """Fire a MemoryCountUpdated event (call after adding a message)."""
+        try:
+            header = self.query_one("#ops-header", OperationsHeader)
+            header.post_message(MemoryCountUpdated(messages, sessions))
+        except Exception:
+            pass
+
     # ── Input handler ──────────────────────────────────────────────────────
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -655,6 +683,7 @@ class BantzApp(App):
             except Exception:
                 pass
 
+            self._update_header_counts()
             return
 
         # ── Non-streaming response ──
@@ -668,6 +697,7 @@ class BantzApp(App):
             if result.tool_used:
                 chat.add_tool(result.tool_used)
             chat.add_bantz(result.response)
+        self._update_header_counts()
 
     async def _handle_confirm(self, text: str, chat: ChatLog) -> None:
         pending = self._pending
@@ -768,6 +798,19 @@ class BantzApp(App):
         try:
             panel = self.query_one("#right-panel")
             panel.display = not panel.display
+        except Exception:
+            pass
+
+    def _update_header_counts(self) -> None:
+        """Push latest memory/session counts to OperationsHeader (event-driven)."""
+        try:
+            from bantz.data import data_layer
+            if data_layer.conversations:
+                stats = data_layer.conversations.stats()
+                self.notify_memory_counts(
+                    stats.get("total_messages", 0),
+                    stats.get("total_conversations", 0),
+                )
         except Exception:
             pass
 

@@ -11,6 +11,19 @@ from typing import AsyncIterator
 from bantz.config import config
 
 
+def _notify_health(ok: bool) -> None:
+    """Fire event-driven health status to OperationsHeader (#136)."""
+    try:
+        from bantz.interface.tui.panels.header import ServiceStatus
+        from textual.app import App
+        app = App.current
+        if app and hasattr(app, "notify_service_health"):
+            status = ServiceStatus.UP if ok else ServiceStatus.DOWN
+            app.call_from_thread(app.notify_service_health, "ollama", status)
+    except Exception:
+        pass
+
+
 class OllamaClient:
     def __init__(self) -> None:
         self.base_url = config.ollama_base_url
@@ -18,14 +31,19 @@ class OllamaClient:
 
     async def chat(self, messages: list[dict], stream: bool = False) -> str:
         """Simple chat — returns a single string."""
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": False},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["message"]["content"]
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/api/chat",
+                    json={"model": self.model, "messages": messages, "stream": False},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                _notify_health(True)
+                return data["message"]["content"]
+        except Exception:
+            _notify_health(False)
+            raise
 
     async def chat_stream(self, messages: list[dict]) -> AsyncIterator[str]:
         """

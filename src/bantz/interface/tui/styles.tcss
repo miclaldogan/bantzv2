@@ -91,9 +91,19 @@ MetricRow .metric-label {
     margin-top: 1;
 }
 
-Header {
+/* ── Operations Header (#136) ───────────────────────────── */
+
+OperationsHeader {
+    dock: top;
+    height: 3;
     background: #0a1a0a;
     color: #00ff88;
+    padding: 0 1;
+    border-bottom: solid #1e3a1e;
+}
+
+#ops-header {
+    height: 3;
 }
 
 Footer {
@@ -116,7 +126,7 @@ Footer {
 .mood-chill #chat-panel {
     border: solid #00ff88;
 }
-.mood-chill Header {
+.mood-chill OperationsHeader {
     background: #0a1a0a;
     color: #00ff88;
 }
@@ -134,7 +144,7 @@ Footer {
 .mood-focused #chat-panel {
     border: solid #4488ff;
 }
-.mood-focused Header {
+.mood-focused OperationsHeader {
     background: #0a0a1a;
     color: #4488ff;
 }
@@ -152,7 +162,7 @@ Footer {
 .mood-busy #chat-panel {
     border: solid #ffaa00;
 }
-.mood-busy Header {
+.mood-busy OperationsHeader {
     background: #1a1a0a;
     color: #ffaa00;
 }
@@ -170,7 +180,7 @@ Footer {
 .mood-stressed #chat-panel {
     border: solid #ff4444;
 }
-.mood-stressed Header {
+.mood-stressed OperationsHeader {
     background: #1a0a0a;
     color: #ff4444;
 }
@@ -188,7 +198,7 @@ Footer {
 .mood-sleeping #chat-panel {
     border: solid #8844cc;
 }
-.mood-sleeping Header {
+.mood-sleeping OperationsHeader {
     background: #0a0a1a;
     color: #8844cc;
 }

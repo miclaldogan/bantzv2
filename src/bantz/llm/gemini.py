@@ -18,6 +18,19 @@ from typing import AsyncIterator
 from bantz.config import config
 
 
+def _notify_gemini_health(ok: bool) -> None:
+    """Fire event-driven health status to OperationsHeader (#136)."""
+    try:
+        from bantz.interface.tui.panels.header import ServiceStatus
+        from textual.app import App
+        app = App.current
+        if app and hasattr(app, "notify_service_health"):
+            status = ServiceStatus.UP if ok else ServiceStatus.DOWN
+            app.call_from_thread(app.notify_service_health, "gemini", status)
+    except Exception:
+        pass
+
+
 class GeminiClient:
     """Lightweight Gemini API client using REST (no SDK dependency)."""
 
@@ -88,8 +101,10 @@ class GeminiClient:
         try:
             candidates = data["candidates"]
             parts = candidates[0]["content"]["parts"]
+            _notify_gemini_health(True)
             return parts[0]["text"]
         except (KeyError, IndexError) as e:
+            _notify_gemini_health(False)
             raise RuntimeError(f"Unexpected Gemini response format: {e}") from e
 
     async def chat_stream(self, messages: list[dict], temperature: float = 0.3) -> AsyncIterator[str]:
