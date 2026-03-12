@@ -45,6 +45,62 @@ except ImportError:
     graph_memory = None  # neo4j driver not installed
 
 
+# ── Direct RLHF: Sentiment & Feedback Keywords (#180) ───────────────
+# Uses phrase-based patterns with regex \b word boundaries to prevent
+# false positives (e.g. "Can you stop the alarm?" ≠ scolding).
+# MUST be checked against the RAW (untranslated) user input so Turkish
+# keywords are found even when brain.process() translates to English.
+
+POSITIVE_FEEDBACK_KWS: tuple[str, ...] = (
+    # English — phrases & safe single words
+    "good job", "well done", "nice work", "thank you", "thanks a lot",
+    "perfect", "great job", "excellent", "brilliant", "love it",
+    "amazing", "awesome", "impressed", "bravo", "spot on",
+    "nicely done", "good work", "great work", "much appreciated",
+    # Turkish
+    "aferin", "helal", "harikasın", "süpersin", "çok iyi",
+    "teşekkürler", "sağ ol", "güzel iş", "mükemmel", "muhteşem",
+    "bravo", "tebrikler", "eyvallah", "eline sağlık", "harika",
+)
+
+NEGATIVE_FEEDBACK_KWS: tuple[str, ...] = (
+    # English — intent-bearing phrases (not bare "stop" or "bad")
+    "you are wrong", "that's wrong", "that is wrong", "not right",
+    "bad answer", "terrible answer", "useless answer",
+    "you messed up", "not helpful", "completely wrong",
+    "wrong answer", "you failed", "this is wrong",
+    "are you stupid", "are you dumb", "what a mess",
+    # Turkish — intent-bearing phrases
+    "hata yapıyorsun", "saçmalama", "yanlış yaptın", "yanlış cevap",
+    "berbat cevap", "işe yaramaz", "hiç yardımcı olmadın",
+    "hayır yanlış", "olmamış", "ne saçmalıyorsun", "düzelt şunu",
+)
+
+
+def _detect_feedback(raw_input: str) -> str | None:
+    """Check if the *raw* (untranslated) user input contains explicit feedback.
+
+    Uses regex word boundaries (\\b) to prevent false positives like
+    'bus stop' triggering the 'stop' keyword.  Takes the RAW input so
+    Turkish keywords are matched before the translation layer.
+
+    Returns ``'positive'``, ``'negative'``, or ``None``.
+    Negative is checked first (higher priority).
+    """
+    lower = raw_input.lower()
+
+    # Check negative FIRST — scolding outranks praise
+    for kw in NEGATIVE_FEEDBACK_KWS:
+        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
+            return "negative"
+
+    for kw in POSITIVE_FEEDBACK_KWS:
+        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
+            return "positive"
+
+    return None
+
+
 # ── Toast notification hook (#137) ──────────────────────────────────
 # Set by the TUI app on mount: ``brain_mod._toast_callback = app._on_brain_toast``
 _toast_callback = None
@@ -211,6 +267,7 @@ class Brain:
         self._last_messages: list[dict] = []   # last listed emails [{id, from, subject, ...}]
         self._last_events: list[dict] = []     # last listed calendar events
         self._last_draft: dict | None = None   # last email draft {to, subject, body}
+        self._feedback_ctx: str = ""  # one-shot RLHF context (#180)
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
@@ -1175,6 +1232,37 @@ class Brain:
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
 
+        # ── Sentiment RLHF intercept (#180) ──────────────────────────
+        # Uses RAW user_input (not en_input) to catch Turkish keywords
+        # before the translation layer converts them to English.
+        feedback = _detect_feedback(user_input)
+        if feedback:
+            try:
+                from bantz.agent.rl_engine import rl_engine, Action, encode_state
+                if rl_engine.initialized:
+                    state = encode_state(
+                        time_segment=tc.get("time_segment", "morning"),
+                        day=tc.get("day_name", "monday").lower(),
+                        location=tc.get("location", "home"),
+                        recent_tool="feedback_chat",
+                    )
+                    reward_val = 2.0 if feedback == "positive" else -2.0
+                    rl_engine.force_reward(state, Action.FEEDBACK_CHAT, reward_val)
+                    log.info("RLHF sentiment: %s → reward %.1f", feedback, reward_val)
+            except Exception:
+                pass  # never crash the pipeline
+            if feedback == "positive":
+                self._feedback_ctx = (
+                    "\n[The user just praised you. Show humble butler gratitude — "
+                    "a brief, dignified acknowledgement. Do not be excessive.]"
+                )
+            else:
+                self._feedback_ctx = (
+                    "\n[The user just scolded you. Show a brief moment of butler "
+                    "composure under pressure. Apologise sincerely, ask how to "
+                    "correct yourself. Do NOT grovel.]"
+                )
+
         # NOTE: Intervention queue is now consumed by the TUI's toast
         # system (#137) instead of being popped here.  Brain no longer
         # prepends intervention text to chat responses.
@@ -1569,13 +1657,17 @@ class Brain:
             "Ma'am is not at the machine. Assist her from afar."
         ) if getattr(self, "_is_remote", False) else ""
 
+        # One-shot RLHF context injection (#180)
+        feedback_hint = getattr(self, "_feedback_ctx", "")
+        self._feedback_ctx = ""  # clear after consumption
+
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
                 persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + remote_hint},
+                formality_hint=_formality_hint()) + remote_hint + feedback_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1615,13 +1707,17 @@ class Brain:
             "Ma'am is not at the machine. Assist her from afar."
         ) if getattr(self, "_is_remote", False) else ""
 
+        # One-shot RLHF context injection (#180)
+        feedback_hint = getattr(self, "_feedback_ctx", "")
+        self._feedback_ctx = ""  # clear after consumption
+
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
                 persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + remote_hint},
+                formality_hint=_formality_hint()) + remote_hint + feedback_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
