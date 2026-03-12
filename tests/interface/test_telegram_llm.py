@@ -1072,3 +1072,157 @@ class TestThrottledStreaming:
             assert "▍" not in final_edit  # cursor removed in final edit
         finally:
             mod._ALLOWED = original
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Terminal Parity — Message Lock
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMessageLock:
+    """Messages must be serialised via _msg_lock to prevent context corruption."""
+
+    def test_msg_lock_exists(self):
+        """telegram_bot module must expose an asyncio.Lock."""
+        import bantz.interface.telegram_bot as mod
+        assert hasattr(mod, "_msg_lock")
+        assert isinstance(mod._msg_lock, asyncio.Lock)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_messages_serialised(self):
+        """Two concurrent handle_message calls must NOT overlap processing."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            order: list[str] = []
+
+            async def slow_process(text, **kw):
+                order.append(f"start:{text}")
+                await asyncio.sleep(0.05)
+                order.append(f"end:{text}")
+                return FakeBrainResult(response=f"reply to {text}")
+
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(side_effect=slow_process)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    u1 = _make_update(user_id=111, text="first")
+                    u2 = _make_update(user_id=111, text="second")
+                    await asyncio.gather(
+                        mod.handle_message(u1, _ctx()),
+                        mod.handle_message(u2, _ctx()),
+                    )
+
+            # Because of the lock, processing must be serial: start→end→start→end
+            assert order[0].startswith("start:")
+            assert order[1].startswith("end:")
+            assert order[2].startswith("start:")
+            assert order[3].startswith("end:")
+        finally:
+            mod._ALLOWED = original
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Terminal Parity — Maintenance Spam Filter
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMaintenanceSpamFilter:
+    """All-green maintenance results must be suppressed on Telegram."""
+
+    def test_all_green_maintenance_is_spam(self):
+        """A maintenance result with zero failures → spam."""
+        from bantz.interface.telegram_bot import _is_maintenance_spam
+        result = FakeBrainResult(
+            response="Workflow complete: 3/3 steps succeeded.\n✓ [a] ok\n✓ [b] ok\n✓ [c] ok",
+            tool_used="maintenance",
+        )
+        assert _is_maintenance_spam(result) is True
+
+    def test_maintenance_with_failure_not_spam(self):
+        """A maintenance result with ≥1 failure → NOT spam."""
+        from bantz.interface.telegram_bot import _is_maintenance_spam
+        result = FakeBrainResult(
+            response="Workflow complete: 2/3 steps succeeded.\n✓ [a] ok\n✗ [b] fail\n✓ [c] ok",
+            tool_used="maintenance",
+        )
+        assert _is_maintenance_spam(result) is False
+
+    def test_non_maintenance_never_spam(self):
+        """Non-maintenance tool results are never spam."""
+        from bantz.interface.telegram_bot import _is_maintenance_spam
+        result = FakeBrainResult(response="Some response", tool_used="weather")
+        assert _is_maintenance_spam(result) is False
+
+    def test_chat_result_never_spam(self):
+        """Chat results (tool_used=None) are never spam."""
+        from bantz.interface.telegram_bot import _is_maintenance_spam
+        result = FakeBrainResult(response="Hello ma'am", tool_used=None)
+        assert _is_maintenance_spam(result) is False
+
+    @pytest.mark.asyncio
+    async def test_handle_message_suppresses_green_maintenance(self):
+        """handle_message must delete placeholder and return for all-green maintenance."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="run maintenance")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(
+                response="Workflow complete: 3/3 steps succeeded.\n✓ [a] ok\n✓ [b] ok\n✓ [c] ok",
+                tool_used="maintenance",
+            )
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            # Placeholder should be deleted, NOT edited with the response
+            placeholder = update.message.reply_text.return_value
+            placeholder.delete.assert_awaited_once()
+            # No edit_text should have been called with the maintenance response
+            for call in placeholder.edit_text.call_args_list:
+                assert "Workflow complete" not in str(call)
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_handle_message_shows_failed_maintenance(self):
+        """handle_message must show maintenance results that contain failures."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="run maintenance")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(
+                response="Workflow complete: 2/3 steps succeeded.\n✓ [a] ok\n✗ [b] error\n✓ [c] ok",
+                tool_used="maintenance",
+            )
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            # Placeholder should be edited with the failure result
+            placeholder = update.message.reply_text.return_value
+            placeholder.delete.assert_not_awaited()
+            edit_args = placeholder.edit_text.call_args_list[-1][0][0]
+            assert "✗" in edit_args
+        finally:
+            mod._ALLOWED = original

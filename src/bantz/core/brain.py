@@ -1675,10 +1675,10 @@ class Brain:
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
         remote_hint = (
-            "\n[Remote Telegraph Mode: You are conversing directly WITH "
-            "ma'am via telegraph. She is away from her physical machine, "
-            "but SHE is the one writing to you right now. Address her "
-            "directly and recognize her as your employer.]"
+            "\n[Note: You are replying via mobile text. Respond EXACTLY "
+            "as you would in the local terminal, but keep it EXTREMELY "
+            "concise and direct. Do NOT over-explain or roleplay the "
+            "communication method.]"
         ) if getattr(self, "_is_remote", False) else ""
 
         # One-shot RLHF context injection (#180)
@@ -1727,10 +1727,10 @@ class Brain:
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
         remote_hint = (
-            "\n[Remote Telegraph Mode: You are conversing directly WITH "
-            "ma'am via telegraph. She is away from her physical machine, "
-            "but SHE is the one writing to you right now. Address her "
-            "directly and recognize her as your employer.]"
+            "\n[Note: You are replying via mobile text. Respond EXACTLY "
+            "as you would in the local terminal, but keep it EXTREMELY "
+            "concise and direct. Do NOT over-explain or roleplay the "
+            "communication method.]"
         ) if getattr(self, "_is_remote", False) else ""
 
         # One-shot RLHF context injection (#180)

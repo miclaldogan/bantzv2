@@ -89,6 +89,10 @@ PLACEHOLDER_MESSAGES: list[str] = [
 # ── Throttled streaming config (#181 follow-up) ──────────────────────────────
 _STREAM_INTERVAL: float = 2.0  # seconds between edit_text updates
 
+# ── Message processing lock — strict serial execution ─────────────────────────
+# Prevents context-window corruption when user sends burst messages.
+_msg_lock = asyncio.Lock()
+
 
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: silently drop messages from non-whitelisted users (#178)."""
@@ -446,6 +450,21 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ── Cognitive Wire: free-text → brain.process() (#178) ────────────────────────
 
+
+def _is_maintenance_spam(result) -> bool:
+    """Return True if a maintenance/workflow result has zero failures.
+
+    Suppress "all-green" maintenance chatter on Telegram — only show
+    results that contain at least one failed step.
+    """
+    if getattr(result, "tool_used", None) != "maintenance":
+        return False
+    text = getattr(result, "response", "") or ""
+    # "Workflow complete: 5/5 steps succeeded" → spam
+    # "Workflow complete: 4/5 steps succeeded" + "✗" → NOT spam
+    return "✗" not in text
+
+
 def _is_rate_limited(user_id: int) -> bool:
     """Return True if user has exceeded 10 messages/minute."""
     now = time.monotonic()
@@ -466,6 +485,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
       1. Send placeholder immediately (covers Telegram's 5s typing limit)
       2. brain.process() with typing indicator
       3. Edit placeholder with actual response (chunked if >4096)
+
+    Messages are serialised via _msg_lock so burst sends don't corrupt
+    the context window.
     """
     if not config.telegram_llm_mode:
         await update.message.reply_text(
@@ -494,58 +516,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Step 2: Typing indicator while brain processes
     await update.message.chat.send_action(ChatAction.TYPING)
 
-    try:
-        from bantz.core.brain import brain
-        result = await brain.process(user_text, is_remote=True)
+    # Acquire lock — serialise message processing to prevent context corruption
+    async with _msg_lock:
+        try:
+            from bantz.core.brain import brain
+            result = await brain.process(user_text, is_remote=True)
 
-        # Collect response: prefer stream if available
-        if result.stream:
-            response = await _stream_to_placeholder(placeholder, result.stream)
-        else:
-            response = result.response
-
-        if response and response.strip():
-            cleaned = response.strip()
-
-            # Step 3: Edit placeholder with actual response (#181)
-            chunks = _chunk_text(cleaned)
-            if not await _safe_edit(placeholder, chunks[0]):
-                # Fallback: delete placeholder, send via reply_text
+            # ── Maintenance spam filter ──────────────────────────────
+            if _is_maintenance_spam(result):
+                # All steps green — suppress on Telegram, just remove placeholder
                 try:
                     await placeholder.delete()
                 except Exception:
                     pass
-                await _safe_reply(update, cleaned)
-            else:
-                # Remaining chunks as new messages
-                for extra in chunks[1:]:
-                    await update.message.reply_text(extra)
+                return
 
-            # ── Persist streamed response to memory + graph (#178 fix) ────
-            # Brain only auto-saves non-streaming responses; for streams the
-            # consumer is responsible (mirrors TUI behaviour in app.py L718).
+            # Collect response: prefer stream if available
             if result.stream:
-                try:
-                    from bantz.data.dal import data_layer
-                    data_layer.conversations.add(
-                        "assistant", cleaned,
-                        tool_used=result.tool_used,
-                    )
-                except Exception:
-                    log.debug("Failed to persist Telegram response to DB")
-                try:
-                    await brain._graph_store(
-                        user_text, cleaned, result.tool_used,
-                    )
-                except Exception:
-                    log.debug("Failed to persist Telegram response to graph")
-        else:
-            if not await _safe_edit(placeholder, "…"):
-                await update.message.reply_text("…")
-    except Exception as exc:
-        log.exception("Cognitive wire error for user %d", user_id)
-        if not await _safe_edit(placeholder, f"⚠️ Error: {exc}"):
-            await update.message.reply_text(f"⚠️ Error: {exc}")
+                response = await _stream_to_placeholder(placeholder, result.stream)
+            else:
+                response = result.response
+
+            if response and response.strip():
+                cleaned = response.strip()
+
+                # Step 3: Edit placeholder with actual response (#181)
+                chunks = _chunk_text(cleaned)
+                if not await _safe_edit(placeholder, chunks[0]):
+                    # Fallback: delete placeholder, send via reply_text
+                    try:
+                        await placeholder.delete()
+                    except Exception:
+                        pass
+                    await _safe_reply(update, cleaned)
+                else:
+                    # Remaining chunks as new messages
+                    for extra in chunks[1:]:
+                        await update.message.reply_text(extra)
+
+                # ── Persist streamed response to memory + graph (#178 fix) ────
+                # Brain only auto-saves non-streaming responses; for streams the
+                # consumer is responsible (mirrors TUI behaviour in app.py L718).
+                if result.stream:
+                    try:
+                        from bantz.data.dal import data_layer
+                        data_layer.conversations.add(
+                            "assistant", cleaned,
+                            tool_used=result.tool_used,
+                        )
+                    except Exception:
+                        log.debug("Failed to persist Telegram response to DB")
+                    try:
+                        await brain._graph_store(
+                            user_text, cleaned, result.tool_used,
+                        )
+                    except Exception:
+                        log.debug("Failed to persist Telegram response to graph")
+            else:
+                if not await _safe_edit(placeholder, "…"):
+                    await update.message.reply_text("…")
+        except Exception as exc:
+            log.exception("Cognitive wire error for user %d", user_id)
+            if not await _safe_edit(placeholder, f"⚠️ Error: {exc}"):
+                await update.message.reply_text(f"⚠️ Error: {exc}")
 
 
 # ── Bot runner ────────────────────────────────────────────────────────────────

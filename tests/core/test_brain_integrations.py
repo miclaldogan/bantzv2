@@ -949,48 +949,50 @@ class TestAmbientProcessHandlers:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Remote Telegraph Identity Fix (third-person schizophrenia bug)
+# Remote Hint — Terminal Parity (replaces old Telegraph RP)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestRemoteHintIdentity:
-    """remote_hint must identify the Telegram user AS ma'am, not a stranger."""
+    """remote_hint must be a concise mobile-text note, NOT a heavy RP prompt."""
 
-    def test_remote_hint_says_directly_with_maam(self):
-        """The hint must say 'directly WITH ma'am', not 'Ma'am is not at the machine'."""
+    def test_remote_hint_concise_mobile_note(self):
+        """The hint must say 'mobile text' and be concise."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat)
-        assert "directly WITH" in src or "directly with" in src.lower()
+        assert "mobile text" in src
 
-    def test_remote_hint_no_stranger_phrasing(self):
-        """The hint must NOT say 'Ma'am is not at the machine'."""
+    def test_remote_hint_no_telegraph_roleplay(self):
+        """The hint must NOT contain any telegraph/remote RP language."""
         import inspect
         from bantz.core.brain import Brain
         src_chat = inspect.getsource(Brain._chat)
         src_stream = inspect.getsource(Brain._chat_stream)
+        assert "Telegraph Mode" not in src_chat
+        assert "Telegraph Mode" not in src_stream
         assert "not at the machine" not in src_chat
         assert "not at the machine" not in src_stream
 
-    def test_remote_hint_says_employer(self):
-        """The hint must tell Bantz to recognize ma'am as employer."""
+    def test_remote_hint_says_concise_and_direct(self):
+        """The hint must instruct conciseness."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat)
-        assert "employer" in src
+        assert "concise" in src.lower()
+        assert "direct" in src.lower()
 
-    def test_remote_hint_address_directly(self):
-        """The hint must instruct Bantz to address her directly."""
+    def test_remote_hint_says_exactly_like_terminal(self):
+        """The hint must tell LLM to respond EXACTLY as in local terminal."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat)
-        assert "Address her" in src
-        assert "directly" in src
+        assert "EXACTLY" in src
 
     def test_remote_hint_consistent_in_stream(self):
-        """_chat_stream must have the same identity-aware hint."""
+        """_chat_stream must have the same concise mobile hint."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat_stream)
-        assert "directly WITH" in src or "directly with" in src.lower()
-        assert "employer" in src
+        assert "mobile text" in src
+        assert "concise" in src.lower()
