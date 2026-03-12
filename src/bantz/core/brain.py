@@ -54,7 +54,7 @@ def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> Non
     """Push a toast notification to the TUI from brain / background context.
 
     Uses the same ``App.current`` pattern as ollama._notify_health (#136).
-    Falls back to the callback if set, or does nothing if headless.
+    Falls back to the callback if set, then desktop notify-send, or does nothing.
     """
     if _toast_callback:
         try:
@@ -68,6 +68,14 @@ def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> Non
         app = _App.current
         if app and hasattr(app, "push_toast"):
             app.call_from_thread(app.push_toast, title, reason, toast_type)
+            return
+    except Exception:
+        pass
+    # Fallback: desktop notification via notify-send (#153)
+    try:
+        from bantz.agent.notifier import notifier
+        if notifier.enabled:
+            notifier.send(f"Bantz: {title}", reason or "")
     except Exception:
         pass
 
@@ -608,6 +616,20 @@ class Brain:
         ):
             return {"tool": "_tts_stop", "args": {}}
 
+        # Wake word control (#165) — "stop listening" / "start listening"
+        if re.search(
+            r"start\s+listen|resume\s+listen|wake\s*word\s+on|"
+            r"enable\s+wake|listen\s+for\s+me|dinlemeye\s+başla",
+            both,
+        ):
+            return {"tool": "_wake_word_on", "args": {}}
+        if re.search(
+            r"stop\s+listen|pause\s+(?:wake|listen)|wake\s*word\s+off|"
+            r"disable\s+wake|don'?t\s+listen|dinlemeyi\s+durdur",
+            both,
+        ):
+            return {"tool": "_wake_word_off", "args": {}}
+
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
                                     "what's today", "what do i have today")):
@@ -1080,6 +1102,32 @@ class Brain:
                 text = "I'm not speaking right now."
             data_layer.conversations.add("assistant", text, tool_used="tts")
             return BrainResult(response=text, tool_used="tts")
+
+        if quick and quick["tool"] == "_wake_word_off":
+            try:
+                from bantz.agent.wake_word import wake_listener
+                if wake_listener.running:
+                    wake_listener.stop()
+                    text = "🔇 Wake word listener stopped."
+                else:
+                    text = "Wake word listener is not running."
+            except Exception:
+                text = "Wake word listener is not available."
+            data_layer.conversations.add("assistant", text, tool_used="wake_word")
+            return BrainResult(response=text, tool_used="wake_word")
+
+        if quick and quick["tool"] == "_wake_word_on":
+            try:
+                from bantz.agent.wake_word import wake_listener
+                if wake_listener.running:
+                    text = "Wake word listener is already running."
+                else:
+                    ok = wake_listener.start()
+                    text = "🎤 Wake word listener started." if ok else "❌ Could not start wake word listener."
+            except Exception:
+                text = "Wake word listener is not available."
+            data_layer.conversations.add("assistant", text, tool_used="wake_word")
+            return BrainResult(response=text, tool_used="wake_word")
 
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing

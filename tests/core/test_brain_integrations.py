@@ -583,3 +583,193 @@ class TestProcessMaintenanceReflectionRouting:
 
         assert result.tool_used == "reflection"
         b._handle_run_reflection.assert_awaited_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Wake word voice control routes (#165)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestWakeWordRoutes:
+    """Ensure brain can enable/disable wake word via voice commands."""
+
+    @staticmethod
+    def _qr(orig: str, en: str | None = None):
+        from bantz.core.brain import Brain
+        return Brain._quick_route(orig, en or orig)
+
+    # ── Wake word OFF ────────────────────────────────────────────────
+
+    def test_stop_listening(self):
+        assert self._qr("stop listening")["tool"] == "_wake_word_off"
+
+    def test_pause_wake_word(self):
+        assert self._qr("pause wake word")["tool"] == "_wake_word_off"
+
+    def test_wake_word_off(self):
+        assert self._qr("wake word off")["tool"] == "_wake_word_off"
+
+    def test_disable_wake(self):
+        assert self._qr("disable wake word")["tool"] == "_wake_word_off"
+
+    def test_dont_listen(self):
+        assert self._qr("don't listen")["tool"] == "_wake_word_off"
+
+    def test_dinlemeyi_durdur(self):
+        assert self._qr("dinlemeyi durdur")["tool"] == "_wake_word_off"
+
+    # ── Wake word ON ─────────────────────────────────────────────────
+
+    def test_start_listening(self):
+        assert self._qr("start listening")["tool"] == "_wake_word_on"
+
+    def test_resume_listening(self):
+        assert self._qr("resume listening")["tool"] == "_wake_word_on"
+
+    def test_wake_word_on(self):
+        assert self._qr("wake word on")["tool"] == "_wake_word_on"
+
+    def test_enable_wake(self):
+        assert self._qr("enable wake word")["tool"] == "_wake_word_on"
+
+    def test_dinlemeye_basla(self):
+        assert self._qr("dinlemeye başla")["tool"] == "_wake_word_on"
+
+    # ── False positives ──────────────────────────────────────────────
+
+    def test_listen_to_music_is_not_wake(self):
+        """'listen to music' should NOT trigger wake word control."""
+        r = self._qr("listen to music")
+        assert r is None or r.get("tool") not in ("_wake_word_on", "_wake_word_off")
+
+
+class TestWakeWordProcessHandlers:
+    """Brain.process() handlers for _wake_word_on / _wake_word_off."""
+
+    def test_process_wake_word_off(self):
+        from bantz.core.brain import Brain
+
+        b = Brain()
+        b._ensure_memory = MagicMock()
+        b._ensure_graph = AsyncMock()
+        b._to_en = AsyncMock(return_value="stop listening")
+
+        mock_listener = MagicMock()
+        mock_listener.running = True
+
+        with patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.data_layer") as mock_dl:
+            mock_tc.snapshot.return_value = {"prompt_hint": ""}
+            mock_dl.conversations = MagicMock()
+
+            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
+                mock_wf.detect.return_value = []
+                with patch("bantz.agent.wake_word.wake_listener", mock_listener):
+                    result = _run(b.process("stop listening"))
+
+        assert result.tool_used == "wake_word"
+        mock_listener.stop.assert_called_once()
+
+    def test_process_wake_word_on(self):
+        from bantz.core.brain import Brain
+
+        b = Brain()
+        b._ensure_memory = MagicMock()
+        b._ensure_graph = AsyncMock()
+        b._to_en = AsyncMock(return_value="start listening")
+
+        mock_listener = MagicMock()
+        mock_listener.running = False
+        mock_listener.start.return_value = True
+
+        with patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.data_layer") as mock_dl:
+            mock_tc.snapshot.return_value = {"prompt_hint": ""}
+            mock_dl.conversations = MagicMock()
+
+            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
+                mock_wf.detect.return_value = []
+                with patch("bantz.agent.wake_word.wake_listener", mock_listener):
+                    result = _run(b.process("start listening"))
+
+        assert result.tool_used == "wake_word"
+        mock_listener.start.assert_called_once()
+
+    def test_process_wake_word_off_not_running(self):
+        from bantz.core.brain import Brain
+
+        b = Brain()
+        b._ensure_memory = MagicMock()
+        b._ensure_graph = AsyncMock()
+        b._to_en = AsyncMock(return_value="stop listening")
+
+        mock_listener = MagicMock()
+        mock_listener.running = False
+
+        with patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.data_layer") as mock_dl:
+            mock_tc.snapshot.return_value = {"prompt_hint": ""}
+            mock_dl.conversations = MagicMock()
+
+            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
+                mock_wf.detect.return_value = []
+                with patch("bantz.agent.wake_word.wake_listener", mock_listener):
+                    result = _run(b.process("stop listening"))
+
+        assert "not running" in result.response.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Notifier fallback in _notify_toast (#153)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestNotifyToastFallback:
+    """_notify_toast should fall back to desktop notify-send when TUI is unreachable."""
+
+    def test_fallback_to_notifier_when_no_tui(self):
+        import bantz.core.brain as brain_mod
+
+        old_cb = brain_mod._toast_callback
+        brain_mod._toast_callback = None
+
+        mock_notifier = MagicMock()
+        mock_notifier.enabled = True
+
+        try:
+            with patch("bantz.agent.notifier.notifier", mock_notifier):
+                # Suppress App.current failure
+                with patch("textual.app.App") as mock_app_cls:
+                    type(mock_app_cls).current = property(lambda self: None)
+                    brain_mod._notify_toast("Test Title", "Test Body", "info")
+
+            mock_notifier.send.assert_called_once()
+            call_args = mock_notifier.send.call_args
+            assert "Test Title" in call_args[0][0]
+        finally:
+            brain_mod._toast_callback = old_cb
+
+    def test_callback_takes_priority(self):
+        import bantz.core.brain as brain_mod
+
+        cb = MagicMock()
+        old_cb = brain_mod._toast_callback
+        brain_mod._toast_callback = cb
+
+        mock_notifier = MagicMock()
+        mock_notifier.enabled = True
+
+        try:
+            with patch("bantz.agent.notifier.notifier", mock_notifier):
+                brain_mod._notify_toast("Title", "Body", "info")
+
+            cb.assert_called_once_with("Title", "Body", "info")
+            mock_notifier.send.assert_not_called()
+        finally:
+            brain_mod._toast_callback = old_cb
+
+    def test_notifier_src_has_fallback(self):
+        """Source code must reference notifier.send as fallback."""
+        import inspect
+        import bantz.core.brain as brain_mod
+        src = inspect.getsource(brain_mod._notify_toast)
+        assert "notifier.send" in src
+        assert "notify-send" in src or "notifier" in src
