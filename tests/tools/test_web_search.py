@@ -23,8 +23,10 @@ class TestFormatResultsDedup:
             {"title": "B", "url": "https://b.com", "snippet": "b"},
         ]
         out = self._format(results)
-        assert "https://a.com" in out
-        assert "https://b.com" in out
+        # extract http(s) URLs and assert presence
+        urls = re.findall(r"https?://[^\s\)\]]+", out)
+        assert any(u.startswith("https://a.com") for u in urls)
+        assert any(u.startswith("https://b.com") for u in urls)
         assert "1. A" in out
         assert "2. B" in out
 
@@ -47,7 +49,9 @@ class TestFormatResultsDedup:
             for i in range(3)
         ]
         out = self._format(results)
-        assert out.count("https://same.com/page") == 1
+        urls = re.findall(r"https?://[^\s\)\]]+", out)
+        # deduplication: only one occurrence of the canonical URL
+        assert sum(1 for u in urls if u.startswith("https://same.com/page")) == 1
 
     def test_empty_url_not_deduped(self):
         """Results without URLs should all be included."""

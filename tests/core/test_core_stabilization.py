@@ -445,7 +445,8 @@ class TestStripMarkdownLinks:
         from bantz.core.finalizer import strip_markdown
         text = "Check this: [Click Here](https://example.com) for details."
         result = strip_markdown(text)
-        assert "https://example.com" in result
+        urls = re.findall(r"https?://[^\s\)\]]+", result)
+        assert any(u.startswith("https://example.com") for u in urls)
         assert "[Click Here]" not in result
         assert "](https" not in result
 
@@ -454,7 +455,8 @@ class TestStripMarkdownLinks:
         from bantz.core.finalizer import strip_markdown
         text = "Telegraph Reference: [https://en.wikipedia.org/wiki/Edith]"
         result = strip_markdown(text)
-        assert "https://en.wikipedia.org/wiki/Edith" in result
+        urls = re.findall(r"https?://[^\s\)\]]+", result)
+        assert any(u.startswith("https://en.wikipedia.org/wiki/Edith") for u in urls)
         assert "[https://" not in result
 
     def test_url_with_parens_in_markdown(self):
@@ -463,15 +465,17 @@ class TestStripMarkdownLinks:
         text = "[Article](https://en.wikipedia.org/wiki/Edith_(name))"
         result = strip_markdown(text)
         # Should extract the URL (may truncate at inner paren, which is OK)
-        assert "https://en.wikipedia.org" in result
+        urls = re.findall(r"https?://[^\s\)\]]+", result)
+        assert any(u.startswith("https://en.wikipedia.org") for u in urls)
 
     def test_multiple_markdown_links(self):
         """Multiple links in one response all get stripped."""
         from bantz.core.finalizer import strip_markdown
         text = "[A](https://a.com) and [B](https://b.com)"
         result = strip_markdown(text)
-        assert "https://a.com" in result
-        assert "https://b.com" in result
+        urls = re.findall(r"https?://[^\s\)\]]+", result)
+        assert any(u.startswith("https://a.com") for u in urls)
+        assert any(u.startswith("https://b.com") for u in urls)
         assert "[A]" not in result
         assert "[B]" not in result
 
