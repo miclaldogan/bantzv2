@@ -608,6 +608,24 @@ class RLEngine:
 
     # ── Stats & Reporting ─────────────────────────────────────────────
 
+    def cumulative_reward(self) -> float:
+        """Sum of all episode rewards, cached for 60s (#172)."""
+        now = time.time()
+        if (
+            hasattr(self, "_cum_reward_cache")
+            and now - self._cum_reward_cache_ts < 60
+        ):
+            return self._cum_reward_cache
+        if not self._initialized or not self.episodes._conn:
+            return 0.0
+        row = self.episodes._conn.execute(
+            "SELECT COALESCE(SUM(reward), 0) FROM rl_episodes"
+        ).fetchone()
+        total = row[0] if row else 0.0
+        self._cum_reward_cache = total
+        self._cum_reward_cache_ts = now
+        return total
+
     def stats(self) -> dict[str, Any]:
         return {
             "initialized": self._initialized,

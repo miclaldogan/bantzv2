@@ -125,6 +125,11 @@ class Config(BaseSettings):
     rl_confidence_threshold: float = Field(0.7, alias="BANTZ_RL_CONFIDENCE_THRESHOLD")
     rl_suggestion_interval: int = Field(1800, alias="BANTZ_RL_SUGGESTION_INTERVAL")
 
+    # ── Bonding Meter (#172) ────────────────────────────────────────────────
+    bonding_enabled: bool = Field(True, alias="BANTZ_BONDING_ENABLED")
+    bonding_sigmoid_rate: float = Field(0.04, alias="BANTZ_BONDING_SIGMOID_RATE")
+    bonding_sigmoid_midpoint: float = Field(25.0, alias="BANTZ_BONDING_SIGMOID_MIDPOINT")
+
     # ── Proactive Interventions (#126) ────────────────────────────────────
     intervention_rate_limit: int = Field(3, alias="BANTZ_INTERVENTION_RATE_LIMIT")
     intervention_toast_ttl: float = Field(20.0, alias="BANTZ_INTERVENTION_TOAST_TTL")
