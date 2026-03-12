@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="bantz.png" alt="Bantz" width="200"/>
+<img src="bantz.png" alt="Bantz" width="700"/>
 
 # BANTZ
 
