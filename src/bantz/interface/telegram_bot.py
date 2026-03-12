@@ -452,17 +452,14 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _is_maintenance_spam(result) -> bool:
-    """Return True if a maintenance/workflow result has zero failures.
+    """Return True for ANY maintenance result on Telegram.
 
-    Suppress "all-green" maintenance chatter on Telegram — only show
-    results that contain at least one failed step.
+    Maintenance output is noisy and irrelevant on mobile — suppress ALL of it.
+    Users can run /briefing to see system health if they want.
     """
     if getattr(result, "tool_used", None) != "maintenance":
         return False
-    text = getattr(result, "response", "") or ""
-    # "Workflow complete: 5/5 steps succeeded" → spam
-    # "Workflow complete: 4/5 steps succeeded" + "✗" → NOT spam
-    return "✗" not in text
+    return True
 
 
 def _is_rate_limited(user_id: int) -> bool:
