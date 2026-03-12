@@ -1,9 +1,9 @@
 """
 Tests — Issue #174 + #176: _quick_route web search & shell/disk fixes
 
-#174 — Web search: strict command-prefix only
+#174 — Web search: natural-language intent matching
   - Explicit commands like "search tony stark" or "araştır quantum physics" → web_search
-  - Natural language ("can you search this", "look it up") → None (falls to cot_route)
+  - Natural phrasing like "who is X", "tell me about X", "what do you know about X" → web_search
   - Query extraction: command prefix stripped, clean query passed
 
 #176 — Shell/disk regex: requires disk-context words
@@ -29,8 +29,8 @@ def _qr(orig: str, en: str | None = None):
 # Issue #174 — Web Search: strict command-prefix
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestWebSearchStrictPrefix:
-    """Only ^(search|google|araştır|...) <query> should match."""
+class TestWebSearchRouting:
+    """Explicit and natural-language search intents should match web_search."""
 
     # ── Should MATCH (explicit command at start) ─────────────────────
 
@@ -67,52 +67,82 @@ class TestWebSearchStrictPrefix:
         r = _qr("search: openai api pricing")
         assert r is not None
         assert r["tool"] == "web_search"
-        assert r["args"]["query"] == "openai api pricing"
 
     def test_google_colon(self):
         r = _qr("google: best linux distro 2026")
         assert r is not None
         assert r["tool"] == "web_search"
 
-    # ── Should NOT match (natural language) ──────────────────────────
+    # ── Should MATCH (natural-language search intents) ───────────────
 
-    def test_natural_language_search_this(self):
-        """'can you search this' should fall through to cot_route."""
-        r = _qr("yeah well iron man dead, you can search this")
-        assert r is None or r.get("tool") != "web_search"
+    def test_who_is_query(self):
+        """'who is stephen strange' should trigger web_search."""
+        r = _qr("who is stephen strange")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "stephen strange" in r["args"]["query"].lower()
 
-    def test_natural_language_look_it_up(self):
-        r = _qr("I don't know, look it up maybe")
-        assert r is None or r.get("tool") != "web_search"
+    def test_what_is_query(self):
+        r = _qr("what is quantum computing")
+        assert r is not None
+        assert r["tool"] == "web_search"
 
-    def test_conversational_search_mention(self):
-        r = _qr("do you know how to search for files in linux?")
-        assert r is None or r.get("tool") != "web_search"
+    def test_tell_me_about(self):
+        r = _qr("tell me about the roman empire")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "roman empire" in r["args"]["query"].lower()
 
-    def test_turkish_natural_araştırır_mısın(self):
-        """'internette araştırır mısın' is natural language, not a command."""
-        r = _qr(
-            "Demir adamın neden öldüğünü internette araştırır mısın lütfen dostum",
-            "Can you search why iron man died on the internet please buddy"
-        )
-        # Should NOT match quick_route — falls to cot_route for clean extraction
-        assert r is None or r.get("tool") != "web_search"
+    def test_what_do_you_know_about(self):
+        r = _qr("what do you know about stephen strange")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "stephen strange" in r["args"]["query"].lower()
 
-    def test_search_in_middle_of_sentence(self):
+    def test_find_information_on(self):
+        r = _qr("find information on black holes")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "black holes" in r["args"]["query"].lower()
+
+    def test_find_info_about(self):
+        r = _qr("find info about python 3.12")
+        assert r is not None
+        assert r["tool"] == "web_search"
+
+    def test_search_for(self):
+        r = _qr("search for best pizza recipe")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "best pizza recipe" in r["args"]["query"].lower()
+
+    def test_search_about(self):
+        r = _qr("search about machine learning")
+        assert r is not None
+        assert r["tool"] == "web_search"
+
+    def test_learn_about(self):
+        r = _qr("learn about neural networks")
+        assert r is not None
+        assert r["tool"] == "web_search"
+
+    def test_search_mid_sentence(self):
+        """'I need you to search for something' should now match."""
         r = _qr("I need you to search for something about quantum computing")
-        assert r is None or r.get("tool") != "web_search"
+        assert r is not None
+        assert r["tool"] == "web_search"
 
-    def test_anything_about_no_match(self):
-        """Old code matched 'anything about' — now should fall through."""
-        r = _qr("is there anything about this topic?")
-        assert r is None or r.get("tool") != "web_search"
+    def test_find_out_about(self):
+        r = _qr("find out about the latest linux kernel")
+        assert r is not None
+        assert r["tool"] == "web_search"
 
-    def test_find_online_no_match(self):
-        """Old code matched 'find online' — now should fall through."""
-        r = _qr("can you find online the best pizza recipe?")
-        assert r is None or r.get("tool") != "web_search"
+    def test_what_can_you_tell_me_about(self):
+        r = _qr("what can you tell me about docker containers")
+        assert r is not None
+        assert r["tool"] == "web_search"
 
-    # ── Edge cases ───────────────────────────────────────────────────
+    # ── Should NOT match ─────────────────────────────────────────────
 
     def test_search_alone_no_query(self):
         """Just 'search' with nothing after → should not match (query < 2 chars)."""
@@ -130,6 +160,29 @@ class TestWebSearchStrictPrefix:
         assert r is not None
         assert r["tool"] == "web_search"
         assert r["args"]["query"].lower() == "ai"
+
+    def test_greeting_no_match(self):
+        """Simple greeting should not match web_search."""
+        r = _qr("hey how are you")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_opinion_no_match(self):
+        """Opinions don't need web search."""
+        r = _qr("do you like cats or dogs more?")
+        assert r is None or r.get("tool") != "web_search"
+
+    # ── Query stripping ──────────────────────────────────────────────
+
+    def test_trailing_question_mark_stripped(self):
+        r = _qr("who is elon musk?")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert r["args"]["query"] == "elon musk"  # ? stripped
+
+    def test_trailing_exclamation_stripped(self):
+        r = _qr("search python tutorials!")
+        assert r is not None
+        assert r["args"]["query"] == "python tutorials"  # ! stripped
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -270,6 +323,19 @@ class TestQuickRouteAudit:
         # with return {"tool": "web_search", "args": {"query": orig}}
         assert '"query": orig' not in src, \
             "web_search must not pass raw orig as query"
+
+    def test_web_search_regex_is_unanchored(self):
+        """Web search regex must NOT use ^ anchor — natural phrases match mid-sentence."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._quick_route)
+        # Find the web search section
+        idx = src.find("Web search")
+        assert idx != -1
+        section = src[idx:idx + 800]
+        # The old code had r"^(?:search|..." — the ^ must be gone
+        assert 'r"^(?:search' not in section, \
+            "Web search regex must be unanchored (no ^)"
 
     def test_disk_regex_has_word_boundary(self):
         """Shell/disk regex must use \\b word boundaries."""

@@ -434,3 +434,47 @@ class TestPersonaStateEnum:
         from bantz.personality.persona import PersonaState, PERSONA_PROMPTS
         for state in PersonaState:
             assert state in PERSONA_PROMPTS
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Grand Telegraph Archives lore
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestGrandTelegraphArchives:
+    """Butler must believe he can research via 'Grand Telegraph Archives'."""
+
+    def test_chat_system_has_telegraph_lore(self):
+        """brain.py CHAT_SYSTEM must mention Grand Telegraph Archives."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "grand telegraph archives" in CHAT_SYSTEM.lower()
+
+    def test_chat_system_no_refusal_rule(self):
+        """CHAT_SYSTEM must NOT say 'NO access to ... external data'."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "no access to" not in CHAT_SYSTEM.lower()
+
+    def test_chat_system_never_say_lack_access(self):
+        """CHAT_SYSTEM must tell LLM to NEVER say it lacks external info."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "never say you lack access" in CHAT_SYSTEM.lower()
+
+    def test_system_prompt_has_telegraph_lore(self):
+        """system_prompt.py BANTZ_CHAT must mention Grand Telegraph Archives."""
+        from bantz.personality.system_prompt import BANTZ_CHAT
+        assert "grand telegraph archives" in BANTZ_CHAT.lower()
+
+    def test_system_prompt_never_say_lack_access(self):
+        from bantz.personality.system_prompt import BANTZ_CHAT
+        assert "never say you lack access" in BANTZ_CHAT.lower()
+
+    def test_telegram_metaphor(self):
+        """Butler acts as if sending a telegram to the archives."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "telegram" in CHAT_SYSTEM.lower()
+
+    def test_cot_router_web_search_entity_lookup(self):
+        """intent.py CoT prompt must map entity lookups to web_search."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "who is x" in lower
+        assert "entity lookup" in lower

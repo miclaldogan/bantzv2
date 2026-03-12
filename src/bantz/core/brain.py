@@ -119,12 +119,15 @@ Never break character.
 {vector_hint}
 {desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
-1. You have NO access to emails, calendar events, schedule/timetable, live news, or any external data.
+1. You possess the remarkable ability to query the 'Grand Telegraph Archives' — your 1920s \
+understanding of the internet and search tools. NEVER say you lack access to external \
+information. If the user asks about a topic, person, or news, you are fully capable of \
+researching it using your tools. Act as if you are sending a telegram to the archives.
 2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
 3. If the user asks about their schedule, classes, or timetable — say "Let me check your schedule" and STOP.
    Do NOT invent class names. Do NOT guess what classes they have.
 4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
-5. If unsure, say you don't know. NEVER guess or make up data.
+5. If unsure about factual data, say you will look into it. NEVER guess or make up data.
 6. For desktop/app questions: use ONLY the Desktop Context above. If no desktop context is provided, say you can't detect apps right now.
 Respond in English. Plain text only.\
 """
@@ -374,6 +377,13 @@ class Brain:
                    "echo ", "head ", "tail ", "chmod ", "cp ", "mv ")
         for p in _DIRECT:
             if o == p.rstrip() or o.startswith(p if p.endswith(" ") else p + " "):
+                # Guard: 'find' is both a bash command and a natural word.
+                # Only treat as shell if followed by a path-like token
+                # (/, ~, ., -) — otherwise fall through to web_search.
+                if p == "find ":
+                    _after_find = o[len("find "):].lstrip()
+                    if not _after_find or not _after_find[0] in "/~.-":
+                        continue
                 return {"tool": "shell", "args": {"command": orig.strip()}}
 
         # System metrics — bypass router completely
@@ -775,19 +785,23 @@ class Brain:
                 "app": _gui_find_m.group(2).strip(),
             }}
 
-        # Web search — STRICT command-prefix only.
-        # Natural-language search intents ("can you search this", "look it up")
-        # deliberately fall through to cot_route() where the LLM extracts a
-        # clean query.  Only explicit imperative commands match here.
-        _ws_match = re.search(
-            r"^(?:search|google|look\s*up|araştır|ara|arat)\s*:?\s+(.+)",
-            o, re.IGNORECASE,
-        ) or re.search(
-            r"^(?:search|google|look\s*up|araştır|ara|arat)\s*:?\s+(.+)",
-            e, re.IGNORECASE,
+        # Web search — natural-language intent matching.
+        # Catches both imperative commands ("search X") and conversational
+        # phrasing ("what do you know about X", "tell me about X").
+        _WS_PATTERN = (
+            r"(?:(?:search|google)\s*:?\s*(?:(?:for|about|on|the\s+(?:web|net|internet))\s+)?"
+            r"|look\s*up\s+"
+            r"|find\s+(?:information|info|out)\s+(?:about|on)\s+"
+            r"|what\s+(?:do\s+you|can\s+you)\s+(?:know|find|tell\s+me)\s+about\s+"
+            r"|who\s+is\s+|what\s+is\s+|tell\s+me\s+about\s+"
+            r"|learn\s+(?:about|more\s+about)\s+"
+            r"|araştır\s+|ara(?:t)?\s+|hakkında\s+(?:bilgi|ara)\s+)"
+            r"(.+)"
         )
+        _ws_match = re.search(_WS_PATTERN, o, re.IGNORECASE) or \
+                    re.search(_WS_PATTERN, e, re.IGNORECASE)
         if _ws_match:
-            query = _ws_match.group(1).strip()
+            query = _ws_match.group(1).strip().rstrip('?.!')
             if len(query) >= 2:
                 return {"tool": "web_search", "args": {"query": query}}
 

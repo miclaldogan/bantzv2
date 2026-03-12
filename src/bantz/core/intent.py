@@ -56,18 +56,25 @@ ROUTING RULES:
 - system:     cpu%, ram%, memory, disk, uptime, load average
 - weather:    weather, temperature, rain, forecast, degrees
 - news:       news, headlines, hacker news, top stories
-- web_search: search online, look up, find on internet, google
+- web_search: search online, look up, find on internet, google,
+              "who is X", "what is X", "tell me about X",
+              "what do you know about X", any general knowledge question,
+              any entity lookup (person, place, concept, movie, character),
+              any request for information the assistant does not already have
 - gmail:      email, inbox, compose, send, read mail
 - calendar:   events, meetings, appointments, schedule
 - classroom:  assignments, homework, deadlines, courses
 - filesystem: read/write a specific file
 - document:   summarize or analyze PDF/TXT/MD/DOCX
-- chat:       ONLY when absolutely no tool can handle the request
+- chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 
 CRITICAL:
 - System queries (CPU, RAM, disk) are SAFE. Never refuse them.
 - NEVER route to "chat" if a tool can handle it.
 - Literal bash commands (ls, df -h, etc.) → shell with the command as-is.
+- If the user asks about ANY person, place, thing, concept, movie character,
+  historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
+- "do your search", "can you find", "look it up" → web_search.
 
 Return ONLY valid JSON — no markdown fences, no explanation outside the JSON:
 
