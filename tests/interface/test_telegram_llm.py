@@ -35,7 +35,11 @@ def _make_update(user_id: int = 111, text: str = "hello", chat_id: int = 999):
     update.effective_chat.id = chat_id
     update.message = AsyncMock()
     update.message.text = text
-    update.message.reply_text = AsyncMock()
+    # reply_text returns a placeholder message mock (#181)
+    placeholder = AsyncMock()
+    placeholder.edit_text = AsyncMock()
+    placeholder.delete = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=placeholder)
     update.message.chat = AsyncMock()
     update.message.chat.send_action = AsyncMock()
     return update
@@ -290,9 +294,11 @@ class TestHandleMessage:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            # Reply should contain the joined stream
-            reply_text = update.message.reply_text.call_args[0][0]
-            assert reply_text == "Good day, ma'am."
+            # Response should have been edited into the placeholder (#181)
+            placeholder = update.message.reply_text.return_value
+            placeholder.edit_text.assert_awaited_once()
+            edited_text = placeholder.edit_text.call_args[0][0]
+            assert edited_text == "Good day, ma'am."
         finally:
             mod._ALLOWED = original_allowed
 
@@ -398,8 +404,10 @@ class TestHandleMessage:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            msg = update.message.reply_text.call_args[0][0]
-            assert "kaboom" in msg
+            # Error should be edited into the placeholder (#181)
+            placeholder = update.message.reply_text.return_value
+            edited = placeholder.edit_text.call_args[0][0]
+            assert "kaboom" in edited
         finally:
             mod._ALLOWED = original_allowed
 
@@ -423,8 +431,10 @@ class TestHandleMessage:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            msg = update.message.reply_text.call_args[0][0]
-            assert msg == "…"
+            # Empty response → placeholder edited to "…" (#181)
+            placeholder = update.message.reply_text.return_value
+            edited = placeholder.edit_text.call_args[0][0]
+            assert edited == "…"
         finally:
             mod._ALLOWED = original_allowed
 
@@ -584,3 +594,373 @@ class TestModuleExports:
     def test_is_rate_limited_exported(self):
         from bantz.interface.telegram_bot import _is_rate_limited
         assert callable(_is_rate_limited)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. Progress Indicators & Message Editing (#181)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestProgressIndicators:
+    """Tests for placeholder → edit_text flow (#181)."""
+
+    @pytest.mark.asyncio
+    async def test_placeholder_sent_immediately(self):
+        """reply_text() called with a placeholder BEFORE brain.process()."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="What's the weather?")
+            ctx = _ctx()
+
+            call_order: list[str] = []
+
+            original_reply = update.message.reply_text
+
+            async def tracked_reply(*a, **kw):
+                call_order.append("reply_text")
+                return await original_reply(*a, **kw)
+
+            update.message.reply_text = AsyncMock(
+                side_effect=tracked_reply,
+                return_value=original_reply.return_value,
+            )
+
+            fake_result = FakeBrainResult(response="Fine weather, ma'am.")
+            mock_brain = MagicMock()
+
+            async def tracked_process(*a, **kw):
+                call_order.append("brain.process")
+                return fake_result
+
+            mock_brain.process = AsyncMock(side_effect=tracked_process)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            assert call_order.index("reply_text") < call_order.index("brain.process")
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_placeholder_edited_with_response(self):
+        """edit_text() called with the actual LLM response on the placeholder."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="hello")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(response="Good day, ma'am.")
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            placeholder = update.message.reply_text.return_value
+            placeholder.edit_text.assert_awaited_once()
+            assert placeholder.edit_text.call_args[0][0] == "Good day, ma'am."
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_long_response_chunked(self):
+        """>4000 chars: first chunk edits placeholder, rest are new messages."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="tell me everything")
+            ctx = _ctx()
+
+            # Two large paragraphs → 2 chunks
+            para_a = "A" * 2500
+            para_b = "B" * 2500
+            long_response = para_a + "\n\n" + para_b
+
+            fake_result = FakeBrainResult(response=long_response)
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            placeholder = update.message.reply_text.return_value
+            # First chunk edits the placeholder
+            placeholder.edit_text.assert_awaited_once_with(para_a)
+            # Second chunk sent as new message (call_args_list[0] = placeholder, [1] = extra)
+            calls = update.message.reply_text.call_args_list
+            assert len(calls) >= 2  # placeholder + at least one extra chunk
+            assert calls[-1][0][0] == para_b
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_edit_failure_fallback_plain_text(self):
+        """If edit_text fails with markdown, retry with parse_mode=None."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="markdown problem")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(response="*broken markdown")
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            placeholder = update.message.reply_text.return_value
+            call_count = 0
+
+            async def flaky_edit(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise Exception("Markdown parse error")
+                # Second call (with parse_mode=None) succeeds
+                return None
+
+            placeholder.edit_text = AsyncMock(side_effect=flaky_edit)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            assert call_count == 2
+            # Second call should have parse_mode=None
+            second_call = placeholder.edit_text.call_args_list[1]
+            assert second_call[1].get("parse_mode") is None
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_edit_failure_complete_fallback(self):
+        """Both edit_text calls fail → delete placeholder + reply_text."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="total failure")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(response="The response.")
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            placeholder = update.message.reply_text.return_value
+            placeholder.edit_text = AsyncMock(side_effect=Exception("API down"))
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            # Placeholder should have been deleted
+            placeholder.delete.assert_awaited_once()
+            # Response sent via reply_text (call[0]=placeholder, call[1]=response)
+            calls = update.message.reply_text.call_args_list
+            assert any("The response." in str(c) for c in calls)
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_error_response_edits_placeholder(self):
+        """Brain error → placeholder edited to show error message."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="cause error")
+            ctx = _ctx()
+
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(side_effect=RuntimeError("server crash"))
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            placeholder = update.message.reply_text.return_value
+            edited = placeholder.edit_text.call_args[0][0]
+            assert "server crash" in edited
+            assert "⚠️" in edited
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_placeholder_is_in_character(self):
+        """Placeholder text is from PLACEHOLDER_MESSAGES (butler persona)."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="hello butler")
+            ctx = _ctx()
+
+            fake_result = FakeBrainResult(response="At your service.")
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            # First reply_text call is the placeholder
+            placeholder_text = update.message.reply_text.call_args_list[0][0][0]
+            assert placeholder_text in mod.PLACEHOLDER_MESSAGES
+        finally:
+            mod._ALLOWED = original
+
+    @pytest.mark.asyncio
+    async def test_streaming_collected_then_edited(self):
+        """Streaming tokens collected in full, then single edit_text."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="stream it")
+            ctx = _ctx()
+
+            async def fake_stream():
+                for chunk in ["Good ", "evening, ", "ma'am."]:
+                    yield chunk
+
+            fake_result = FakeBrainResult(response="", stream=fake_stream())
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            placeholder = update.message.reply_text.return_value
+            placeholder.edit_text.assert_awaited_once()
+            edited = placeholder.edit_text.call_args[0][0]
+            assert edited == "Good evening, ma'am."
+        finally:
+            mod._ALLOWED = original
+
+
+class TestPlaceholderMessages:
+    """Tests for the PLACEHOLDER_MESSAGES constant."""
+
+    def test_placeholder_messages_exist(self):
+        from bantz.interface.telegram_bot import PLACEHOLDER_MESSAGES
+        assert isinstance(PLACEHOLDER_MESSAGES, list)
+        assert len(PLACEHOLDER_MESSAGES) >= 5
+
+    def test_placeholder_messages_are_strings(self):
+        from bantz.interface.telegram_bot import PLACEHOLDER_MESSAGES
+        for msg in PLACEHOLDER_MESSAGES:
+            assert isinstance(msg, str)
+            assert len(msg) > 10
+
+    def test_placeholder_messages_have_telegraph_emoji(self):
+        from bantz.interface.telegram_bot import PLACEHOLDER_MESSAGES
+        for msg in PLACEHOLDER_MESSAGES:
+            assert "📟" in msg
+
+    def test_placeholder_messages_in_character(self):
+        """All placeholders should sound like a 1920s butler."""
+        from bantz.interface.telegram_bot import PLACEHOLDER_MESSAGES
+        butler_words = {"ma'am", "moment", "please", "telegraph", "archives",
+                        "enquiry", "bureau", "dispatching", "stand by"}
+        for msg in PLACEHOLDER_MESSAGES:
+            lower = msg.lower()
+            assert any(w in lower for w in butler_words), (
+                f"Placeholder not in character: {msg}"
+            )
+
+
+class TestChunkText:
+    """Tests for the _chunk_text helper."""
+
+    def test_short_text_single_chunk(self):
+        from bantz.interface.telegram_bot import _chunk_text
+        assert _chunk_text("Hello world") == ["Hello world"]
+
+    def test_exact_boundary(self):
+        from bantz.interface.telegram_bot import _chunk_text
+        text = "X" * 4000
+        assert _chunk_text(text) == [text]
+
+    def test_splits_at_paragraph_boundary(self):
+        from bantz.interface.telegram_bot import _chunk_text
+        a = "A" * 2500
+        b = "B" * 2500
+        chunks = _chunk_text(a + "\n\n" + b)
+        assert chunks == [a, b]
+
+    def test_hard_split_no_newlines(self):
+        from bantz.interface.telegram_bot import _chunk_text
+        text = "X" * 8000
+        chunks = _chunk_text(text)
+        assert len(chunks) == 2
+        assert "".join(chunks) == text
+
+    def test_custom_max_len(self):
+        from bantz.interface.telegram_bot import _chunk_text
+        text = "short"
+        assert _chunk_text(text, max_len=3) == ["sho", "rt"]
+
+
+class TestSafeEdit:
+    """Tests for the _safe_edit fallback chain."""
+
+    @pytest.mark.asyncio
+    async def test_normal_edit_succeeds(self):
+        from bantz.interface.telegram_bot import _safe_edit
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock()
+        result = await _safe_edit(ph, "hello")
+        assert result is True
+        ph.edit_text.assert_awaited_once_with("hello")
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_plain_text(self):
+        from bantz.interface.telegram_bot import _safe_edit
+        call_count = 0
+
+        async def flaky(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("Markdown error")
+            return None
+
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock(side_effect=flaky)
+        result = await _safe_edit(ph, "test")
+        assert result is True
+        assert call_count == 2
+        # Second call has parse_mode=None
+        assert ph.edit_text.call_args_list[1][1]["parse_mode"] is None
+
+    @pytest.mark.asyncio
+    async def test_complete_failure_returns_false(self):
+        from bantz.interface.telegram_bot import _safe_edit
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock(side_effect=Exception("total failure"))
+        result = await _safe_edit(ph, "test")
+        assert result is False
