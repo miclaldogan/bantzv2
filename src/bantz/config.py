@@ -158,6 +158,11 @@ class Config(BaseSettings):
     picovoice_access_key: str = Field("", alias="BANTZ_PICOVOICE_ACCESS_KEY")
     wake_word_sensitivity: float = Field(0.5, alias="BANTZ_WAKE_WORD_SENSITIVITY")
 
+    # ── Ambient Sound Analysis (#166) ────────────────────────────────────
+    ambient_enabled: bool = Field(False, alias="BANTZ_AMBIENT_ENABLED")
+    ambient_interval: int = Field(600, alias="BANTZ_AMBIENT_INTERVAL")
+    ambient_window: float = Field(3.0, alias="BANTZ_AMBIENT_WINDOW")
+
     @property
     def db_path(self) -> Path:
         base = (

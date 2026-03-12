@@ -668,6 +668,7 @@ def _section_for(field_name: str) -> str:
         (("tts_",), "TTS / Audio"),
         (("audio_duck_",), "Audio Ducking"),
         (("wake_word_", "picovoice_",), "Wake Word"),
+        (("ambient_",), "Ambient Sound"),
     ]
     for prefixes, label in _MAP:
         if any(field_name.startswith(p) or field_name == p for p in prefixes):
@@ -922,6 +923,20 @@ async def _doctor() -> None:
                 print(f"❌ Wake Word: init failed — {exc}")
     else:
         print(f"⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
+
+    # Ambient Sound Analysis (#166)
+    if config.ambient_enabled:
+        if not config.wake_word_enabled:
+            print(f"❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
+        else:
+            try:
+                from bantz.agent.ambient import ambient_analyzer as _amb
+                diag = _amb.diagnose()
+                print(f"✅ Ambient: ready (interval={config.ambient_interval}s, window={config.ambient_window}s)")
+            except Exception as exc:
+                print(f"❌ Ambient: init failed — {exc}")
+    else:
+        print(f"⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
 
     # Telegram
     if config.telegram_bot_token:

@@ -187,10 +187,28 @@ class WakeWordListener:
         frame_length = porcupine.frame_length
         log.debug("Wake word: entering listen loop (frame_length=%d)", frame_length)
 
+        # Lazy-load ambient analyser (piggyback, #166)
+        _ambient = None
+        try:
+            from bantz.agent.ambient import ambient_analyzer
+            from bantz.config import config
+            if getattr(config, "ambient_enabled", False):
+                _ambient = ambient_analyzer
+                log.debug("Wake word: ambient analyser piggybacking enabled")
+        except Exception:
+            pass
+
         while not self._stop.is_set():
             try:
                 pcm_bytes = stream.read(frame_length, exception_on_overflow=False)
                 pcm = struct.unpack_from(f"{frame_length}h", pcm_bytes)
+
+                # Feed ambient analyser before Porcupine (zero-cost if disabled)
+                if _ambient is not None:
+                    try:
+                        _ambient.feed_frames(pcm)
+                    except Exception:
+                        pass  # never crash the wake word loop
 
                 keyword_index = porcupine.process(pcm)
 

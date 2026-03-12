@@ -41,7 +41,7 @@ from bantz.agent.rl_engine import (
 class TestState:
     def test_key_format(self):
         s = State(time_segment="morning", day="monday", location="home", recent_tool="shell")
-        assert s.key == "morning|monday|home|shell"
+        assert s.key == "morning|monday|home|shell|unknown"
 
     def test_from_key_round_trip(self):
         s = State(time_segment="evening", day="friday", location="work", recent_tool="web_search")
@@ -54,7 +54,7 @@ class TestState:
     def test_to_dict(self):
         s = State(time_segment="morning", day="monday", location="home", recent_tool="")
         d = s.to_dict()
-        assert d == {"time_segment": "morning", "day": "monday", "location": "home", "recent_tool": ""}
+        assert d == {"time_segment": "morning", "day": "monday", "location": "home", "recent_tool": "", "ambient": "unknown"}
 
     def test_frozen(self):
         s = State()

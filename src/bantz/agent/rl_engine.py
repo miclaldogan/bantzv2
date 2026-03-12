@@ -78,6 +78,10 @@ class Reward(float, Enum):
 
 # ── State ────────────────────────────────────────────────────────────────
 
+# Ambient buckets for state encoding (#166)
+AMBIENT_BUCKETS = ("silence", "speech", "noisy", "unknown")
+
+
 @dataclass(frozen=True)
 class State:
     """Discrete state representation."""
@@ -85,20 +89,22 @@ class State:
     day: str = "monday"
     location: str = "home"
     recent_tool: str = ""
+    ambient: str = "unknown"  # #166: ambient environment label
 
     @property
     def key(self) -> str:
         """String key for Q-table lookup."""
-        return f"{self.time_segment}|{self.day}|{self.location}|{self.recent_tool}"
+        return f"{self.time_segment}|{self.day}|{self.location}|{self.recent_tool}|{self.ambient}"
 
     @classmethod
     def from_key(cls, key: str) -> "State":
-        parts = key.split("|", 3)
+        parts = key.split("|", 4)
         return cls(
             time_segment=parts[0] if len(parts) > 0 else "morning",
             day=parts[1] if len(parts) > 1 else "monday",
             location=parts[2] if len(parts) > 2 else "home",
             recent_tool=parts[3] if len(parts) > 3 else "",
+            ambient=parts[4] if len(parts) > 4 else "unknown",
         )
 
     def to_dict(self) -> dict[str, str]:
@@ -107,6 +113,7 @@ class State:
             "day": self.day,
             "location": self.location,
             "recent_tool": self.recent_tool,
+            "ambient": self.ambient,
         }
 
 
@@ -115,13 +122,15 @@ def encode_state(
     day: str = "monday",
     location: str = "home",
     recent_tool: str = "",
+    ambient: str = "unknown",
 ) -> State:
     """Build a State from raw context values, normalising buckets."""
     seg = time_segment if time_segment in TIME_SEGMENTS else "morning"
     d = day.lower() if day.lower() in DAYS else "monday"
     loc = location.lower() if location.lower() in LOCATION_BUCKETS else "other"
     tool = recent_tool[:30] if recent_tool else ""
-    return State(time_segment=seg, day=d, location=loc, recent_tool=tool)
+    amb = ambient.lower() if ambient.lower() in AMBIENT_BUCKETS else "unknown"
+    return State(time_segment=seg, day=d, location=loc, recent_tool=tool, ambient=amb)
 
 
 # ── Q-Table ──────────────────────────────────────────────────────────────

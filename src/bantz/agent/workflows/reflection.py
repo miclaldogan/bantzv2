@@ -90,7 +90,7 @@ _REFLECTION_USER = """\
 Today is {date}.  Here are today's conversation session summaries:
 
 {summaries}
-
+{ambient_section}
 Produce the daily reflection JSON.
 """
 
@@ -141,9 +141,10 @@ class ReflectionResult:
     entities_extracted: int = 0
     raw_pruned: int = 0
     vectors_pruned: int = 0
+    ambient_summary: str = ""  # #166: day-level ambient environment digest
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "date": self.date,
             "sessions": self.sessions,
             "total_messages": self.total_messages,
@@ -158,10 +159,15 @@ class ReflectionResult:
             "raw_pruned": self.raw_pruned,
             "vectors_pruned": self.vectors_pruned,
         }
+        if self.ambient_summary:
+            d["ambient_summary"] = self.ambient_summary
+        return d
 
     def summary_line(self) -> str:
         """One-paragraph human-readable summary."""
         parts = [f"🤔 Reflection ({self.date}): {self.sessions} sessions, {self.total_messages} msgs"]
+        if self.ambient_summary:
+            parts.append(f"   🎤 {self.ambient_summary}")
         if self.summary:
             parts.append(f"   {self.summary}")
         if self.decisions:
@@ -296,12 +302,22 @@ def _build_summaries_text(
     return "\n\n".join(parts) if parts else "(No conversations today)"
 
 
-async def _llm_reflect(date_str: str, summaries_text: str) -> str:
+async def _llm_reflect(date_str: str, summaries_text: str, ambient_text: str = "") -> str:
     """Call LLM to produce the daily reflection JSON."""
+    # Build the optional ambient section (#166)
+    ambient_section = ""
+    if ambient_text:
+        ambient_section = (
+            "\n\nAmbient environment observations today:\n"
+            f"{ambient_text}\n"
+            "Consider the user's physical environment when writing the reflection.\n"
+        )
+
     messages = [
         {"role": "system", "content": _REFLECTION_SYSTEM},
         {"role": "user", "content": _REFLECTION_USER.format(
             date=date_str, summaries=summaries_text,
+            ambient_section=ambient_section,
         )},
     ]
 
@@ -822,6 +838,18 @@ async def run_reflection(
             await _send_report(result, dry_run)
             return result
 
+        # ── 1b. Ambient environment digest (#166) ────────────────────
+        ambient_text = ""
+        try:
+            from bantz.agent.ambient import ambient_analyzer
+            amb_summary = ambient_analyzer.day_summary()
+            if amb_summary and "No ambient" not in amb_summary:
+                ambient_text = amb_summary
+                result.ambient_summary = amb_summary
+                log.info("Reflection: %s", amb_summary)
+        except Exception:
+            pass
+
         # ── 2. Hierarchical summarisation (Rec #1) ──────────────────────
         distillations = _collect_today_distillations(conn, date_str)
         undistilled = _collect_undistilled_sessions(conn, date_str)
@@ -842,7 +870,7 @@ async def run_reflection(
             return result
 
         try:
-            raw = await _llm_reflect(date_str, summaries_text)
+            raw = await _llm_reflect(date_str, summaries_text, ambient_text)
             parsed = _parse_reflection_json(raw)
 
             result.summary = parsed.get("summary", "")
