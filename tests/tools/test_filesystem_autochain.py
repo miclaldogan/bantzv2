@@ -4,15 +4,20 @@ The "Stark Folder Fix": LLM used to hallucinate success for multi-step
 filesystem ops (mkdir → write_file) without calling any tools.  Now a
 single atomic action does both in one shot.
 
+v2: Replaced rigid regex with LLM-based parameter extraction.
+    Keyword detection catches the intent; Ollama extracts the params.
+
 Covers:
   1. Atomic folder+file creation (happy path)
   2. Missing parameter handling (folder_path, file_name)
   3. Security boundary (outside home dir)
   4. Empty content (allowed — creates empty file)
   5. Nested subfolder creation (mkdir -p behaviour)
-  6. Quick-route regex matching for English + Turkish patterns
-  7. COT_SYSTEM filesystem schema includes create_folder_and_file
-  8. Tool description advertises create_folder_and_file
+  6. Quick-route keyword detection (English + Turkish)
+  7. LLM parameter extraction (mocked Ollama)
+  8. Fallback to shell on extraction failure
+  9. COT_SYSTEM filesystem schema includes create_folder_and_file
+ 10. Tool description advertises create_folder_and_file
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ import asyncio
 import re
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -189,72 +194,150 @@ class TestSecurityBoundary:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. Quick-route regex matching
+# 4. Quick-route keyword detection (v2: LLM-based)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestQuickRouteFilesystem:
-    """_quick_route must catch folder+file creation patterns."""
+    """_quick_route must catch folder+file creation via keyword detection."""
 
     def _route(self, text: str) -> dict | None:
         from bantz.core.brain import Brain
         return Brain._quick_route(text, text)
 
+    # ── Keyword detection: routes to _fs_autochain ──
+
     def test_create_stark_folder_and_file(self):
-        """'create a folder named Stark and write notes.txt in it'"""
-        r = self._route("create a folder named Stark and write notes.txt in it")
+        """'create a stark folder then create a text file and write heeey'"""
+        r = self._route("create a stark folder then create a text file and write heeey into it")
         assert r is not None
-        assert r["tool"] == "filesystem"
-        assert r["args"]["action"] == "create_folder_and_file"
-        assert "stark" in r["args"]["folder_path"].lower()
-        assert r["args"]["file_name"] == "notes.txt"
+        assert r["tool"] == "_fs_autochain"
 
     def test_make_folder_and_put_file(self):
-        """'make a folder called Projects and put readme.md in it with hello world'"""
+        """'make a folder called Projects and put readme.md in it'"""
         r = self._route("make a folder called Projects and put readme.md in it with hello world")
         assert r is not None
-        assert r["tool"] == "filesystem"
-        assert "projects" in r["args"]["folder_path"].lower()
-        assert r["args"]["file_name"] == "readme.md"
-        assert "hello world" in r["args"]["content"]
+        assert r["tool"] == "_fs_autochain"
 
     def test_create_directory_then_create_file(self):
         """'create a directory named reports then create notes.txt'"""
         r = self._route("create a directory named reports then create notes.txt")
         assert r is not None
-        assert r["tool"] == "filesystem"
-        assert "reports" in r["args"]["folder_path"].lower()
-        assert r["args"]["file_name"] == "notes.txt"
+        assert r["tool"] == "_fs_autochain"
 
-    def test_create_folder_with_content(self):
-        """'create a folder named test and write data.txt in it with some test data'"""
-        r = self._route("create a folder named test and write data.txt in it with some test data")
+    def test_turkish_klasor_dosya(self):
+        """Turkish: 'klasör oluştur ve dosya yaz'"""
+        r = self._route("bir klasör oluştur ve içine dosya yaz")
         assert r is not None
-        assert r["args"]["content"] == "some test data"
+        assert r["tool"] == "_fs_autochain"
 
-    def test_default_desktop_path(self):
-        """When no path specified, folder should default to ~/Desktop/."""
-        r = self._route("create a folder named Stark and write test.txt in it")
+    def test_folder_with_extension_hint(self):
+        """Request mentioning a .txt file + folder → autochain."""
+        r = self._route("create a folder called work and write notes.txt in it")
         assert r is not None
-        assert "~/Desktop/" in r["args"]["folder_path"]
+        assert r["tool"] == "_fs_autochain"
 
     def test_no_match_for_simple_create_folder(self):
-        """'create a folder named X' (without file) should NOT match combo regex."""
+        """'create a folder named X' (without file) should NOT match combo."""
         r = self._route("create a folder named TestOnly")
-        # Should NOT match the combo regex — falls through to _generate
+        # Should NOT match _fs_autochain — no file keyword
         if r is not None:
-            assert r["tool"] != "filesystem" or r["args"].get("action") != "create_folder_and_file"
+            assert r["tool"] != "_fs_autochain"
 
     def test_no_match_for_email_create(self):
-        """'create a mail ...' must NOT match filesystem combo."""
+        """'create a folder and write a mail to john' must NOT match filesystem."""
         r = self._route("create a folder and write a mail to john")
-        # Should NOT be filesystem
-        if r is not None and r["tool"] == "filesystem":
-            assert r["args"].get("action") != "create_folder_and_file"
+        if r is not None:
+            assert r["tool"] != "_fs_autochain"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. Schema / description / COT
+# 5. LLM parameter extraction (mocked Ollama)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestExtractFsParams:
+    """Brain._extract_fs_params uses LLM to extract folder/file/content."""
+
+    @pytest.mark.asyncio
+    async def test_extracts_all_params(self):
+        """LLM returns valid JSON → params are extracted correctly."""
+        from bantz.core.brain import Brain
+
+        llm_response = '{"folder_path": "~/Desktop/stark", "file_name": "notes.txt", "content": "heeey"}'
+        brain = Brain.__new__(Brain)
+        with patch("bantz.core.brain.ollama") as mock_ollama:
+            mock_ollama.chat = AsyncMock(return_value=llm_response)
+            params = await brain._extract_fs_params(
+                "create a stark folder then create a text file and write heeey",
+                "create a stark folder then create a text file and write heeey",
+            )
+        assert params["folder_path"] == "~/Desktop/stark"
+        assert params["file_name"] == "notes.txt"
+        assert params["content"] == "heeey"
+
+    @pytest.mark.asyncio
+    async def test_defaults_on_missing_keys(self):
+        """LLM returns partial JSON → defaults fill in."""
+        from bantz.core.brain import Brain
+
+        llm_response = '{"folder_path": "~/Desktop/work"}'
+        brain = Brain.__new__(Brain)
+        with patch("bantz.core.brain.ollama") as mock_ollama:
+            mock_ollama.chat = AsyncMock(return_value=llm_response)
+            params = await brain._extract_fs_params("make a work folder", "make a work folder")
+        assert params["folder_path"] == "~/Desktop/work"
+        assert params["file_name"] == "file.txt"       # default
+        assert params["content"] == ""                  # default
+
+    @pytest.mark.asyncio
+    async def test_handles_markdown_fences(self):
+        """LLM wraps JSON in markdown code fences → still parsed."""
+        from bantz.core.brain import Brain
+
+        llm_response = '```json\n{"folder_path": "~/Desktop/test", "file_name": "a.txt", "content": "hi"}\n```'
+        brain = Brain.__new__(Brain)
+        with patch("bantz.core.brain.ollama") as mock_ollama:
+            mock_ollama.chat = AsyncMock(return_value=llm_response)
+            params = await brain._extract_fs_params("test", "test")
+        assert params["folder_path"] == "~/Desktop/test"
+        assert params["file_name"] == "a.txt"
+
+    @pytest.mark.asyncio
+    async def test_raises_on_invalid_json(self):
+        """LLM returns garbage → raises exception (caller handles fallback)."""
+        from bantz.core.brain import Brain
+
+        llm_response = "I cannot do that, sorry."
+        brain = Brain.__new__(Brain)
+        with patch("bantz.core.brain.ollama") as mock_ollama:
+            mock_ollama.chat = AsyncMock(return_value=llm_response)
+            with pytest.raises(Exception):
+                await brain._extract_fs_params("test", "test")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. FS_EXTRACT_SYSTEM prompt exists
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFsExtractPrompt:
+    """The LLM prompt for filesystem extraction must exist and be well-formed."""
+
+    def test_prompt_exists(self):
+        from bantz.core.brain import _FS_EXTRACT_SYSTEM
+        assert "folder_path" in _FS_EXTRACT_SYSTEM
+        assert "file_name" in _FS_EXTRACT_SYSTEM
+        assert "content" in _FS_EXTRACT_SYSTEM
+
+    def test_prompt_has_examples(self):
+        from bantz.core.brain import _FS_EXTRACT_SYSTEM
+        assert "stark" in _FS_EXTRACT_SYSTEM.lower()
+        assert "Projects" in _FS_EXTRACT_SYSTEM or "readme" in _FS_EXTRACT_SYSTEM
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. Schema / description / COT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
