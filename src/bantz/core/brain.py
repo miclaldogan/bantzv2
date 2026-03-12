@@ -215,6 +215,31 @@ RULES:
 5. NEVER invent extra files or directories\
 """
 
+# ── LLM-based filesystem parameter extractor (#196-v2) ──────────────────────
+# Replaces rigid regex with LLM understanding for folder+file creation.
+_FS_EXTRACT_SYSTEM = """\
+Extract folder + file creation parameters from the user request.
+Return ONLY a valid JSON object with these keys:
+- folder_path: path for the folder (default ~/Desktop/<name> if no path given)
+- file_name: the file to create (include extension; default .txt if none given)
+- content: text to write in the file (empty string if not specified)
+
+Examples:
+"create a stark folder then create a text file and write heeey into it"
+→ {"folder_path": "~/Desktop/stark", "file_name": "file.txt", "content": "heeey"}
+
+"make a directory called Projects and put readme.md in it with hello world"
+→ {"folder_path": "~/Desktop/Projects", "file_name": "readme.md", "content": "hello world"}
+
+"yeni klasör aç adı work olsun, içine notes.txt yaz, test yaz"
+→ {"folder_path": "~/Desktop/work", "file_name": "notes.txt", "content": "test"}
+
+"create a folder named reports then create data.csv"
+→ {"folder_path": "~/Desktop/reports", "file_name": "data.csv", "content": ""}
+
+Return ONLY the JSON object. No markdown fences. No explanation.\
+"""
+
 _REFUSAL_PATTERNS = (
     "sorry", "can't assist", "cannot assist", "i'm unable",
     "i cannot", "not able to", "inappropriate",
@@ -911,54 +936,24 @@ class Brain:
             if len(query) >= 2 and query.lower() not in _WS_STOPWORDS:
                 return {"tool": "web_search", "args": {"query": query}}
 
-        # ── Filesystem auto-chain: create folder + file in one step (#196) ──
-        # Catches: "create a Stark folder and write test.txt in it",
-        # "make a folder X, put a file Y with content Z", etc.
-        # Search on e (English) individually — NOT on 'both' which
-        # concatenates o+e and causes the regex to span duplicated text.
-        _FS_COMBO = re.search(
-            r"(?:create|make|yap|oluştur|aç)\s+"
-            r"(?:a\s+)?(?:folder|directory|klasör|dizin)\s+"
-            r"(?:named?\s+|called?\s+|adında\s+|adlı\s+)?"
-            r"[\"']?([\w.\- ]+?)[\"']?"
-            r"\s+(?:and|then|,)\s+"
-            r"(?:create|put|write|place|add|make|yaz|koy|ekle)\s+"
-            r"(?:a\s+)?(?:file\s+)?(?:named?\s+|called?\s+|adında\s+)?"
-            r"[\"']?([\w.\-]+)[\"']?"
-            r"(?:\s+(?:in(?:side)?|into)\s+it)?"
-            r"(?:\s+(?:with|containing|saying|that\s+says|içeriği|yazısı)\s+"
-            r"[\"']?(.+?)[\"']?)?\s*$",
-            e, re.IGNORECASE,
-        ) or re.search(
-            r"(?:create|make|yap|oluştur|aç)\s+"
-            r"(?:a\s+)?(?:folder|directory|klasör|dizin)\s+"
-            r"(?:named?\s+|called?\s+|adında\s+|adlı\s+)?"
-            r"[\"']?([\w.\- ]+?)[\"']?"
-            r"\s+(?:and|then|,)\s+"
-            r"(?:create|put|write|place|add|make|yaz|koy|ekle)\s+"
-            r"(?:a\s+)?(?:file\s+)?(?:named?\s+|called?\s+|adında\s+)?"
-            r"[\"']?([\w.\-]+)[\"']?"
-            r"(?:\s+(?:in(?:side)?|into)\s+it)?"
-            r"(?:\s+(?:with|containing|saying|that\s+says|içeriği|yazısı)\s+"
-            r"[\"']?(.+?)[\"']?)?\s*$",
-            o, re.IGNORECASE,
-        )
-        if _FS_COMBO:
-            _folder_name = _FS_COMBO.group(1).strip()
-            _file_name = _FS_COMBO.group(2).strip()
-            _content = (_FS_COMBO.group(3) or "").strip()
-            # Default path to Desktop if no path specified
-            if "/" not in _folder_name and "~" not in _folder_name:
-                _folder_name = f"~/Desktop/{_folder_name}"
-            return {
-                "tool": "filesystem",
-                "args": {
-                    "action": "create_folder_and_file",
-                    "folder_path": _folder_name,
-                    "file_name": _file_name,
-                    "content": _content,
-                },
-            }
+        # ── Filesystem auto-chain: LLM-based folder+file creation (#196-v2) ──
+        # Instead of rigid regex, detect keyword overlap and let the LLM
+        # extract actual parameters (folder name, file name, content).
+        _fs_folder_kw = any(k in both for k in (
+            "folder", "directory", "klasör", "dizin",
+        ))
+        _fs_file_kw = any(k in both for k in (
+            " file", "dosya", ".txt", ".md", ".py", ".csv", ".json",
+            ".html", ".css", ".js", ".log",
+        ))
+        _fs_create_kw = any(k in both for k in (
+            "create", "make", "write", "put", "place", "add",
+            "yap", "oluştur", "aç", "yaz", "koy", "ekle",
+        ))
+        if _fs_folder_kw and _fs_file_kw and _fs_create_kw:
+            # Guard: "create a folder and write a mail" → NOT filesystem
+            if not any(k in both for k in ("mail", "email", "calendar", "assignment")):
+                return {"tool": "_fs_autochain", "args": {}}
 
         # Shell generation for file operations
         if any(k in both for k in ("create file", "create folder", "create directory",
@@ -1207,6 +1202,32 @@ class Brain:
             {"role": "user", "content": en or orig},
         ])
         return raw.strip().strip("`")
+
+    async def _extract_fs_params(self, orig: str, en: str) -> dict:
+        """Use LLM to extract folder+file creation params from natural language.
+
+        Returns dict with keys: folder_path, file_name, content.
+        Falls back to sensible defaults if parsing fails.
+        """
+        import json as _json
+
+        raw = await ollama.chat([
+            {"role": "system", "content": _FS_EXTRACT_SYSTEM},
+            {"role": "user", "content": en or orig},
+        ])
+
+        # Strip markdown fences and extract JSON
+        text = raw.strip().strip("`")
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        params = _json.loads(m.group() if m else text)
+
+        # Ensure required keys exist with defaults
+        params.setdefault("folder_path", "~/Desktop/new_folder")
+        params.setdefault("file_name", "file.txt")
+        params.setdefault("content", "")
+        return params
 
     async def _handle_location(self) -> str:
         """Handle 'where am i' queries — show GPS/location info."""
@@ -1562,7 +1583,28 @@ class Brain:
             data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
-        if quick and quick["tool"] == "_generate":
+        # ── FS autochain: LLM extracts folder/file params (#196-v2) ──────
+        if quick and quick["tool"] == "_fs_autochain":
+            try:
+                params = await self._extract_fs_params(user_input, en_input)
+                plan = {
+                    "route": "tool",
+                    "tool_name": "filesystem",
+                    "tool_args": {
+                        "action": "create_folder_and_file",
+                        "folder_path": params.get("folder_path", "~/Desktop/new_folder"),
+                        "file_name": params.get("file_name", "file.txt"),
+                        "content": params.get("content", ""),
+                    },
+                    "risk_level": "moderate",
+                }
+            except Exception as exc:
+                log.warning("FS autochain extraction failed: %s — falling back to shell", exc)
+                cmd = await self._generate_command(user_input, en_input)
+                plan = {"route": "tool", "tool_name": "shell",
+                        "tool_args": {"command": cmd}, "risk_level": "moderate"}
+
+        elif quick and quick["tool"] == "_generate":
             cmd = await self._generate_command(user_input, en_input)
             plan = {"route": "tool", "tool_name": "shell",
                     "tool_args": {"command": cmd}, "risk_level": "moderate"}
