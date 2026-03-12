@@ -171,7 +171,9 @@ class TestStickyContextFix:
         else:
             for msg in brain._last_messages:
                 sender = msg.get("from", "").lower()
-                if _input_lower in sender or sender.split("@")[0] in _input_lower:
+                local = sender.split("@")[0]
+                # match whole word or exact local-part/domain to avoid unsafe substring checks
+                if _input_lower == sender or _input_lower == local or re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                     _email_followup = True
                     break
 
@@ -191,7 +193,8 @@ class TestStickyContextFix:
         else:
             for msg in brain._last_messages:
                 sender = msg.get("from", "").lower()
-                if _input_lower in sender:
+                # use word-boundary regex to avoid substring pitfalls
+                if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                     _email_followup = True
                     break
         assert _email_followup is False
@@ -204,7 +207,7 @@ class TestStickyContextFix:
         _email_followup = False
         for msg in brain._last_messages:
             sender = msg.get("from", "").lower()
-            if _input_lower in sender:
+            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                 _email_followup = True
                 break
         assert _email_followup is False
@@ -217,7 +220,7 @@ class TestStickyContextFix:
         _email_followup = False
         for msg in brain._last_messages:
             sender = msg.get("from", "").lower()
-            if _input_lower in sender:
+            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                 _email_followup = True
                 break
         assert _email_followup is False
@@ -230,7 +233,7 @@ class TestStickyContextFix:
         _email_followup = False
         for msg in brain._last_messages:
             sender = msg.get("from", "").lower()
-            if _input_lower in sender:
+            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                 _email_followup = True
                 break
         assert _email_followup is True
@@ -243,7 +246,7 @@ class TestStickyContextFix:
         _email_followup = False
         for msg in brain._last_messages:
             sender = msg.get("from", "").lower()
-            if _input_lower in sender:
+            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
                 _email_followup = True
                 break
         assert _email_followup is True
