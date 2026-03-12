@@ -6,7 +6,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests: 1141](https://img.shields.io/badge/tests-1141-brightgreen.svg)](#test-suite)
+[![Tests: 2261](https://img.shields.io/badge/tests-2261-brightgreen.svg)](#test-suite)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-orange.svg)](https://ollama.ai)
 [![Textual](https://img.shields.io/badge/TUI-Textual-purple.svg)](https://textual.textualize.io)
 
@@ -58,9 +58,18 @@ Bantz is a **local-first, privacy-respecting AI assistant** that lives in your t
 | **AT-SPI reader** | Instant UI element detection via accessibility tree (<10ms) |
 | **Input control** | Mouse/keyboard simulation with safety model (safe → moderate → destructive) |
 
-### Multi-Tool Workflows
-Detects chained commands → orchestrates sequential tool calls:  
+**Auto-chaining:** Tools detect follow-up actions and offer them automatically:
+- **Gmail** — composing an email → *"Shall I send it, sir?"* (one-click confirmation)
+- **Filesystem** — referencing a non-existent file/folder → LLM extracts path & content → auto-creates it
+- **Multi-step** — complex requests decomposed via Plan-and-Solve (see below)
+
+### Multi-Tool Workflows & Plan-and-Solve
+**Workflow engine** — detects chained commands, orchestrates sequential tool calls:  
 *"Send email to prof, add meeting to calendar, remind me tomorrow at 9"* → 3 tools, 1 command.
+
+**Plan-and-Solve** — when a request is too complex for a single chain, the Planner decomposes it into numbered steps, announces an *itinerary*, then the Executor runs each step sequentially with inter-step context passing:  
+*"Research the best flight to London, draft an email to my boss asking for time off, then create a calendar event for the trip"*  
+→ Planner produces 3-step JSON plan → Executor runs each with `{step_N_output}` substitution → butler-style summary.
 
 ### Memory System
 | Layer | Technology | Purpose |
@@ -70,6 +79,24 @@ Detects chained commands → orchestrates sequential tool calls:
 | **Session distillation** | LLM summarization → vector embed | Previous sessions compressed to searchable summaries |
 | **Knowledge graph** | Neo4j (optional) | Entities: Person, Topic, Decision, Task, Event, Location, Document, Commitment |
 | **Context builder** | Graph query → LLM prompt | Injects relevant entities/relationships into conversation |
+
+### Personality & Bonding
+| Feature | Description |
+|---------|-------------|
+| **Bonding meter** | RL-driven formality score (0–100). Starts formal, gradually relaxes as trust builds through positive interactions |
+| **Progressive formality** | System prompt dynamically adjusts tone: *"Good day, sir"* → *"Hey, what's up?"* based on bonding level |
+| **Dynamic persona** | LLM persona adapts based on system telemetry — stressed system → calming tone, idle → playful |
+| **RLHF feedback** | Detects sentiment & explicit keywords (*"great answer"*, *"that's wrong"*) → reward/penalty signals to RL engine |
+| **Spontaneous recall** | Vector memory retrieval surfaces relevant past conversations unprompted during chat |
+
+### Senses & Awareness
+| Feature | Description |
+|---------|-------------|
+| **Wake word** | Offline *"Hey Bantz"* detection via Porcupine PPN — always-on listening without cloud |
+| **Ambient audio** | Periodic microphone sampling to detect environmental context (quiet, noisy, music) |
+| **Audio ducking** | System volume automatically lowers during TTS playback and wake word listening |
+| **Proactive engagement** | Idle detection → butler initiates conversation based on time-of-day and recent activity |
+| **Health interventions** | Telemetry-driven break reminders — posture alerts, hydration, screen-time limits |
 
 ### Vision & OS Control (Hybrid Pipeline)
 ```
@@ -96,6 +123,14 @@ AT-SPI (< 10ms) → Spatial Cache (< 1ms) → Remote VLM (2-5s) → Give up
 | **TTS Briefing** | #131 | Piper + aplay streaming. Sentence-by-sentence pipeline (synth N+1 while playing N). Instant stop via SIGTERM |
 | **Overnight Poll** | #132 | Gmail/Calendar/Classroom every 2h overnight. KV store with dedup. Urgent keyword detection |
 | **Desktop Notifier** | — | `notify-send` integration. Smart dispatch: skips if TUI active, priority → urgency mapping |
+| **Wake Word** | #165 | Offline Porcupine PPN — *"Hey Bantz"* triggers the assistant without keyboard input |
+| **Ambient Audio** | #166 | Periodic microphone sampling — environment classification (quiet / noisy / music) for context |
+| **Proactive Engine** | #167 | Idle → butler initiates conversation; combines time-of-day, last interaction, and app context |
+| **Health Monitor** | #168 | Posture / hydration / screen-time reminders based on elapsed active time and telemetry |
+| **Audio Ducker** | #171 | PulseAudio/PipeWire volume reduction during TTS playback and wake word listening |
+| **RLHF Feedback** | #180 | Sentiment + keyword detection → direct reward/penalty to Q-table (no explicit thumbs up) |
+| **Planner** | #187 | LLM-powered Plan-and-Solve — decomposes complex requests into numbered JSON step arrays |
+| **Executor** | #187 | Sequential step runner with `{step_N_output}` context substitution and graceful failure |
 
 **Night Schedule:**
 ```
@@ -130,7 +165,9 @@ AT-SPI (< 10ms) → Spatial Cache (< 1ms) → Remote VLM (2-5s) → Give up
 | **Named places** | Save locations with geofence detection and stationary alerts |
 | **Proactive butler** | Context-aware greeting — knows how long you've been away, adjusts tone |
 | **Habit engine** | Mines usage patterns by time segment (morning/afternoon/evening/night) |
-| **Telegram bot** | Access from phone — `/briefing`, `/mail`, `/weather`, `/reminders` |
+| **Telegram bot** | Access from phone — `/briefing`, `/mail`, `/weather`, `/reminders`. Async progress indicators, MarkdownV2 rendering, message editing for live updates, terminal-parity quality |
+| **Bonding meter** | RL-driven progressive formality — the butler warms up to you over time |
+| **Plan-and-Solve** | Complex requests auto-decomposed into numbered steps with inter-step context passing |
 
 ---
 
@@ -141,17 +178,22 @@ AT-SPI (< 10ms) → Spatial Cache (< 1ms) → Remote VLM (2-5s) → Give up
 │                         INTERFACE LAYER                              │
 │   ┌──────────────┐  ┌───────────┐  ┌───────────────────────────┐    │
 │   │ TUI App      │  │ Telegram  │  │ CLI (--once, --daemon,    │    │
-│   │ (Textual)    │  │   Bot     │  │  --doctor, --setup)       │    │
-│   │ + Telemetry  │  │           │  │                           │    │
+│   │ (Textual)    │  │ Bot (async│  │  --doctor, --setup)       │    │
+│   │ + Telemetry  │  │ progress) │  │                           │    │
 │   └──────┬───────┘  └─────┬─────┘  └─────────────┬─────────────┘    │
 ├──────────┴─────────────────┴──────────────────────┴──────────────────┤
 │                          CORE LAYER                                  │
 │   ┌────────┐  ┌────────┐  ┌─────────┐  ┌──────────┐  ┌──────────┐  │
-│   │ Brain  │  │ Router │  │ Butler  │  │ Session  │  │ Workflow │  │
-│   │ (LLM   │  │ (Tool  │  │ (Greet  │  │ Tracker  │  │ (multi-  │  │
-│   │ orch.) │  │ select)│  │ & mood) │  │          │  │  tool)   │  │
+│   │ Brain  │  │ Router │  │ Butler  │  │ Planner  │  │ Workflow │  │
+│   │ (LLM   │  │ (Tool  │  │ (Greet  │  │ (Plan &  │  │ (multi-  │  │
+│   │ orch.) │  │ select)│  │ & mood) │  │  Solve)  │  │  tool)   │  │
 │   └────┬───┘  └────┬───┘  └─────────┘  └──────────┘  └──────────┘  │
-├────────┴────────────┴────────────────────────────────────────────────┤
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐                         │
+│   │ Executor │  │ Session  │  │ Bonding  │                         │
+│   │ (step    │  │ Tracker  │  │ Meter    │                         │
+│   │  runner) │  │          │  │ (RL)     │                         │
+│   └──────────┘  └──────────┘  └──────────┘                         │
+├──────────────────────────────────────────────────────────────────────┤
 │                        AGENT LAYER                                   │
 │   ┌──────────┐  ┌─────────┐  ┌──────────────┐  ┌────────────────┐   │
 │   │ Observer │  │ RL      │  │ Interventions│  │ Job Scheduler  │   │
@@ -161,6 +203,10 @@ AT-SPI (< 10ms) → Spatial Cache (< 1ms) → Remote VLM (2-5s) → Give up
 │   ┌──────────┐  ┌─────────┐  ┌──────────────┐  ┌────────────────┐   │
 │   │ App      │  │ TTS     │  │ Maintenance  │  │ Reflection     │   │
 │   │ Detector │  │ (Piper) │  │ (3 AM)       │  │ (11 PM)        │   │
+│   └──────────┘  └─────────┘  └──────────────┘  └────────────────┘   │
+│   ┌──────────┐  ┌─────────┐  ┌──────────────┐  ┌────────────────┐   │
+│   │ Wake     │  │ Ambient │  │ Health       │  │ Audio Ducker   │   │
+│   │ Word     │  │ Audio   │  │ Monitor      │  │ (volume ctrl)  │   │
 │   └──────────┘  └─────────┘  └──────────────┘  └────────────────┘   │
 ├──────────────────────────────────────────────────────────────────────┤
 │                         DATA LAYER                                   │
@@ -314,7 +360,8 @@ See [src/bantz/config.py](src/bantz/config.py) for the full list (~60 settings).
 1. **Quick route** — keyword matching for obvious patterns (weather, email, GPS). No LLM call.
 2. **LLM router** — Ollama picks the right tool and args from the registry via CoT.
 3. **Workflow engine** — detects multi-step commands, chains tool calls.
-4. **Fallback** — no tool match → conversational chat.
+4. **Plan-and-Solve** — complex requests → LLM decomposes into numbered JSON steps → Executor runs sequentially with context passing.
+5. **Fallback** — no tool match → conversational chat.
 
 ---
 
@@ -332,13 +379,13 @@ Data used for weather auto-detection, geofencing, place-based reminders, and sta
 ## Project Structure
 
 ```
-src/bantz/                        # ~28,000 LOC across 90 modules
+src/bantz/                        # ~34,800 LOC across 104 modules
 ├── __main__.py                   # CLI entry point (--once, --daemon, --doctor, --setup)
 ├── app.py                        # Textual main app (alternate entry)
 ├── config.py                     # ~60 settings from .env (Pydantic Settings)
 │
 ├── core/                         # Brain, routing, memory, briefing, habits
-│   ├── brain.py                  # Main orchestrator (1528 LOC)
+│   ├── brain.py                  # Main orchestrator (2103 LOC)
 │   ├── briefing.py               # Daily briefing (parallel API calls)
 │   ├── butler.py                 # Context-aware proactive greeting
 │   ├── digest.py                 # Daily/weekly digest via Gemini
@@ -363,7 +410,7 @@ src/bantz/                        # ~28,000 LOC across 90 modules
 │   ├── nodes.py                  # Entity schema (9 node types, 8 relationships)
 │   └── context_builder.py        # Graph → LLM context injection
 │
-├── agent/                        # Background Agent System (#124-#132)
+├── agent/                        # Background Agent System (#124-#187)
 │   ├── observer.py               # Stderr observer with error classification
 │   ├── rl_engine.py              # Q-learning RL (1680 states, SQLite Q-table)
 │   ├── interventions.py          # Priority queue + rate limiting + focus mode
@@ -371,10 +418,23 @@ src/bantz/                        # ~28,000 LOC across 90 modules
 │   ├── job_scheduler.py          # APScheduler (cron + interval jobs)
 │   ├── tts.py                    # Piper + aplay streaming TTS
 │   ├── notifier.py               # Desktop notifications (notify-send)
+│   ├── wake_word.py              # Offline Porcupine wake word detection (#165)
+│   ├── ambient.py                # Periodic ambient audio sampling (#166)
+│   ├── proactive.py              # Idle detection → proactive engagement (#167)
+│   ├── health.py                 # Telemetry-driven health interventions (#168)
+│   ├── audio_ducker.py           # System audio ducking during TTS (#171)
+│   ├── planner.py                # Plan-and-Solve decomposition (#187)
+│   ├── executor.py               # Sequential plan step runner (#187)
 │   └── workflows/
 │       ├── maintenance.py        # 3 AM: Docker, temp, disk, services, logs
 │       ├── reflection.py         # 11 PM: Hierarchical summarization
 │       └── overnight_poll.py     # 2h: Gmail/Calendar/Classroom polling
+│
+├── personality/                  # Persona & Bonding (#169, #172)
+│   ├── system_prompt.py          # Dynamic system prompt generation
+│   ├── greeting.py               # Butler greeting templates
+│   ├── persona.py                # LLM persona adaptation (#169)
+│   └── bonding.py                # RL bonding meter — progressive formality (#172)
 │
 ├── vision/                       # OS Control & Screen Reading (#119-#123)
 │   ├── navigator.py              # Unified fallback chain with per-app analytics
@@ -384,15 +444,16 @@ src/bantz/                        # ~28,000 LOC across 90 modules
 │
 ├── tools/                        # 18 tool modules
 │   ├── shell.py                  # Bash with security controls
-│   ├── gmail.py                  # Full Gmail integration
+│   ├── gmail.py                  # Full Gmail integration + auto-chain compose/send
 │   ├── calendar.py               # Google Calendar CRUD
 │   ├── classroom.py              # Google Classroom
+│   ├── filesystem.py             # File ops + LLM auto-chain create-on-miss
 │   ├── accessibility.py          # AT-SPI2 accessibility reader
 │   ├── input_control.py          # Mouse/keyboard simulation
-│   └── ...                       # weather, news, files, docs, reminders, etc.
+│   └── ...                       # weather, news, docs, reminders, web_search, etc.
 │
 ├── interface/
-│   ├── telegram_bot.py           # Telegram integration
+│   ├── telegram_bot.py           # Telegram integration (async progress, MarkdownV2)
 │   └── tui/
 │       ├── app.py                # BantzApp (Textual, 769 LOC)
 │       ├── telemetry.py          # Hardware telemetry collector (#133)
@@ -406,20 +467,19 @@ src/bantz/                        # ~28,000 LOC across 90 modules
 │   └── gemini.py                 # Gemini API (fallback)
 │
 ├── auth/                         # Google OAuth
-├── i18n/                         # TR↔EN translation bridge
-└── personality/                  # System prompt, greeting templates
+└── i18n/                         # TR↔EN translation bridge
 ```
 
 ---
 
 ## Test Suite
 
-**24 test files — 1141 tests — ~14,000 LOC of test code**
+**46 test files — 2261 tests — ~25,700 LOC of test code**
 
 ```bash
 # Run all tests
 pip install -e ".[dev]"
-PYTHONPATH=src pytest --ignore=tests/test_observer.py -q
+PYTHONPATH=src pytest --ignore=tests/agent/test_observer.py -q
 
 # With coverage
 PYTHONPATH=src pytest --cov=bantz --cov-report=html
@@ -428,19 +488,22 @@ PYTHONPATH=src pytest --cov=bantz --cov-report=html
 Test breakdown by area:
 | Area | Tests | Covers |
 |------|-------|--------|
-| Data layer | ~100 | store ABCs, SQLite, models, JSON migration |
-| Memory | ~80 | vector store, distiller, embeddings |
-| Vision | ~120 | navigator, spatial cache, VLM, screenshot |
-| Agent | ~350 | observer, RL engine, interventions, app detector, TTS |
-| Workflows | ~200 | maintenance, reflection, overnight poll |
-| Core | ~200 | brain integrations, router, shell, brain stabilization |
-| Telemetry | 43 | collector, ring buffers, delta math, GPU mocks |
+| Data layer | 111 | store ABCs, SQLite, models, JSON migration |
+| Memory | 109 | vector store, distiller, embeddings |
+| Vision | 187 | navigator, spatial cache, VLM, screenshot |
+| Agent | 716 | observer, RL engine, interventions, planner, executor, TTS, health, bonding, wake word |
+| Workflows | 160 | maintenance, reflection, overnight poll |
+| Core | 425 | brain integrations, router, shell, stabilization, regex audit, RLHF |
+| TUI | 325 | header, input, mood, streaming, telemetry, toast |
+| Interface | 76 | Telegram LLM, async progress, MarkdownV2 |
+| Personality | 103 | bonding meter, persona, progressive formality |
+| Tools | 49 | filesystem auto-chain, Gmail auto-chain, web search |
 
 ---
 
 ## v3 Completed Issues
 
-All 20 issues from Phase 1–5 have been implemented and merged:
+All 38 issues from Phase 1–7 have been implemented and merged:
 
 ### Phase 1: Data Layer Revolution & Semantic Memory
 | # | Issue | PR | Tests |
@@ -481,13 +544,45 @@ All 20 issues from Phase 1–5 have been implemented and merged:
 |---|-------|-----|-------|
 | #133 | Real-time hardware telemetry (psutil + pynvml) | ✅ | 43 |
 
+### Phase 6: Senses & Personality
+| # | Issue | PR | Tests |
+|---|-------|-----|-------|
+| #165 | Offline wake word detection ("Hey Bantz") via Porcupine | ✅ | — |
+| #166 | Periodic ambient audio sampling for environment awareness | ✅ | — |
+| #167 | Proactive engagement and idle conversation initiation | ✅ | — |
+| #168 | Proactive break & health interventions from telemetry | ✅ | — |
+| #169 | Dynamic LLM persona adaptation based on system state | ✅ | — |
+| #170 | Spontaneous vector memory retrieval for conversational depth | ✅ | — |
+| #171 | System audio ducking during TTS playback and wake word | ✅ | — |
+| #172 | RL-based bonding meter for progressive formality | ✅ #179 | 103 |
+
+### Phase 7: Communication Parity & Intelligence
+| # | Issue | PR | Tests |
+|---|-------|-----|-------|
+| #180 | Direct RLHF via Sentiment & Feedback Keywords | ✅ #190 | RL |
+| #181 | Telegram async progress indicators & message editing | ✅ #191 | 76 |
+| #183 | Auto-chaining Gmail compose & send actions | ✅ #194 | — |
+| #187 | Plan-and-Solve multi-step decomposition (planner + executor) | ✅ #198 | 39 |
+
+### Bug Fixes & Stabilization (Phase 6–7)
+| PR | Description |
+|----|-------------|
+| #192 | Identity, routing, and live streaming fixes |
+| #193 | MarkdownV2 trap, bracket bug, URL dedup |
+| #195 | Terminal Parity — Telegram same quality as TUI (serial lock, maintenance filter, Ollama warm-up) |
+| #196–197 | Filesystem auto-chaining v1 (regex) → v2 (LLM-based param extraction) |
+| #177 | Strict context guards for 5 `_quick_route` regex false positives |
+| #173 | Systemd linger for true 24/7 background execution |
+
 ### Remaining Roadmap
 | # | Issue | Status |
 |---|-------|--------|
-| #134 | ASCII sparkline charts in TUI sidebar | Next |
-| #135 | Dynamic mood system — UI theme reacts to load | Planned |
-| #136 | Live header with service status indicators | Planned |
-| #137 | Non-blocking toast notification system | Planned |
+| #182 | Strict source citation for web search — Telegraph references | Planned |
+| #184 | Context window loop breaker & background spam filter | Planned |
+| #185 | Visual UI automation (Computer Use) — the butler's eyes | Planned |
+| #186 | Demonstration learning (macro recording) — the butler's apprenticeship | Planned |
+| #188 | Autonomous VLM web navigation loop | Planned |
+| #189 | Remote visual operation & telemetry via Telegram | Planned |
 
 ---
 
