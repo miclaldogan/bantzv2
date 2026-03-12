@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import time
 from collections import defaultdict
 from typing import Callable, Coroutine, Any
@@ -76,6 +77,15 @@ _RATE_WINDOW = 60  # seconds
 _RATE_LIMIT = 10   # max messages per window
 _rate_log: dict[int, list[float]] = defaultdict(list)
 
+# ── Placeholder messages for progress indication (#181) ───────────────────────
+PLACEHOLDER_MESSAGES: list[str] = [
+    "📟 One moment, ma'am — consulting the Grand Telegraph Archives...",
+    "📟 Dispatching a query to the archives. Please hold the line, ma'am...",
+    "📟 The telegraph office is processing your request. A moment, if you please...",
+    "📟 Reaching out to the information bureau, ma'am. Do stand by...",
+    "📟 The wires are humming with your enquiry. Just a moment...",
+]
+
 
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: silently drop messages from non-whitelisted users (#178)."""
@@ -88,34 +98,33 @@ def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _safe_reply(update: Update, text: str) -> None:
-    """Send a reply, splitting at paragraph boundaries for Telegram's 4096 limit."""
-    MAX = 4000  # leave headroom below 4096
+def _chunk_text(text: str, max_len: int = 4000) -> list[str]:
+    """Split *text* at paragraph boundaries, respecting *max_len*.
 
-    if len(text) <= MAX:
-        await update.message.reply_text(text)
-        return
+    Returns a list of chunks, each ≤ max_len characters.
+    """
+    if len(text) <= max_len:
+        return [text]
 
-    # Smart chunking: split at double-newline paragraph boundaries
     chunks: list[str] = []
     current = ""
     for para in text.split("\n\n"):
         candidate = (current + "\n\n" + para).strip() if current else para
-        if len(candidate) <= MAX:
+        if len(candidate) <= max_len:
             current = candidate
         else:
             if current:
                 chunks.append(current)
                 current = ""
-            # If single paragraph exceeds MAX, hard-split on newlines
-            if len(para) > MAX:
+            # If single paragraph exceeds max_len, hard-split on newlines
+            if len(para) > max_len:
                 for line in para.split("\n"):
-                    if len(line) > MAX:
-                        # No newline split possible — brute-force at MAX
-                        for i in range(0, len(line), MAX):
-                            chunks.append(line[i:i + MAX])
+                    if len(line) > max_len:
+                        # No newline split possible — brute-force at max_len
+                        for i in range(0, len(line), max_len):
+                            chunks.append(line[i:i + max_len])
                         current = ""
-                    elif current and len(current) + len(line) + 1 <= MAX:
+                    elif current and len(current) + len(line) + 1 <= max_len:
                         current = current + "\n" + line
                     else:
                         if current:
@@ -126,8 +135,32 @@ async def _safe_reply(update: Update, text: str) -> None:
     if current:
         chunks.append(current)
 
-    for chunk in chunks:
+    return chunks
+
+
+async def _safe_reply(update: Update, text: str) -> None:
+    """Send a reply, splitting at paragraph boundaries for Telegram's 4096 limit."""
+    for chunk in _chunk_text(text):
         await update.message.reply_text(chunk)
+
+
+async def _safe_edit(placeholder, text: str) -> bool:
+    """Edit placeholder message with fallback chain.
+
+    Senior Architect note — MarkdownV2 trap:
+      1. edit_text(text) — may fail if Telegram parses markdown entities
+      2. edit_text(text, parse_mode=None) — force plain text
+      3. return False → caller should delete placeholder + reply_text
+    """
+    try:
+        await placeholder.edit_text(text)
+        return True
+    except Exception:
+        try:
+            await placeholder.edit_text(text, parse_mode=None)
+            return True
+        except Exception:
+            return False
 
 
 # ── Command Handlers ─────────────────────────────────────────────────────────
@@ -394,7 +427,13 @@ def _is_rate_limited(user_id: int) -> bool:
 
 @_authorized
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Cognitive Wire — route free text through brain.process(is_remote=True)."""
+    """Cognitive Wire — route free text through brain.process(is_remote=True).
+
+    Progress indicator flow (#181):
+      1. Send placeholder immediately (covers Telegram's 5s typing limit)
+      2. brain.process() with typing indicator
+      3. Edit placeholder with actual response (chunked if >4096)
+    """
     if not config.telegram_llm_mode:
         await update.message.reply_text(
             "🔒 The telegraph only accepts strict commands (/).\n"
@@ -414,7 +453,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_text:
         return
 
-    # Show typing indicator while brain processes
+    # Step 1: Immediate placeholder — user sees instant feedback (#181)
+    placeholder = await update.message.reply_text(
+        random.choice(PLACEHOLDER_MESSAGES)
+    )
+
+    # Step 2: Typing indicator while brain processes
     await update.message.chat.send_action(ChatAction.TYPING)
 
     try:
@@ -432,7 +476,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if response and response.strip():
             cleaned = response.strip()
-            await _safe_reply(update, cleaned)
+
+            # Step 3: Edit placeholder with actual response (#181)
+            chunks = _chunk_text(cleaned)
+            if not await _safe_edit(placeholder, chunks[0]):
+                # Fallback: delete placeholder, send via reply_text
+                try:
+                    await placeholder.delete()
+                except Exception:
+                    pass
+                await _safe_reply(update, cleaned)
+            else:
+                # Remaining chunks as new messages
+                for extra in chunks[1:]:
+                    await update.message.reply_text(extra)
 
             # ── Persist streamed response to memory + graph (#178 fix) ────
             # Brain only auto-saves non-streaming responses; for streams the
@@ -453,10 +510,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 except Exception:
                     log.debug("Failed to persist Telegram response to graph")
         else:
-            await update.message.reply_text("…")
+            if not await _safe_edit(placeholder, "…"):
+                await update.message.reply_text("…")
     except Exception as exc:
         log.exception("Cognitive wire error for user %d", user_id)
-        await update.message.reply_text(f"⚠️ Error: {exc}")
+        if not await _safe_edit(placeholder, f"⚠️ Error: {exc}"):
+            await update.message.reply_text(f"⚠️ Error: {exc}")
 
 
 # ── Bot runner ────────────────────────────────────────────────────────────────
