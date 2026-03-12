@@ -40,6 +40,8 @@ RULES:
 - End with: "Shall I look into any of these, ma'am?" or similar.
 - If tool returned an error, blame the unreliable contraption honestly. Never claim success on failure.
 - Max 5 sentences. English only. Plain text, no markdown.
+- When including URLs or links, print the RAW unformatted URL only. Do not use Markdown \
+link formatting (no [Text](URL), no [URL], no <URL>). Just output the bare link as plain text.
 - Always address the user as 'ma'am'. Stay in character as a 1920s butler.{persona_state}{style_hint}{formality_hint}{time_hint}
 {profile_hint}
 {graph_hint}
@@ -57,6 +59,9 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r"\*(.+?)\*", r"\1", text)
     text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"^\d+\.\s+", "- ", text, flags=re.MULTILINE)
+    # Strip markdown links: [Text](URL) → URL, [URL] → URL
+    text = re.sub(r"\[([^\]]*)\]\((https?://[^)]+)\)", r"\2", text)
+    text = re.sub(r"\[(https?://[^\]]+)\]", r"\1", text)
     return text.strip()
 
 

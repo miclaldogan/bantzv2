@@ -218,25 +218,36 @@ def _deduplicate(new_results: list[dict], recent: list[dict]) -> list[dict]:
 
 
 def _format_results(results: list[dict], query: str, cached: bool) -> str:
-    """Format search results with source URLs for the user."""
+    """Format search results with source URLs for the user.
+
+    Deduplicates URLs at format time as a safety net — even if
+    ``_ddg_search`` already filters, callers may inject duplicates.
+    """
     if not results:
         return f"No results found for: {query}"
 
-    lines = []
+    lines: list[str] = []
     tag = " (cached)" if cached else ""
     lines.append(f"Search results for \"{query}\"{tag}:")
     lines.append("")
 
-    for i, r in enumerate(results, 1):
-        title = r.get("title", "Untitled")
+    seen_urls: set[str] = set()
+    idx = 0
+    for r in results:
         url = r.get("url", "")
+        if url and url in seen_urls:
+            continue
+        if url:
+            seen_urls.add(url)
+        idx += 1
+
+        title = r.get("title", "Untitled")
         snippet = r.get("snippet", "")
 
-        lines.append(f"{i}. {title}")
+        lines.append(f"{idx}. {title}")
         if url:
             lines.append(f"   URL: {url}")
         if snippet:
-            # Truncate snippet to 2 lines max
             lines.append(f"   {snippet[:200]}")
         lines.append("")
 
