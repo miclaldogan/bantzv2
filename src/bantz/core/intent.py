@@ -76,6 +76,18 @@ CRITICAL:
   historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
 - "do your search", "can you find", "look it up" → web_search.
 
+ANTI-FALSE-POSITIVE RULES (critical — read carefully):
+- If the user uses slang, idioms, conversational filler, or if you are NOT 100%%
+  sure a specific tool is EXPLICITLY requested, you MUST default to "chat".
+- Never guess a tool. When in doubt, just chat.
+- Phrases like "what does X stand for", "you got me wrong", "never mind",
+  "forget it", "that's not what I meant" are CONVERSATIONAL — route to "chat".
+- Only route to a tool when the user's intent is UNAMBIGUOUS and EXPLICIT.
+- Do NOT pattern-match individual words (e.g. "stand" ≠ web_search,
+  "wrong" ≠ calendar). Look at the FULL sentence meaning.
+- Emotional or corrective statements ("bud you got me wrong", "that's bad",
+  "come on man") are ALWAYS "chat" — never trigger any tool.
+
 Return ONLY valid JSON — no markdown fences, no explanation outside the JSON:
 
 {{"chain":[{{"step":"intent","thought":"..."}},{{"step":"tool","thought":"..."}},{{"step":"params","thought":"..."}}],"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95}}

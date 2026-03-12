@@ -295,10 +295,11 @@ class TestHandleMessage:
                     await mod.handle_message(update, ctx)
 
             # Response should have been edited into the placeholder (#181)
+            # With throttled streaming, the final edit is via _safe_edit
             placeholder = update.message.reply_text.return_value
-            placeholder.edit_text.assert_awaited_once()
-            edited_text = placeholder.edit_text.call_args[0][0]
-            assert edited_text == "Good day, ma'am."
+            # Last edit_text call should contain the full response
+            final_edit = placeholder.edit_text.call_args_list[-1][0][0]
+            assert "Good day, ma'am." in final_edit
         finally:
             mod._ALLOWED = original_allowed
 
@@ -855,9 +856,9 @@ class TestProgressIndicators:
                     await mod.handle_message(update, ctx)
 
             placeholder = update.message.reply_text.return_value
-            placeholder.edit_text.assert_awaited_once()
-            edited = placeholder.edit_text.call_args[0][0]
-            assert edited == "Good evening, ma'am."
+            # Final edit should contain the full text
+            final_edit = placeholder.edit_text.call_args_list[-1][0][0]
+            assert "Good evening, ma'am." in final_edit
         finally:
             mod._ALLOWED = original
 
@@ -964,3 +965,110 @@ class TestSafeEdit:
         ph.edit_text = AsyncMock(side_effect=Exception("total failure"))
         result = await _safe_edit(ph, "test")
         assert result is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 14. Throttled Streaming (#181 follow-up)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestThrottledStreaming:
+    """Tests for _stream_to_placeholder live-update behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_returns_full_text(self):
+        """_stream_to_placeholder must return the complete accumulated text."""
+        from bantz.interface.telegram_bot import _stream_to_placeholder
+
+        async def gen():
+            for tok in ["Good ", "morning, ", "ma'am."]:
+                yield tok
+
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock()
+        result = await _stream_to_placeholder(ph, gen(), interval=0)
+        assert result == "Good morning, ma'am."
+
+    @pytest.mark.asyncio
+    async def test_edits_placeholder_during_stream(self):
+        """With interval=0, every chunk should trigger an edit."""
+        from bantz.interface.telegram_bot import _stream_to_placeholder
+
+        async def gen():
+            for tok in ["Hello ", "world"]:
+                yield tok
+
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock()
+        await _stream_to_placeholder(ph, gen(), interval=0)
+        # At least one edit should have occurred
+        assert ph.edit_text.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_edit_includes_cursor(self):
+        """Intermediate edits should include the ▍ cursor indicator."""
+        from bantz.interface.telegram_bot import _stream_to_placeholder
+
+        async def gen():
+            for tok in ["Hello ", "world"]:
+                yield tok
+
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock()
+        await _stream_to_placeholder(ph, gen(), interval=0)
+        # At least one intermediate call should have the cursor
+        calls = [c[0][0] for c in ph.edit_text.call_args_list]
+        assert any("▍" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_edit_failure_does_not_crash(self):
+        """If edit_text fails during streaming, it should not abort."""
+        from bantz.interface.telegram_bot import _stream_to_placeholder
+
+        async def gen():
+            for tok in ["One ", "two ", "three"]:
+                yield tok
+
+        ph = AsyncMock()
+        ph.edit_text = AsyncMock(side_effect=Exception("rate limited"))
+        result = await _stream_to_placeholder(ph, gen(), interval=0)
+        assert result == "One two three"
+
+    @pytest.mark.asyncio
+    async def test_stream_interval_constant_exists(self):
+        """_STREAM_INTERVAL constant must exist and be >= 1.0."""
+        from bantz.interface.telegram_bot import _STREAM_INTERVAL
+        assert isinstance(_STREAM_INTERVAL, float)
+        assert _STREAM_INTERVAL >= 1.0
+
+    @pytest.mark.asyncio
+    async def test_handle_message_uses_stream_to_placeholder(self):
+        """handle_message should use _stream_to_placeholder for streams."""
+        import bantz.interface.telegram_bot as mod
+        original = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="stream live")
+            ctx = _ctx()
+
+            async def fake_stream():
+                for chunk in ["Live ", "stream."]:
+                    yield chunk
+
+            fake_result = FakeBrainResult(response="", stream=fake_stream())
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
+                    await mod.handle_message(update, ctx)
+
+            # Final edit should have the complete text (no cursor)
+            placeholder = update.message.reply_text.return_value
+            final_edit = placeholder.edit_text.call_args_list[-1][0][0]
+            assert "Live stream." in final_edit
+            assert "▍" not in final_edit  # cursor removed in final edit
+        finally:
+            mod._ALLOWED = original

@@ -86,6 +86,9 @@ PLACEHOLDER_MESSAGES: list[str] = [
     "📟 The wires are humming with your enquiry. Just a moment...",
 ]
 
+# ── Throttled streaming config (#181 follow-up) ──────────────────────────────
+_STREAM_INTERVAL: float = 2.0  # seconds between edit_text updates
+
 
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: silently drop messages from non-whitelisted users (#178)."""
@@ -161,6 +164,36 @@ async def _safe_edit(placeholder, text: str) -> bool:
             return True
         except Exception:
             return False
+
+
+async def _stream_to_placeholder(placeholder, stream, *, interval: float = _STREAM_INTERVAL) -> str:
+    """Consume *stream*, updating *placeholder* every *interval* seconds.
+
+    Returns the full accumulated response text.  The placeholder is edited
+    with the latest accumulated text at each tick, so the user can watch
+    the response being generated live without hitting Telegram rate limits.
+    """
+    parts: list[str] = []
+    last_edit = 0.0
+    last_text = ""
+
+    async for chunk in stream:
+        parts.append(chunk)
+        now = asyncio.get_event_loop().time()
+        if now - last_edit >= interval:
+            current = "".join(parts).strip()
+            if current and current != last_text:
+                try:
+                    await placeholder.edit_text(current + " ▍")
+                except Exception:
+                    try:
+                        await placeholder.edit_text(current + " ▍", parse_mode=None)
+                    except Exception:
+                        pass  # skip this tick, retry next
+                last_text = current
+                last_edit = now
+
+    return "".join(parts)
 
 
 # ── Command Handlers ─────────────────────────────────────────────────────────
@@ -467,10 +500,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Collect response: prefer stream if available
         if result.stream:
-            parts: list[str] = []
-            async for chunk in result.stream:
-                parts.append(chunk)
-            response = "".join(parts)
+            response = await _stream_to_placeholder(placeholder, result.stream)
         else:
             response = result.response
 

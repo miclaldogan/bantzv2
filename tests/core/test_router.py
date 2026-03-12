@@ -387,3 +387,61 @@ class TestQuickRouteAudit:
         section = src[idx:idx + 600]
         assert "_SIZE_KW" in section and "_DISK_CTX" in section, \
             "Disk routing must use two-gate (size + context) pattern"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CoT Anti-False-Positive Rules (fix for tool routing schizophrenia)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCOTAntifalsePositive:
+    """COT_SYSTEM must include anti-false-positive routing rules."""
+
+    def test_cot_has_doubt_chat_rule(self):
+        """Router must default to chat when in doubt."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "when in doubt" in lower
+        assert "chat" in lower
+
+    def test_cot_has_slang_idiom_rule(self):
+        """Router must handle slang/idioms as conversational."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "slang" in lower
+        assert "idiom" in lower
+
+    def test_cot_has_never_guess_rule(self):
+        """Router must never guess a tool."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "never guess" in lower
+
+    def test_cot_has_full_sentence_rule(self):
+        """Router must look at full sentence meaning, not individual words."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "full sentence" in lower
+
+    def test_cot_has_emotional_rule(self):
+        """Emotional/corrective statements must route to chat."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "emotional" in lower or "corrective" in lower
+
+    def test_cot_has_stand_for_example(self):
+        """The 'stand for' false positive should be explicitly mentioned."""
+        from bantz.core.intent import COT_SYSTEM
+        assert "stand" in COT_SYSTEM.lower()
+
+    def test_cot_has_conversational_examples(self):
+        """Phrases like 'got me wrong' should be listed as conversational."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "got me wrong" in lower
+
+    def test_cot_has_unambiguous_rule(self):
+        """Only unambiguous and explicit intents should trigger tools."""
+        from bantz.core.intent import COT_SYSTEM
+        lower = COT_SYSTEM.lower()
+        assert "unambiguous" in lower
