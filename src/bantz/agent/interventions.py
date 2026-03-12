@@ -44,6 +44,7 @@ class InterventionType(str, Enum):
     ROUTINE = "routine"
     REMINDER = "reminder"
     MAINTENANCE = "maintenance"
+    PROACTIVE = "proactive"  # #167: proactive engagement
 
 
 class Priority(int, Enum):
@@ -486,6 +487,7 @@ ACTION_LABELS: dict[str, tuple[str, str]] = {
     "prepare_briefing":  ("📋", "Prepare your daily briefing?"),
     "suggest_break":     ("☕", "Time for a break?"),
     "daily_review":      ("📊", "Generate your daily review?"),
+    "proactive_chat":    ("💬", "Check in with you?"),
 }
 
 # Source labels for explainability

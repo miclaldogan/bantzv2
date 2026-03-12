@@ -163,6 +163,13 @@ class Config(BaseSettings):
     ambient_interval: int = Field(600, alias="BANTZ_AMBIENT_INTERVAL")
     ambient_window: float = Field(3.0, alias="BANTZ_AMBIENT_WINDOW")
 
+    # ── Proactive Engagement (#167) ──────────────────────────────────────
+    proactive_enabled: bool = Field(False, alias="BANTZ_PROACTIVE_ENABLED")
+    proactive_interval_hours: float = Field(3.0, alias="BANTZ_PROACTIVE_INTERVAL_HOURS")
+    proactive_jitter_minutes: int = Field(30, alias="BANTZ_PROACTIVE_JITTER_MINUTES")
+    proactive_max_daily: int = Field(1, alias="BANTZ_PROACTIVE_MAX_DAILY")
+    proactive_away_timeout: int = Field(1800, alias="BANTZ_PROACTIVE_AWAY_TIMEOUT")
+
     @property
     def db_path(self) -> Path:
         base = (

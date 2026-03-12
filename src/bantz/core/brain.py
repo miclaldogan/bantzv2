@@ -650,6 +650,15 @@ class Brain:
         ):
             return {"tool": "_ambient_status", "args": {}}
 
+        # Proactive engagement status (#167)
+        if re.search(
+            r"proactive\s+(?:status|info|count|stats)|"
+            r"how\s+many\s+proactive|proaktif\s+durum|"
+            r"engagement\s+status|check.?in\s+(?:status|count)",
+            both,
+        ):
+            return {"tool": "_proactive_status", "args": {}}
+
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
                                     "what's today", "what do i have today")):
@@ -1188,6 +1197,31 @@ class Brain:
                 text = "Ambient analyzer is not available."
             data_layer.conversations.add("assistant", text, tool_used="ambient")
             return BrainResult(response=text, tool_used="ambient")
+
+        if quick and quick["tool"] == "_proactive_status":
+            try:
+                from bantz.agent.proactive import (
+                    proactive_engine, _get_daily_count, _compute_adaptive_max,
+                )
+                from bantz.agent.rl_engine import rl_engine
+                kv = data_layer.kv
+                if kv:
+                    count, date = _get_daily_count(kv)
+                    avg_r = rl_engine.episodes.avg_reward(7) if rl_engine.initialized else 0.0
+                    max_d = _compute_adaptive_max(config.proactive_max_daily, avg_r)
+                    text = (
+                        f"💬 Proactive Engagement Status\n"
+                        f"  Enabled: {'✅' if config.proactive_enabled else '❌'}\n"
+                        f"  Today: {count}/{max_d} messages\n"
+                        f"  RL avg reward (7d): {avg_r:.2f}\n"
+                        f"  Interval: {config.proactive_interval_hours}h ±{config.proactive_jitter_minutes}m"
+                    )
+                else:
+                    text = "Proactive engine: KV store not available."
+            except Exception:
+                text = "Proactive engagement module is not available."
+            data_layer.conversations.add("assistant", text, tool_used="proactive")
+            return BrainResult(response=text, tool_used="proactive")
 
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing

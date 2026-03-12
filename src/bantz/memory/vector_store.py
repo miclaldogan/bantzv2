@@ -140,11 +140,22 @@ class VectorStore:
         query_vec: list[float],
         limit: int = 5,
         min_score: float = 0.3,
+        recency_weight: float = 0.0,
     ) -> list[dict]:
         """Brute-force cosine similarity search.
 
+        Args:
+            query_vec: Query embedding vector.
+            limit: Maximum number of results.
+            min_score: Minimum cosine similarity threshold.
+            recency_weight: Time-decay factor (0.0 = disabled). When > 0,
+                the final score is ``(1 - w) * cosine + w * recency`` where
+                recency is an exponential decay ``exp(-age_days / 30)`` so
+                messages from the last ~month are boosted and 6-month-old
+                topics naturally fade.  Recommended: 0.2–0.4.
+
         Returns list of ``{message_id, score, role, content, created_at}``
-        sorted by descending similarity.
+        sorted by descending final score.
         """
         rows = self._conn.execute(
             """SELECT mv.message_id, mv.embedding, mv.dim,
@@ -154,14 +165,28 @@ class VectorStore:
                JOIN messages m ON m.id = mv.message_id"""
         ).fetchall()
 
+        now_str = datetime.utcnow().isoformat()
         scored: list[tuple[float, dict]] = []
         for row in rows:
             vec = _blob_to_vec(row["embedding"], row["dim"])
-            score = _cosine_similarity(query_vec, vec)
-            if score >= min_score:
-                scored.append((score, {
+            cosine = _cosine_similarity(query_vec, vec)
+
+            # Apply time-decay recency boost (#167)
+            if recency_weight > 0.0 and row["created_at"]:
+                try:
+                    created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00").replace("+00:00", ""))
+                    age_days = max((datetime.utcnow() - created).total_seconds() / 86400, 0.0)
+                    recency = math.exp(-age_days / 30.0)
+                except (ValueError, TypeError):
+                    recency = 0.5
+                final_score = (1.0 - recency_weight) * cosine + recency_weight * recency
+            else:
+                final_score = cosine
+
+            if final_score >= min_score:
+                scored.append((final_score, {
                     "message_id": row["message_id"],
-                    "score": round(score, 4),
+                    "score": round(final_score, 4),
                     "role": row["role"],
                     "content": row["content"],
                     "tool_used": row["tool_used"],

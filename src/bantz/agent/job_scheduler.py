@@ -340,6 +340,27 @@ _JOB_REGISTRY: dict[str, tuple[Callable, str]] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Proactive engagement job (#167)
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def _job_proactive_engagement() -> None:
+    """Run one proactive engagement attempt (#167).
+
+    Called by APScheduler as an interval job with jitter.
+    All guards and context gathering delegated to ProactiveEngine.
+    """
+    try:
+        from bantz.agent.proactive import proactive_engine
+        result = await proactive_engine.run()
+        if result.success:
+            log.info("💬 Proactive: %s", result.message[:80])
+        else:
+            log.debug("💬 Proactive skipped: %s", result.reason)
+    except Exception as exc:
+        log.warning("Proactive engagement error: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # JobScheduler — main class
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -416,6 +437,9 @@ class JobScheduler:
 
         # Register briefing watcher (10s interval) for TTS auto-trigger (#131)
         self._register_briefing_watcher()
+
+        # Register proactive engagement job (#167)
+        self._register_proactive()
 
         # APScheduler event listeners for history tracking
         from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
@@ -502,6 +526,42 @@ class JobScheduler:
             jobstore="default",
         )
         log.info("Registered briefing watcher (10s interval, TTS)")
+
+    def _register_proactive(self) -> None:
+        """Register proactive engagement job (#167) with jitter."""
+        from bantz.config import config
+        if not config.proactive_enabled:
+            return
+
+        from apscheduler.triggers.interval import IntervalTrigger
+        from datetime import timedelta
+
+        hours = max(config.proactive_interval_hours, 1.0)
+        jitter_sec = config.proactive_jitter_minutes * 60
+
+        self._scheduler.add_job(
+            _job_proactive_engagement,
+            IntervalTrigger(
+                hours=hours,
+                jitter=jitter_sec,
+            ),
+            id="proactive_engagement",
+            name="Proactive engagement (#167)",
+            replace_existing=True,
+            jobstore="default",
+        )
+
+        # Initialise the engine
+        try:
+            from bantz.agent.proactive import proactive_engine
+            proactive_engine.init()
+        except Exception as exc:
+            log.warning("ProactiveEngine init failed: %s", exc)
+
+        log.info(
+            "Registered proactive engagement (%.1fh interval, %dm jitter, max=%d/day)",
+            hours, config.proactive_jitter_minutes, config.proactive_max_daily,
+        )
 
     # ── Dynamic reminder bridge ───────────────────────────────────────
 

@@ -483,7 +483,7 @@ class TestRLConfig:
 
 class TestAction:
     def test_all_actions(self):
-        assert len(ALL_ACTIONS) == 8
+        assert len(ALL_ACTIONS) == 9
 
     def test_action_values(self):
         assert Action.LAUNCH_DOCKER.value == "launch_docker"

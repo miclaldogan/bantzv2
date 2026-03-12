@@ -661,7 +661,7 @@ class TestInterventionConfig:
 
 class TestEnums:
     def test_intervention_types(self):
-        assert len(InterventionType) == 4
+        assert len(InterventionType) == 5
         assert InterventionType.ERROR_ALERT.value == "error_alert"
 
     def test_priorities(self):
