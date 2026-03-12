@@ -309,12 +309,44 @@ class TestKeywordDiscovery:
         assert "hey-bantz" in path
 
     def test_fallback_when_no_ppn(self, tmp_path):
-        """Returns None when no custom keyword file exists."""
+        """Returns None when no custom keyword file exists in any search dir."""
         from bantz.agent.wake_word import WakeWordListener
         w = WakeWordListener()
-        with patch("bantz.config.config") as mock_cfg:
-            mock_cfg.data_dir = str(tmp_path)
-            path = w._find_keyword_path()
+        # Create an empty subdir so all search dirs point to empty locations
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        with patch("bantz.config.config") as mock_cfg, \
+             patch("bantz.agent.wake_word.Path") as mock_path:
+            mock_cfg.data_dir = str(empty)
+            # Make Path(config.data_dir) work, Path.cwd() and __file__ resolve to empty
+            real_path = Path
+            def path_side_effect(arg=""):
+                return real_path(arg)
+            mock_path.side_effect = path_side_effect
+            mock_path.cwd.return_value = empty
+            # __file__ parent chain → empty dir too
+            mock_file = MagicMock()
+            mock_file.resolve.return_value.parent.parent.parent.parent = empty
+            mock_path.return_value = empty
+            # Override side_effect to handle the __file__ case
+            call_count = [0]
+            def smart_path(arg=""):
+                p = real_path(arg)
+                return p
+            mock_path.side_effect = smart_path
+            mock_path.cwd.return_value = empty
+            # The __file__ parent chain
+            sentinel = MagicMock()
+            sentinel.resolve.return_value.parent.parent.parent.parent = empty
+            sentinel.is_dir = lambda: True
+            # Simplest approach: just monkeypatch __file__ in the module
+            import bantz.agent.wake_word as ww_mod
+            orig_file = ww_mod.__file__
+            try:
+                ww_mod.__file__ = str(empty / "fake.py")
+                path = w._find_keyword_path()
+            finally:
+                ww_mod.__file__ = orig_file
         assert path is None
 
 

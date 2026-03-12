@@ -1195,11 +1195,12 @@ class TestConfigFields:
         assert hasattr(config, "app_detector_auto_focus")
 
     def test_config_defaults(self):
-        from bantz.config import config
-        assert config.app_detector_enabled is False
-        assert config.app_detector_cache_ttl == 5.0
-        assert config.app_detector_polling_interval == 5
-        assert config.app_detector_auto_focus is True
+        from bantz.config import Config
+        c = Config(_env_file=None)
+        assert c.app_detector_enabled is False
+        assert c.app_detector_cache_ttl == 5.0
+        assert c.app_detector_polling_interval == 5
+        assert c.app_detector_auto_focus is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════

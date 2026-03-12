@@ -315,22 +315,41 @@ class WakeWordListener:
             return ""
 
     def _find_keyword_path(self) -> Optional[str]:
-        """Look for a custom 'Hey-Bantz' .ppn file in data dir.
+        """Look for a custom Bantz .ppn wake word model.
+
+        Search order:
+          1. Data dir (~/.local/share/bantz/ or BANTZ_DATA_DIR)
+          2. Project / working directory
+
+        Patterns: hey-bantz*.ppn, hey_bantz*.ppn, Bantz*.ppn, bantz*.ppn
 
         Returns None to use built-in fallback keyword.
         """
+        _PATTERNS = (
+            "hey-bantz*.ppn", "hey_bantz*.ppn", "Hey-Bantz*.ppn",
+            "Bantz*.ppn", "bantz*.ppn",
+        )
         try:
             from bantz.config import config
             data_dir = (
                 Path(config.data_dir) if config.data_dir
                 else Path.home() / ".local" / "share" / "bantz"
             )
-            # Check for custom keyword files
-            for pattern in ("hey-bantz*.ppn", "hey_bantz*.ppn", "Hey-Bantz*.ppn"):
-                matches = list(data_dir.glob(pattern))
-                if matches:
-                    log.info("Wake word: using custom keyword file %s", matches[0])
-                    return str(matches[0])
+            # Search data dir first, then project root (cwd)
+            search_dirs = [data_dir, Path.cwd()]
+            # Also check the package root (two levels up from this file)
+            pkg_root = Path(__file__).resolve().parent.parent.parent.parent
+            if pkg_root not in search_dirs:
+                search_dirs.append(pkg_root)
+
+            for d in search_dirs:
+                if not d.is_dir():
+                    continue
+                for pattern in _PATTERNS:
+                    matches = list(d.glob(pattern))
+                    if matches:
+                        log.info("Wake word: using custom keyword file %s", matches[0])
+                        return str(matches[0])
         except Exception:
             pass
         return None

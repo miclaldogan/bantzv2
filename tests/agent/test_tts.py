@@ -760,7 +760,7 @@ class TestTTSConfig:
 
     def test_default_values(self):
         from bantz.config import Config
-        cfg = Config()
+        cfg = Config(_env_file=None)
         assert cfg.tts_enabled is False
         assert cfg.tts_model == "en_US-lessac-medium"
         assert cfg.tts_model_path == ""

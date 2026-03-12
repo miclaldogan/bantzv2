@@ -30,7 +30,7 @@ import pytest
 class TestAudioDuckConfig:
     def test_audio_duck_enabled_default(self):
         from bantz.config import Config
-        c = Config()
+        c = Config(_env_file=None)
         assert c.audio_duck_enabled is False
 
     def test_audio_duck_enabled_true(self):
@@ -40,7 +40,7 @@ class TestAudioDuckConfig:
 
     def test_audio_duck_pct_default(self):
         from bantz.config import Config
-        c = Config()
+        c = Config(_env_file=None)
         assert c.audio_duck_pct == 30
 
     def test_audio_duck_pct_custom(self):

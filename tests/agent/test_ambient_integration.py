@@ -241,12 +241,11 @@ class TestAmbientConfig:
         assert "ambient_window" in fields
 
     def test_default_values(self):
-        with patch.dict("os.environ", {}, clear=False):
-            from bantz.config import Config
-            c = Config()
-            assert c.ambient_enabled is False
-            assert c.ambient_interval == 600
-            assert c.ambient_window == 3.0
+        from bantz.config import Config
+        c = Config(_env_file=None)
+        assert c.ambient_enabled is False
+        assert c.ambient_interval == 600
+        assert c.ambient_window == 3.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
