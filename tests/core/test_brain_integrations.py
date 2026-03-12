@@ -949,48 +949,49 @@ class TestAmbientProcessHandlers:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Remote Telegraph Identity Fix (third-person schizophrenia bug)
+# Prompt Parity — Telegram gets identical prompt to Terminal (no remote_hint)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestRemoteHintIdentity:
-    """remote_hint must identify the Telegram user AS ma'am, not a stranger."""
+class TestPromptParity:
+    """Telegram path must produce the exact same system prompt as Terminal.
 
-    def test_remote_hint_says_directly_with_maam(self):
-        """The hint must say 'directly WITH ma'am', not 'Ma'am is not at the machine'."""
+    remote_hint was removed entirely: it told the LLM to be 'EXTREMELY concise'
+    which degraded intelligence.  _is_remote now only controls TTS suppression.
+    """
+
+    def test_no_remote_hint_in_chat(self):
+        """_chat() must NOT contain any remote_hint / mobile text injection."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat)
-        assert "directly WITH" in src or "directly with" in src.lower()
+        assert "remote_hint" not in src
+        assert "mobile text" not in src
+        assert "EXTREMELY concise" not in src
 
-    def test_remote_hint_no_stranger_phrasing(self):
-        """The hint must NOT say 'Ma'am is not at the machine'."""
+    def test_no_remote_hint_in_stream(self):
+        """_chat_stream() must NOT contain any remote_hint injection."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat_stream)
+        assert "remote_hint" not in src
+        assert "mobile text" not in src
+        assert "EXTREMELY concise" not in src
+
+    def test_no_telegraph_roleplay(self):
+        """Neither path must have old Telegraph RP language."""
         import inspect
         from bantz.core.brain import Brain
         src_chat = inspect.getsource(Brain._chat)
         src_stream = inspect.getsource(Brain._chat_stream)
+        assert "Telegraph Mode" not in src_chat
+        assert "Telegraph Mode" not in src_stream
         assert "not at the machine" not in src_chat
         assert "not at the machine" not in src_stream
 
-    def test_remote_hint_says_employer(self):
-        """The hint must tell Bantz to recognize ma'am as employer."""
+    def test_is_remote_still_suppresses_tts(self):
+        """_is_remote flag must still exist (for TTS suppression), just not in prompts."""
         import inspect
         from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat)
-        assert "employer" in src
-
-    def test_remote_hint_address_directly(self):
-        """The hint must instruct Bantz to address her directly."""
-        import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat)
-        assert "Address her" in src
-        assert "directly" in src
-
-    def test_remote_hint_consistent_in_stream(self):
-        """_chat_stream must have the same identity-aware hint."""
-        import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat_stream)
-        assert "directly WITH" in src or "directly with" in src.lower()
-        assert "employer" in src
+        src_process = inspect.getsource(Brain.process)
+        assert "_is_remote" in src_process
