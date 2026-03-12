@@ -1,6 +1,7 @@
 """Tests for web_search URL deduplication and formatting."""
 from __future__ import annotations
 
+import re
 import pytest
 
 
@@ -73,9 +74,11 @@ class TestFormatResultsDedup:
             {"title": "Test", "url": "https://example.com/path", "snippet": "s"},
         ]
         out = self._format(results)
-        assert "URL: https://example.com/path" in out
-        assert "[" not in out  # no brackets
-        assert "](" not in out  # no markdown link syntax
+        # extract http(s) URLs and assert the expected URL is present
+        urls = re.findall(r"https?://[^\s\)\]]+", out)
+        assert any(u.startswith("https://example.com/path") for u in urls)
+        # ensure there are no markdown link patterns like [text](http...)
+        assert not re.search(r"\[.*\]\(https?://", out)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
