@@ -1,8 +1,9 @@
 """
 Bantz v3 — Telegram Bot
 
-Lightweight bot for phone access. No LLM needed — calls tools directly.
-Each command is isolated: if one service fails, others keep working.
+Dual-path remote telegraph for phone access:
+  1. Express Wire (/commands) — fast, LLM-free direct tool calls
+  2. Cognitive Wire (free text) — full brain.process() with LLM (#178)
 
 Commands:
     /briefing   → full morning summary
@@ -20,19 +21,25 @@ Usage:
 Env:
     TELEGRAM_BOT_TOKEN=...
     TELEGRAM_ALLOWED_USERS=123456,789012   # optional whitelist
+    TELEGRAM_LLM_MODE=true                 # enable free-text → LLM
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import time
+from collections import defaultdict
 from typing import Callable, Coroutine, Any
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from bantz.config import config
@@ -64,13 +71,17 @@ if config.telegram_allowed_users.strip():
 # ── Active chat IDs for proactive notifications ──────────────────────────────
 _active_chats: set[int] = set()
 
+# ── Rate limiter (max 10 messages per minute per user) ────────────────────────
+_RATE_WINDOW = 60  # seconds
+_RATE_LIMIT = 10   # max messages per window
+_rate_log: dict[int, list[float]] = defaultdict(list)
+
 
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
-    """Decorator: reject messages from non-whitelisted users."""
+    """Decorator: silently drop messages from non-whitelisted users (#178)."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if _ALLOWED and update.effective_user and update.effective_user.id not in _ALLOWED:
-            await update.message.reply_text("⛔ Unauthorized access.")
-            return
+            return  # Silent stranger — no reply, total stealth
         return await func(update, context)
     return wrapper
 
@@ -78,12 +89,45 @@ def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _safe_reply(update: Update, text: str) -> None:
-    """Send a reply, splitting if too long for Telegram's 4096 char limit."""
-    if len(text) <= 4000:
+    """Send a reply, splitting at paragraph boundaries for Telegram's 4096 limit."""
+    MAX = 4000  # leave headroom below 4096
+
+    if len(text) <= MAX:
         await update.message.reply_text(text)
-    else:
-        for i in range(0, len(text), 4000):
-            await update.message.reply_text(text[i:i + 4000])
+        return
+
+    # Smart chunking: split at double-newline paragraph boundaries
+    chunks: list[str] = []
+    current = ""
+    for para in text.split("\n\n"):
+        candidate = (current + "\n\n" + para).strip() if current else para
+        if len(candidate) <= MAX:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+                current = ""
+            # If single paragraph exceeds MAX, hard-split on newlines
+            if len(para) > MAX:
+                for line in para.split("\n"):
+                    if len(line) > MAX:
+                        # No newline split possible — brute-force at MAX
+                        for i in range(0, len(line), MAX):
+                            chunks.append(line[i:i + MAX])
+                        current = ""
+                    elif current and len(current) + len(line) + 1 <= MAX:
+                        current = current + "\n" + line
+                    else:
+                        if current:
+                            chunks.append(current)
+                        current = line
+            else:
+                current = para
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        await update.message.reply_text(chunk)
 
 
 # ── Command Handlers ─────────────────────────────────────────────────────────
@@ -91,6 +135,10 @@ async def _safe_reply(update: Update, text: str) -> None:
 @_authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _active_chats.add(update.effective_chat.id)
+    llm_hint = (
+        "\n\n💬 Or just type any message — Bantz will respond "
+        "with the full power of his brain."
+    ) if config.telegram_llm_mode else ""
     await update.message.reply_text(
         "🦌 Bantz is live!\n\n"
         "Commands:\n"
@@ -105,6 +153,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/hatirlatici — list reminders\n"
         "/digest — evening daily digest\n"
         "/weekly — weekly summary"
+        + llm_hint
     )
 
 
@@ -329,6 +378,67 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 log.debug("Failed to send reminder to %d: %s", chat_id, exc)
 
 
+# ── Cognitive Wire: free-text → brain.process() (#178) ────────────────────────
+
+def _is_rate_limited(user_id: int) -> bool:
+    """Return True if user has exceeded 10 messages/minute."""
+    now = time.monotonic()
+    timestamps = _rate_log[user_id]
+    # Prune old entries outside the window
+    _rate_log[user_id] = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(_rate_log[user_id]) >= _RATE_LIMIT:
+        return True
+    _rate_log[user_id].append(now)
+    return False
+
+
+@_authorized
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cognitive Wire — route free text through brain.process(is_remote=True)."""
+    if not config.telegram_llm_mode:
+        await update.message.reply_text(
+            "🔒 The telegraph only accepts strict commands (/).\n"
+            "Use /start to see available commands."
+        )
+        return
+
+    user_id = update.effective_user.id if update.effective_user else 0
+    if _is_rate_limited(user_id):
+        await update.message.reply_text(
+            "⏳ Too many messages — please wait a moment."
+        )
+        return
+
+    _active_chats.add(update.effective_chat.id)
+    user_text = (update.message.text or "").strip()
+    if not user_text:
+        return
+
+    # Show typing indicator while brain processes
+    await update.message.chat.send_action(ChatAction.TYPING)
+
+    try:
+        from bantz.core.brain import brain
+        result = await brain.process(user_text, is_remote=True)
+
+        # Collect response: prefer stream if available
+        if result.stream:
+            parts: list[str] = []
+            async for chunk in result.stream:
+                parts.append(chunk)
+            response = "".join(parts)
+        else:
+            response = result.response
+
+        if response and response.strip():
+            await _safe_reply(update, response.strip())
+        else:
+            await update.message.reply_text("…")
+    except Exception as exc:
+        log.exception("Cognitive wire error for user %d", user_id)
+        await update.message.reply_text(f"⚠️ Error: {exc}")
+
+
 # ── Bot runner ────────────────────────────────────────────────────────────────
 
 def run_bot() -> None:
@@ -354,6 +464,9 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("hatirlatici", cmd_hatirlatici))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("weekly", cmd_weekly))
+
+    # Cognitive Wire — free text → LLM (#178)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Proactive reminder check — runs every 30 seconds
     app.job_queue.run_repeating(
@@ -393,6 +506,7 @@ def run_bot() -> None:
         log.info(f"   Allowed users: {_ALLOWED}")
     else:
         log.info("   ⚠ No user restriction — anyone can use it")
+    log.info(f"   LLM mode: {'ON' if config.telegram_llm_mode else 'OFF'}")
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

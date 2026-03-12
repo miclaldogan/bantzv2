@@ -1156,7 +1156,9 @@ class Brain:
             return f"📌 '{name}' deleted."
         return f"❌ No saved place named '{name}' found."
 
-    async def process(self, user_input: str, confirmed: bool = False) -> BrainResult:
+    async def process(self, user_input: str, confirmed: bool = False,
+                      is_remote: bool = False) -> BrainResult:
+        self._is_remote = is_remote
         self._ensure_memory()
         await self._ensure_graph()
         en_input = await self._to_en(user_input)
@@ -1318,13 +1320,14 @@ class Brain:
             from bantz.core.briefing import briefing as _briefing
             text = await _briefing.generate()
             data_layer.conversations.add("assistant", text, tool_used="briefing")
-            # Speak via TTS if available (#131)
-            try:
-                from bantz.agent.tts import tts_engine
-                if tts_engine.available():
-                    await tts_engine.speak_background(text)
-            except Exception:
-                pass
+            # Speak via TTS if available (#131) — suppress for remote (#178)
+            if not getattr(self, '_is_remote', False):
+                try:
+                    from bantz.agent.tts import tts_engine
+                    if tts_engine.available():
+                        await tts_engine.speak_background(text)
+                except Exception:
+                    pass
             return BrainResult(response=text, tool_used="briefing")
 
         if quick and quick["tool"] == "_maintenance":
@@ -1550,13 +1553,17 @@ class Brain:
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
+        remote_hint = (
+            "\nYou are receiving this message via remote telegraph. "
+            "Ma'am is not at the machine. Assist her from afar."
+        ) if getattr(self, "_is_remote", False) else ""
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory)},
+                persona_state=persona_state, deep_memory=deep_memory) + remote_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1591,13 +1598,17 @@ class Brain:
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
+        remote_hint = (
+            "\nYou are receiving this message via remote telegraph. "
+            "Ma'am is not at the machine. Assist her from afar."
+        ) if getattr(self, "_is_remote", False) else ""
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory)},
+                persona_state=persona_state, deep_memory=deep_memory) + remote_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
