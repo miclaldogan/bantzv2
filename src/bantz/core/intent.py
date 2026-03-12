@@ -41,7 +41,7 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - gmail: {{"action": "unread|compose|compose_and_send|read|search|filter|send|contacts", "to": "recipient", "intent": "what to say", "subject": "optional"}}
 - calendar: {{"action": "today|week|create|delete|update", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}}
 - classroom: {{"action": "assignments|due_today"}}
-- filesystem: {{"path": "<file path>", "action": "read|write", ...}}
+- filesystem: {{"path": "<file path>", "action": "read|write|create_folder_and_file", "folder_path": "~/path/to/folder", "file_name": "file.txt", "content": "..."}}
 - document: {{"path": "<file path>", "action": "summarize|read|ask", "question": "..."}}
 
 CHAIN OF THOUGHT — follow ALL three steps before deciding:
@@ -64,7 +64,7 @@ ROUTING RULES:
 - gmail:      email, inbox, compose, send, read mail
 - calendar:   events, meetings, appointments, schedule
 - classroom:  assignments, homework, deadlines, courses
-- filesystem: read/write a specific file
+- filesystem: read/write a specific file, or create a folder+file atomically (use create_folder_and_file when user wants both)
 - document:   summarize or analyze PDF/TXT/MD/DOCX
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 

@@ -30,17 +30,30 @@ class FilesystemTool(BaseTool):
     name = "filesystem"
     description = (
         "File system operations: listing (ls), reading (read), "
-        "writing (write). Only works under the home directory."
+        "writing (write), or atomic folder+file creation (create_folder_and_file). "
+        "Only works under the home directory. "
+        "Use action='create_folder_and_file' when the user wants to create a "
+        "folder AND put a file in it in a single step — avoids multi-step hallucination."
     )
     risk_level = "moderate"
 
     async def execute(
         self,
-        action: Literal["ls", "read", "write"] = "ls",
+        action: Literal["ls", "read", "write", "create_folder_and_file"] = "ls",
         path: str = "~",
         content: str = "",
+        folder_path: str = "",
+        file_name: str = "",
         **kwargs: Any,
     ) -> ToolResult:
+
+        # ── Atomic folder+file creation shortcut ──────────────────────
+        if action == "create_folder_and_file":
+            return await self._create_folder_and_file(
+                folder_path=folder_path,
+                file_name=file_name,
+                content=content,
+            )
 
         p = _safe_path(path)
         if p is None:
@@ -127,6 +140,72 @@ class FilesystemTool(BaseTool):
             )
         except PermissionError:
             return ToolResult(success=False, output="", error=f"Permission denied: {p}")
+
+    # ── create_folder_and_file (atomic combo — #196) ─────────────────────
+
+    async def _create_folder_and_file(
+        self, folder_path: str, file_name: str, content: str,
+    ) -> ToolResult:
+        """Create a directory AND write a file inside it in one atomic step.
+
+        This avoids multi-step hallucination where the LLM claims success
+        without actually calling the tools sequentially.
+        """
+        if not folder_path:
+            return ToolResult(
+                success=False, output="",
+                error="Missing folder_path — where should I create the folder?",
+            )
+        if not file_name:
+            return ToolResult(
+                success=False, output="",
+                error="Missing file_name — what should the file be called?",
+            )
+
+        folder = _safe_path(folder_path)
+        if folder is None:
+            return ToolResult(
+                success=False, output="",
+                error=f"Security: '{folder_path}' is outside the home directory or invalid.",
+            )
+
+        file_path = folder / file_name
+        # Validate the final file path is also under SAFE_ROOT
+        if _safe_path(str(file_path)) is None:
+            return ToolResult(
+                success=False, output="",
+                error=f"Security: '{file_path}' is outside the home directory.",
+            )
+
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            return ToolResult(
+                success=False, output="",
+                error=f"Permission denied: cannot create '{folder}'.",
+            )
+
+        file_content = content or ""
+        try:
+            file_path.write_text(file_content, encoding="utf-8")
+        except PermissionError:
+            return ToolResult(
+                success=False, output="",
+                error=f"Permission denied: cannot write '{file_path}'.",
+            )
+
+        return ToolResult(
+            success=True,
+            output=(
+                f"✓ Created folder: {folder}\n"
+                f"✓ Created file: {file_path}  ({len(file_content)} characters)"
+            ),
+            data={
+                "folder_path": str(folder),
+                "file_path": str(file_path),
+                "bytes_written": len(file_content.encode()),
+            },
+        )
 
 
 registry.register(FilesystemTool())

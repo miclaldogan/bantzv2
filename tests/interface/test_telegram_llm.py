@@ -1133,7 +1133,7 @@ class TestMessageLock:
 
 
 class TestMaintenanceSpamFilter:
-    """All-green maintenance results must be suppressed on Telegram."""
+    """ALL maintenance results must be suppressed on Telegram."""
 
     def test_all_green_maintenance_is_spam(self):
         """A maintenance result with zero failures → spam."""
@@ -1144,14 +1144,14 @@ class TestMaintenanceSpamFilter:
         )
         assert _is_maintenance_spam(result) is True
 
-    def test_maintenance_with_failure_not_spam(self):
-        """A maintenance result with ≥1 failure → NOT spam."""
+    def test_maintenance_with_failure_also_spam(self):
+        """A maintenance result with failures → ALSO spam (all maintenance suppressed)."""
         from bantz.interface.telegram_bot import _is_maintenance_spam
         result = FakeBrainResult(
             response="Workflow complete: 2/3 steps succeeded.\n✓ [a] ok\n✗ [b] fail\n✓ [c] ok",
             tool_used="maintenance",
         )
-        assert _is_maintenance_spam(result) is False
+        assert _is_maintenance_spam(result) is True
 
     def test_non_maintenance_never_spam(self):
         """Non-maintenance tool results are never spam."""
@@ -1198,8 +1198,8 @@ class TestMaintenanceSpamFilter:
             mod._ALLOWED = original
 
     @pytest.mark.asyncio
-    async def test_handle_message_shows_failed_maintenance(self):
-        """handle_message must show maintenance results that contain failures."""
+    async def test_handle_message_suppresses_failed_maintenance(self):
+        """handle_message must ALSO suppress maintenance results with failures."""
         import bantz.interface.telegram_bot as mod
         original = mod._ALLOWED
         mod._rate_log.clear()
@@ -1220,11 +1220,9 @@ class TestMaintenanceSpamFilter:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            # Placeholder should be edited with the failure result
+            # Placeholder should be deleted — ALL maintenance suppressed
             placeholder = update.message.reply_text.return_value
-            placeholder.delete.assert_not_awaited()
-            edit_args = placeholder.edit_text.call_args_list[-1][0][0]
-            assert "✗" in edit_args
+            placeholder.delete.assert_awaited_once()
         finally:
             mod._ALLOWED = original
 

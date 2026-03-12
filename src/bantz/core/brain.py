@@ -911,6 +911,55 @@ class Brain:
             if len(query) >= 2 and query.lower() not in _WS_STOPWORDS:
                 return {"tool": "web_search", "args": {"query": query}}
 
+        # ── Filesystem auto-chain: create folder + file in one step (#196) ──
+        # Catches: "create a Stark folder and write test.txt in it",
+        # "make a folder X, put a file Y with content Z", etc.
+        # Search on e (English) individually — NOT on 'both' which
+        # concatenates o+e and causes the regex to span duplicated text.
+        _FS_COMBO = re.search(
+            r"(?:create|make|yap|oluştur|aç)\s+"
+            r"(?:a\s+)?(?:folder|directory|klasör|dizin)\s+"
+            r"(?:named?\s+|called?\s+|adında\s+|adlı\s+)?"
+            r"[\"']?([\w.\- ]+?)[\"']?"
+            r"\s+(?:and|then|,)\s+"
+            r"(?:create|put|write|place|add|make|yaz|koy|ekle)\s+"
+            r"(?:a\s+)?(?:file\s+)?(?:named?\s+|called?\s+|adında\s+)?"
+            r"[\"']?([\w.\-]+)[\"']?"
+            r"(?:\s+(?:in(?:side)?|into)\s+it)?"
+            r"(?:\s+(?:with|containing|saying|that\s+says|içeriği|yazısı)\s+"
+            r"[\"']?(.+?)[\"']?)?\s*$",
+            e, re.IGNORECASE,
+        ) or re.search(
+            r"(?:create|make|yap|oluştur|aç)\s+"
+            r"(?:a\s+)?(?:folder|directory|klasör|dizin)\s+"
+            r"(?:named?\s+|called?\s+|adında\s+|adlı\s+)?"
+            r"[\"']?([\w.\- ]+?)[\"']?"
+            r"\s+(?:and|then|,)\s+"
+            r"(?:create|put|write|place|add|make|yaz|koy|ekle)\s+"
+            r"(?:a\s+)?(?:file\s+)?(?:named?\s+|called?\s+|adında\s+)?"
+            r"[\"']?([\w.\-]+)[\"']?"
+            r"(?:\s+(?:in(?:side)?|into)\s+it)?"
+            r"(?:\s+(?:with|containing|saying|that\s+says|içeriği|yazısı)\s+"
+            r"[\"']?(.+?)[\"']?)?\s*$",
+            o, re.IGNORECASE,
+        )
+        if _FS_COMBO:
+            _folder_name = _FS_COMBO.group(1).strip()
+            _file_name = _FS_COMBO.group(2).strip()
+            _content = (_FS_COMBO.group(3) or "").strip()
+            # Default path to Desktop if no path specified
+            if "/" not in _folder_name and "~" not in _folder_name:
+                _folder_name = f"~/Desktop/{_folder_name}"
+            return {
+                "tool": "filesystem",
+                "args": {
+                    "action": "create_folder_and_file",
+                    "folder_path": _folder_name,
+                    "file_name": _file_name,
+                    "content": _content,
+                },
+            }
+
         # Shell generation for file operations
         if any(k in both for k in ("create file", "create folder", "create directory",
                                     "copy file", "move file", "delete file", "rename",
