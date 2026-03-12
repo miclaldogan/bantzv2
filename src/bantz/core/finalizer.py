@@ -42,7 +42,8 @@ RULES:
 - Max 5 sentences. English only. Plain text, no markdown.
 - Always address the user as 'ma'am'. Stay in character as a 1920s butler.{persona_state}{style_hint}{time_hint}
 {profile_hint}
-{graph_hint}\
+{graph_hint}
+{deep_memory}\
 """
 
 
@@ -69,6 +70,7 @@ async def finalize(
     style_hint: str = "",
     profile_hint: str = "",
     graph_hint: str = "",
+    deep_memory: str = "",
 ) -> str:
     """
     Post-process tool output through an LLM.
@@ -90,6 +92,7 @@ async def finalize(
             style_hint=style_hint,
             graph_hint=graph_hint,
             persona_state=_persona_hint(),
+            deep_memory=deep_memory,
         )},
         {"role": "user", "content": (
             f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
@@ -137,6 +140,7 @@ async def finalize_stream(
     style_hint: str = "",
     profile_hint: str = "",
     graph_hint: str = "",
+    deep_memory: str = "",
 ) -> AsyncIterator[str] | None:
     """
     Streaming finalize — yields tokens for long tool output.
@@ -157,6 +161,7 @@ async def finalize_stream(
             style_hint=style_hint,
             graph_hint=graph_hint,
             persona_state=_persona_hint(),
+            deep_memory=deep_memory,
         )},
         {"role": "user", "content": (
             f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"

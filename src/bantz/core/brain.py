@@ -117,6 +117,7 @@ Never break character.
 {profile_hint}
 {graph_hint}
 {vector_hint}
+{deep_memory}
 {desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
 1. You possess the remarkable ability to query the 'Grand Telegraph Archives' — your 1920s \
@@ -286,6 +287,14 @@ class Brain:
                 pass
 
             return "Relevant past context:\n" + "\n".join(lines)
+        except Exception:
+            return ""
+
+    async def _deep_memory_context(self, user_msg: str) -> str:
+        """Spontaneous deep memory recall (#170)."""
+        try:
+            from bantz.memory.deep_probe import deep_probe
+            return await deep_probe.probe(user_msg)
         except Exception:
             return ""
 
@@ -1540,13 +1549,14 @@ class Brain:
         vector_hint = await self._vector_context(en_input)
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
+        deep_memory = await self._deep_memory_context(en_input)
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state)},
+                persona_state=persona_state, deep_memory=deep_memory)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1580,13 +1590,14 @@ class Brain:
         vector_hint = await self._vector_context(en_input)
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
+        deep_memory = await self._deep_memory_context(en_input)
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state)},
+                persona_state=persona_state, deep_memory=deep_memory)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1615,6 +1626,7 @@ class Brain:
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
             graph_hint=await self._graph_context(en_input),
+            deep_memory=await self._deep_memory_context(en_input),
         )
 
     async def _finalize_stream(
@@ -1626,6 +1638,7 @@ class Brain:
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
             graph_hint=await self._graph_context(en_input),
+            deep_memory=await self._deep_memory_context(en_input),
         )
 
     @staticmethod

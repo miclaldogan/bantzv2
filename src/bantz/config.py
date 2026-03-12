@@ -182,6 +182,11 @@ class Config(BaseSettings):
     # ── Dynamic Persona (#169) ───────────────────────────────────────────
     persona_enabled: bool = Field(True, alias="BANTZ_PERSONA_ENABLED")
 
+    # ── Deep Memory / Spontaneous Recall (#170) ──────────────────────────
+    deep_memory_enabled: bool = Field(True, alias="BANTZ_DEEP_MEMORY_ENABLED")
+    deep_memory_threshold: float = Field(0.72, alias="BANTZ_DEEP_MEMORY_THRESHOLD")
+    deep_memory_max_results: int = Field(3, alias="BANTZ_DEEP_MEMORY_MAX_RESULTS")
+
     @property
     def db_path(self) -> Path:
         base = (

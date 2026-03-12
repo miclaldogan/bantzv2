@@ -328,6 +328,7 @@ class TestTemplateIntegration:
             persona_state="TEST_PERSONA",
             style_hint="", time_hint="", profile_hint="",
             graph_hint="", vector_hint="", desktop_hint="",
+            deep_memory="",
         )
         assert "TEST_PERSONA" in result
 
