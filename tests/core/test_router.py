@@ -184,6 +184,36 @@ class TestWebSearchRouting:
         assert r is not None
         assert r["args"]["query"] == "python tutorials"  # ! stripped
 
+    # ── Stopword / pronoun filtering ─────────────────────────────────
+
+    def test_what_is_it_no_match(self):
+        """'what is it' → query='it' is a pronoun, must NOT trigger web_search."""
+        r = _qr("what is it")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_who_is_he_no_match(self):
+        r = _qr("who is he")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_what_is_that_no_match(self):
+        r = _qr("what is that")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_what_is_this_no_match(self):
+        r = _qr("tell me about this")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_who_is_she_no_match(self):
+        r = _qr("who is she")
+        assert r is None or r.get("tool") != "web_search"
+
+    def test_what_is_real_topic_still_matches(self):
+        """'what is docker' should still match — 'docker' is not a stopword."""
+        r = _qr("what is docker")
+        assert r is not None
+        assert r["tool"] == "web_search"
+        assert "docker" in r["args"]["query"].lower()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Issue #176 — Shell/Disk: require disk-context words

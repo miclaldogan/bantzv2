@@ -800,9 +800,16 @@ class Brain:
         )
         _ws_match = re.search(_WS_PATTERN, o, re.IGNORECASE) or \
                     re.search(_WS_PATTERN, e, re.IGNORECASE)
+        # Stopwords: pronouns and filler words that are NOT valid search queries.
+        # "what is it" → query="it" → skip.  "who is he" → query="he" → skip.
+        _WS_STOPWORDS = {
+            "it", "this", "that", "he", "she", "they", "them", "we", "us",
+            "him", "her", "its", "you", "me", "i", "so", "there", "here",
+            "what", "who", "how", "why", "the", "a", "an", "ok", "okay",
+        }
         if _ws_match:
             query = _ws_match.group(1).strip().rstrip('?.!')
-            if len(query) >= 2:
+            if len(query) >= 2 and query.lower() not in _WS_STOPWORDS:
                 return {"tool": "web_search", "args": {"query": query}}
 
         # Shell generation for file operations

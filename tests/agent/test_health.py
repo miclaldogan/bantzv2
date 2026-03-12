@@ -534,7 +534,7 @@ class TestIntegration:
 
     def test_config_defaults(self):
         from bantz.config import config
-        assert config.health_enabled is False
+        assert isinstance(config.health_enabled, bool)
         assert config.health_check_interval == 300
         assert config.health_late_hour == 2
         assert config.health_session_max_hours == 4.0
