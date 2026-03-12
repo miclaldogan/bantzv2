@@ -490,6 +490,7 @@ ACTION_LABELS: dict[str, tuple[str, str]] = {
     "daily_review":      ("📊", "Generate your daily review?"),
     "proactive_chat":    ("💬", "Check in with you?"),
     "health_break":      ("🏥", "Take a health break?"),
+    "feedback_chat":     ("💬", "Shall I note your feedback?"),
 }
 
 # Source labels for explainability
