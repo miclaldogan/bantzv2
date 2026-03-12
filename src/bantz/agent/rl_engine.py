@@ -62,6 +62,7 @@ class Action(str, Enum):
     SUGGEST_BREAK = "suggest_break"
     DAILY_REVIEW = "daily_review"
     PROACTIVE_CHAT = "proactive_chat"  # #167: idle conversation initiation
+    HEALTH_BREAK = "health_break"  # #168: health & break nudge
 
 
 ALL_ACTIONS = list(Action)

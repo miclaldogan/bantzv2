@@ -361,6 +361,42 @@ async def _job_proactive_engagement() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Health check job (#168)
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def _job_health_check() -> None:
+    """Run health rule evaluation cycle (#168).
+
+    Called by APScheduler as an interval job (default 300s / 5 min).
+    Evaluates all rules; pushes an intervention on first match.
+    Also checks for RL break-reward feedback.
+    """
+    try:
+        from bantz.agent.health import health_engine
+        if not health_engine.initialized:
+            return
+
+        results = health_engine.evaluate_all()
+        for r in results:
+            if r.fired:
+                health_engine.push_intervention(r)
+                log.info("🏥 Health rule fired: %s", r.rule_id)
+                break  # one intervention per cycle — don't spam
+
+        # RL reward for genuine break (Senior Fix #2)
+        if health_engine.check_break_reward():
+            try:
+                from bantz.agent.rl_engine import rl_engine, Reward, Action
+                if rl_engine.initialized:
+                    rl_engine.record(Action.HEALTH_BREAK, Reward.POSITIVE)
+                    log.debug("🏥 RL: break reward for HEALTH_BREAK")
+            except Exception:
+                pass
+    except Exception as exc:
+        log.warning("Health check error: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # JobScheduler — main class
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -440,6 +476,9 @@ class JobScheduler:
 
         # Register proactive engagement job (#167)
         self._register_proactive()
+
+        # Register health check job (#168)
+        self._register_health_check()
 
         # APScheduler event listeners for history tracking
         from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
@@ -561,6 +600,37 @@ class JobScheduler:
         log.info(
             "Registered proactive engagement (%.1fh interval, %dm jitter, max=%d/day)",
             hours, config.proactive_jitter_minutes, config.proactive_max_daily,
+        )
+
+    def _register_health_check(self) -> None:
+        """Register health check job (#168) as an interval job."""
+        from bantz.config import config
+        if not config.health_enabled:
+            return
+
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        interval = max(config.health_check_interval, 60)
+
+        self._scheduler.add_job(
+            _job_health_check,
+            IntervalTrigger(seconds=interval),
+            id="health_check",
+            name="Health & break check (#168)",
+            replace_existing=True,
+            jobstore="default",
+        )
+
+        # Initialise the health engine
+        try:
+            from bantz.agent.health import health_engine
+            health_engine.init()
+        except Exception as exc:
+            log.warning("HealthRuleEvaluator init failed: %s", exc)
+
+        log.info(
+            "Registered health check (%ds interval, thermal CPU=%.0f°C GPU=%.0f°C)",
+            interval, config.health_thermal_cpu, config.health_thermal_gpu,
         )
 
     # ── Dynamic reminder bridge ───────────────────────────────────────

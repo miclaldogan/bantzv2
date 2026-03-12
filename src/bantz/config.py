@@ -170,6 +170,15 @@ class Config(BaseSettings):
     proactive_max_daily: int = Field(1, alias="BANTZ_PROACTIVE_MAX_DAILY")
     proactive_away_timeout: int = Field(1800, alias="BANTZ_PROACTIVE_AWAY_TIMEOUT")
 
+    # ── Health & Break Interventions (#168) ──────────────────────────────
+    health_enabled: bool = Field(False, alias="BANTZ_HEALTH_ENABLED")
+    health_check_interval: int = Field(300, alias="BANTZ_HEALTH_CHECK_INTERVAL")
+    health_late_hour: int = Field(2, alias="BANTZ_HEALTH_LATE_HOUR")
+    health_session_max_hours: float = Field(4.0, alias="BANTZ_HEALTH_SESSION_MAX_HOURS")
+    health_thermal_cpu: float = Field(85.0, alias="BANTZ_HEALTH_THERMAL_CPU")
+    health_thermal_gpu: float = Field(80.0, alias="BANTZ_HEALTH_THERMAL_GPU")
+    health_eye_strain_hours: float = Field(2.0, alias="BANTZ_HEALTH_EYE_STRAIN_HOURS")
+
     @property
     def db_path(self) -> Path:
         base = (

@@ -45,6 +45,7 @@ class InterventionType(str, Enum):
     REMINDER = "reminder"
     MAINTENANCE = "maintenance"
     PROACTIVE = "proactive"  # #167: proactive engagement
+    HEALTH = "health"  # #168: health & break interventions
 
 
 class Priority(int, Enum):
@@ -488,6 +489,7 @@ ACTION_LABELS: dict[str, tuple[str, str]] = {
     "suggest_break":     ("☕", "Time for a break?"),
     "daily_review":      ("📊", "Generate your daily review?"),
     "proactive_chat":    ("💬", "Check in with you?"),
+    "health_break":      ("🏥", "Take a health break?"),
 }
 
 # Source labels for explainability

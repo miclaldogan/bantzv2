@@ -668,6 +668,15 @@ class Brain:
         ):
             return {"tool": "_proactive_status", "args": {}}
 
+        # Health & break status (#168)
+        if re.search(
+            r"health\s+(?:status|info|stats|check)|"
+            r"break\s+(?:status|timer|count)|"
+            r"sa[ğg]l[ıi]k\s+durum|session\s+(?:time|timer|hours)",
+            both,
+        ):
+            return {"tool": "_health_status", "args": {}}
+
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
                                     "what's today", "what do i have today")):
@@ -1237,6 +1246,29 @@ class Brain:
                 text = "Proactive engagement module is not available."
             data_layer.conversations.add("assistant", text, tool_used="proactive")
             return BrainResult(response=text, tool_used="proactive")
+
+        if quick and quick["tool"] == "_health_status":
+            try:
+                from bantz.agent.health import health_engine
+                s = health_engine.status()
+                cooldown_lines = "\n".join(
+                    f"    {rid}: {mins:.0f}m left" for rid, mins in s["cooldowns"].items() if mins > 0
+                )
+                text = (
+                    f"🏥 Health & Break Status\n"
+                    f"  Enabled: {'✅' if config.health_enabled else '❌'}\n"
+                    f"  Active session: {s['active_hours']:.1f}h\n"
+                    f"  Break taken: {'✅' if s['had_break'] else '❌'}\n"
+                    f"  Since last break: {s['minutes_since_break']:.0f}m\n"
+                    f"  Thermal streak: CPU={s['thermal_cpu_streak']} GPU={s['thermal_gpu_streak']}\n"
+                    f"  Check interval: {config.health_check_interval}s"
+                )
+                if cooldown_lines:
+                    text += f"\n  Active cooldowns:\n{cooldown_lines}"
+            except Exception:
+                text = "Health & break module is not available."
+            data_layer.conversations.add("assistant", text, tool_used="health")
+            return BrainResult(response=text, tool_used="health")
 
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing
