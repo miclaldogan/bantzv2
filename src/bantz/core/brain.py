@@ -1674,12 +1674,6 @@ class Brain:
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
-        remote_hint = (
-            "\n[Note: You are replying via mobile text. Respond EXACTLY "
-            "as you would in the local terminal, but keep it EXTREMELY "
-            "concise and direct. Do NOT over-explain or roleplay the "
-            "communication method.]"
-        ) if getattr(self, "_is_remote", False) else ""
 
         # One-shot RLHF context injection (#180)
         feedback_hint = getattr(self, "_feedback_ctx", "")
@@ -1691,7 +1685,7 @@ class Brain:
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
                 persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + remote_hint + feedback_hint},
+                formality_hint=_formality_hint()) + feedback_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1726,12 +1720,6 @@ class Brain:
         desktop_hint = self._desktop_context()
         persona_state = _persona_hint()
         deep_memory = await self._deep_memory_context(en_input)
-        remote_hint = (
-            "\n[Note: You are replying via mobile text. Respond EXACTLY "
-            "as you would in the local terminal, but keep it EXTREMELY "
-            "concise and direct. Do NOT over-explain or roleplay the "
-            "communication method.]"
-        ) if getattr(self, "_is_remote", False) else ""
 
         # One-shot RLHF context injection (#180)
         feedback_hint = getattr(self, "_feedback_ctx", "")
@@ -1743,7 +1731,7 @@ class Brain:
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
                 persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + remote_hint + feedback_hint},
+                formality_hint=_formality_hint()) + feedback_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]

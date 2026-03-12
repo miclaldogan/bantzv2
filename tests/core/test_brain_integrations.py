@@ -949,22 +949,37 @@ class TestAmbientProcessHandlers:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Remote Hint — Terminal Parity (replaces old Telegraph RP)
+# Prompt Parity — Telegram gets identical prompt to Terminal (no remote_hint)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestRemoteHintIdentity:
-    """remote_hint must be a concise mobile-text note, NOT a heavy RP prompt."""
+class TestPromptParity:
+    """Telegram path must produce the exact same system prompt as Terminal.
 
-    def test_remote_hint_concise_mobile_note(self):
-        """The hint must say 'mobile text' and be concise."""
+    remote_hint was removed entirely: it told the LLM to be 'EXTREMELY concise'
+    which degraded intelligence.  _is_remote now only controls TTS suppression.
+    """
+
+    def test_no_remote_hint_in_chat(self):
+        """_chat() must NOT contain any remote_hint / mobile text injection."""
         import inspect
         from bantz.core.brain import Brain
         src = inspect.getsource(Brain._chat)
-        assert "mobile text" in src
+        assert "remote_hint" not in src
+        assert "mobile text" not in src
+        assert "EXTREMELY concise" not in src
 
-    def test_remote_hint_no_telegraph_roleplay(self):
-        """The hint must NOT contain any telegraph/remote RP language."""
+    def test_no_remote_hint_in_stream(self):
+        """_chat_stream() must NOT contain any remote_hint injection."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat_stream)
+        assert "remote_hint" not in src
+        assert "mobile text" not in src
+        assert "EXTREMELY concise" not in src
+
+    def test_no_telegraph_roleplay(self):
+        """Neither path must have old Telegraph RP language."""
         import inspect
         from bantz.core.brain import Brain
         src_chat = inspect.getsource(Brain._chat)
@@ -974,25 +989,9 @@ class TestRemoteHintIdentity:
         assert "not at the machine" not in src_chat
         assert "not at the machine" not in src_stream
 
-    def test_remote_hint_says_concise_and_direct(self):
-        """The hint must instruct conciseness."""
+    def test_is_remote_still_suppresses_tts(self):
+        """_is_remote flag must still exist (for TTS suppression), just not in prompts."""
         import inspect
         from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat)
-        assert "concise" in src.lower()
-        assert "direct" in src.lower()
-
-    def test_remote_hint_says_exactly_like_terminal(self):
-        """The hint must tell LLM to respond EXACTLY as in local terminal."""
-        import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat)
-        assert "EXACTLY" in src
-
-    def test_remote_hint_consistent_in_stream(self):
-        """_chat_stream must have the same concise mobile hint."""
-        import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._chat_stream)
-        assert "mobile text" in src
-        assert "concise" in src.lower()
+        src_process = inspect.getsource(Brain.process)
+        assert "_is_remote" in src_process

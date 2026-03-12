@@ -559,7 +559,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # consumer is responsible (mirrors TUI behaviour in app.py L718).
                 if result.stream:
                     try:
-                        from bantz.data.dal import data_layer
+                        from bantz.data import data_layer
                         data_layer.conversations.add(
                             "assistant", cleaned,
                             tool_used=result.tool_used,
@@ -639,6 +639,34 @@ def run_bot() -> None:
         _weekly_digest_job,
         time=_weekly_time,
         name="weekly_digest",
+    )
+
+    # ── Warm-up: pre-load the model into VRAM (mirrors TUI on_mount) ──────
+    async def _warm_up_ollama(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send a throwaway prompt so the first real message hits a warm model."""
+        try:
+            from bantz.llm.ollama_client import ollama
+            await ollama.chat([{"role": "user", "content": "hi"}])
+            log.info("   Ollama warm-up complete ✓")
+        except Exception:
+            log.debug("Ollama warm-up skipped (not available)")
+
+    app.job_queue.run_once(_warm_up_ollama, when=2, name="ollama_warmup")
+
+    # ── Daily session rotation — prevent infinite session accumulation ────
+    async def _rotate_session(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Start a fresh memory session each day (mirrors TUI behaviour)."""
+        try:
+            from bantz.core.brain import brain
+            brain._memory_ready = False  # force re-init → new_session()
+            log.info("   Daily session rotation ✓")
+        except Exception:
+            log.debug("Session rotation failed")
+
+    import datetime as _dt
+    _session_rotate_time = _dt.time(hour=4, minute=0)  # 4 AM daily
+    app.job_queue.run_daily(
+        _rotate_session, time=_session_rotate_time, name="session_rotation",
     )
 
     log.info("🦌 Bantz Telegram bot starting...")
