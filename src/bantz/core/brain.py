@@ -1229,6 +1229,39 @@ class Brain:
         params.setdefault("content", "")
         return params
 
+    async def _execute_plan(
+        self, user_input: str, en_input: str, tc: dict,
+    ) -> BrainResult | None:
+        """Decompose a complex request into steps, then execute them.
+
+        Returns BrainResult on success, or None if decomposition fails
+        (so caller can fall through to normal routing).
+        """
+        from bantz.agent.planner import planner_agent
+        from bantz.agent.executor import plan_executor
+
+        tool_names = registry.names()
+        steps = await planner_agent.decompose(en_input, tool_names)
+        if not steps or len(steps) < 2:
+            # Not genuinely multi-step — fall through to normal routing
+            return None
+
+        # Announce the itinerary to the user
+        itinerary = planner_agent.format_itinerary(steps)
+        log.info("Plan-and-Solve itinerary:\n%s", itinerary)
+
+        # Execute all steps
+        exec_result = await plan_executor.run(steps)
+
+        # Combine itinerary + execution summary
+        resp = itinerary + "\n\n" + exec_result.summary()
+
+        data_layer.conversations.add("assistant", resp, tool_used="planner")
+        await self._graph_store(user_input, resp, "planner")
+        self._fire_embeddings()
+
+        return BrainResult(response=resp, tool_used="planner")
+
     async def _handle_location(self) -> str:
         """Handle 'where am i' queries — show GPS/location info."""
         from bantz.core.location import location_service
@@ -1380,6 +1413,18 @@ class Brain:
             await self._graph_store(user_input, resp, "workflow")
             self._fire_embeddings()
             return BrainResult(response=resp, tool_used="workflow")
+
+        # ── Plan-and-Solve: LLM-based multi-step decomposition (#187) ────
+        # If workflow engine didn't fire (regex-based), check if the
+        # planner detects a complex multi-tool request via heuristics.
+        try:
+            from bantz.agent.planner import planner_agent
+            if planner_agent.is_complex(en_input):
+                plan_result = await self._execute_plan(user_input, en_input, tc)
+                if plan_result is not None:
+                    return plan_result
+        except Exception as exc:
+            log.debug("Planner check failed: %s — falling through", exc)
 
         quick = self._quick_route(user_input, en_input)
 
