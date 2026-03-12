@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="bantz.png" alt="Bantz" width="200"/>
+
 # BANTZ
 
 **Your AI-Powered Personal Host — Terminal Assistant, System Observer, Autonomous Agent**
