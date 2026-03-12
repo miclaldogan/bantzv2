@@ -156,7 +156,11 @@ class GmailTool(BaseTool):
     description = (
         "Reads, writes, searches, and manages Gmail messages and labels. "
         "Use for: mail, gmail, inbox, email summary, compose, reply, forward, "
-        "thread view, star, label, mark read, send email, batch operations."
+        "thread view, star, label, mark read, send email, batch operations. "
+        "Supports compose_and_send action to draft AND send an email atomically "
+        "when recipient and intent/body are provided in a single request. "
+        "Params for compose_and_send: to (recipient), intent or body (content), "
+        "subject (optional, auto-generated if missing)."
     )
     risk_level = "safe"
 
@@ -206,6 +210,10 @@ class GmailTool(BaseTool):
             return await self._send(creds, to, subject, body)
         elif action == "compose":
             return await self._compose(creds, to, subject, intent or raw_query)
+        elif action == "compose_and_send":
+            return await self._compose_and_send(
+                creds, to, subject, body, intent or raw_query,
+            )
         elif action == "reply":
             return await self._reply(creds, message_id, intent or body)
         elif action == "forward":
@@ -515,6 +523,68 @@ class GmailTool(BaseTool):
                 "body": body,
             },
         )
+
+    # ── Compose-and-Send (atomic) ─────────────────────────────────────────
+
+    async def _compose_and_send(
+        self, creds, to: str, subject: str, body: str, intent: str,
+    ) -> ToolResult:
+        """Atomic compose + send for complete email requests.
+
+        Required: to (recipient).  At least one of body or intent.
+        Optional: subject (auto-generated if missing).
+        """
+        if not to:
+            return ToolResult(
+                success=False, output="",
+                error="Recipient not specified.",
+            )
+
+        to_resolved = contacts.resolve(to)
+
+        # Generate body via LLM if only intent provided
+        if not body and intent:
+            body = await self._llm_compose(to_resolved, subject, intent)
+        if not body:
+            return ToolResult(
+                success=False, output="",
+                error="No email content provided.",
+            )
+
+        # Auto-generate subject with fallback
+        if not subject:
+            subject = await self._auto_subject(body)
+
+        # Send directly
+        try:
+            ok = await asyncio.get_event_loop().run_in_executor(
+                None, self._send_sync, creds, to_resolved, subject, body, None,
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="",
+                error=f"Send failed: {exc}",
+            )
+
+        if ok:
+            return ToolResult(
+                success=True,
+                output=(
+                    f"Email dispatched to {to} ({to_resolved}).\n"
+                    f"Subject: {subject}"
+                ),
+                data={"sent": True, "to": to_resolved, "subject": subject},
+            )
+        return ToolResult(success=False, output="", error="Failed to send email.")
+
+    async def _auto_subject(self, body: str) -> str:
+        """Generate subject via LLM, with a safe fallback."""
+        subj = await self._generate_subject(body)
+        if subj:
+            return subj
+        # Fallback: first 5 words of body, capped
+        words = body.split()[:5]
+        return " ".join(words).rstrip(".,;:!?") if words else "Message from Bantz"
 
     # ── Reply ─────────────────────────────────────────────────────────────
 

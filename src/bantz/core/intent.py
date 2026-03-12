@@ -38,7 +38,7 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - weather: {{"city": "<city name or empty>"}}
 - news: {{"source": "all|hn", "limit": 5}}
 - web_search: {{"query": "<search terms>"}}
-- gmail: {{"action": "unread|compose|read|search|filter|send|contacts", ...}}
+- gmail: {{"action": "unread|compose|compose_and_send|read|search|filter|send|contacts", "to": "recipient", "intent": "what to say", "subject": "optional"}}
 - calendar: {{"action": "today|week|create|delete|update", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}}
 - classroom: {{"action": "assignments|due_today"}}
 - filesystem: {{"path": "<file path>", "action": "read|write", ...}}
