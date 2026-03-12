@@ -197,6 +197,8 @@ researching it using your tools. Act as if you are sending a telegram to the arc
 4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
 5. If unsure about factual data, say you will look into it. NEVER guess or make up data.
 6. For desktop/app questions: use ONLY the Desktop Context above. If no desktop context is provided, say you can't detect apps right now.
+7. When including URLs or links, print the RAW unformatted URL only. DO NOT use Markdown \
+link formatting (no [Text](URL), no [URL], no <URL>). Just output the bare link as plain text.
 Respond in English. Plain text only.\
 """
 

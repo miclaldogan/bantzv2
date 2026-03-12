@@ -391,3 +391,97 @@ class TestExtractCity:
     def test_forecast_tomorrow_no_city(self):
         """'forecast tomorrow' → empty."""
         assert self._extract("forecast tomorrow") == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Markdown URL Trap & Bracket Bug Fixes
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMarkdownURLPromptRules:
+    """Prompt templates must instruct LLM to never use Markdown link formatting."""
+
+    def test_chat_system_has_raw_url_rule(self):
+        """CHAT_SYSTEM must tell LLM to use raw URLs."""
+        from bantz.core.brain import CHAT_SYSTEM
+        lower = CHAT_SYSTEM.lower()
+        assert "raw" in lower and "url" in lower
+
+    def test_chat_system_forbids_markdown_links(self):
+        """CHAT_SYSTEM must explicitly forbid [Text](URL) syntax."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "[Text](URL)" in CHAT_SYSTEM or "no [Text]" in CHAT_SYSTEM
+
+    def test_chat_system_forbids_bracket_urls(self):
+        """CHAT_SYSTEM must forbid [URL] bracket wrapping."""
+        from bantz.core.brain import CHAT_SYSTEM
+        assert "no [URL]" in CHAT_SYSTEM or "[URL]" in CHAT_SYSTEM
+
+    def test_finalizer_has_raw_url_rule(self):
+        """FINALIZER_SYSTEM must tell LLM to use raw URLs."""
+        from bantz.core.finalizer import FINALIZER_SYSTEM
+        lower = FINALIZER_SYSTEM.lower()
+        assert "raw" in lower and "url" in lower
+
+    def test_finalizer_forbids_markdown_links(self):
+        """FINALIZER_SYSTEM must explicitly forbid [Text](URL) syntax."""
+        from bantz.core.finalizer import FINALIZER_SYSTEM
+        assert "[Text](URL)" in FINALIZER_SYSTEM or "no [Text]" in FINALIZER_SYSTEM
+
+    def test_finalizer_forbids_bracket_urls(self):
+        """FINALIZER_SYSTEM must forbid [URL] bracket wrapping."""
+        from bantz.core.finalizer import FINALIZER_SYSTEM
+        assert "no [URL]" in FINALIZER_SYSTEM or "[URL]" in FINALIZER_SYSTEM
+
+
+class TestStripMarkdownLinks:
+    """strip_markdown() must convert markdown links to bare URLs."""
+
+    def test_markdown_link_to_bare_url(self):
+        """[Click Here](https://example.com) → https://example.com"""
+        from bantz.core.finalizer import strip_markdown
+        text = "Check this: [Click Here](https://example.com) for details."
+        result = strip_markdown(text)
+        assert "https://example.com" in result
+        assert "[Click Here]" not in result
+        assert "](https" not in result
+
+    def test_bracket_url_to_bare(self):
+        """[https://example.com] → https://example.com"""
+        from bantz.core.finalizer import strip_markdown
+        text = "Telegraph Reference: [https://en.wikipedia.org/wiki/Edith]"
+        result = strip_markdown(text)
+        assert "https://en.wikipedia.org/wiki/Edith" in result
+        assert "[https://" not in result
+
+    def test_url_with_parens_in_markdown(self):
+        """Links with parentheses in URL still convert correctly."""
+        from bantz.core.finalizer import strip_markdown
+        text = "[Article](https://en.wikipedia.org/wiki/Edith_(name))"
+        result = strip_markdown(text)
+        # Should extract the URL (may truncate at inner paren, which is OK)
+        assert "https://en.wikipedia.org" in result
+
+    def test_multiple_markdown_links(self):
+        """Multiple links in one response all get stripped."""
+        from bantz.core.finalizer import strip_markdown
+        text = "[A](https://a.com) and [B](https://b.com)"
+        result = strip_markdown(text)
+        assert "https://a.com" in result
+        assert "https://b.com" in result
+        assert "[A]" not in result
+        assert "[B]" not in result
+
+    def test_bare_url_unchanged(self):
+        """Already-bare URLs pass through unmodified."""
+        from bantz.core.finalizer import strip_markdown
+        text = "See https://example.com for info."
+        result = strip_markdown(text)
+        assert result == text
+
+    def test_non_url_brackets_unchanged(self):
+        """Regular brackets without URLs are left alone."""
+        from bantz.core.finalizer import strip_markdown
+        text = "The answer is [option A]."
+        result = strip_markdown(text)
+        assert "[option A]" in result
