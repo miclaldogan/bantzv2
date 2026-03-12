@@ -406,10 +406,15 @@ class TestQuickRouteAccessibility:
         assert result["tool"] == "accessibility"
 
     def test_switch_to_app_route(self):
-        result = self._quick("switch to terminal")
+        result = self._quick("switch to app terminal")
         assert result is not None
         assert result["tool"] == "accessibility"
         assert result["args"]["action"] == "focus"
+
+    def test_switch_to_no_app_context(self):
+        """'switch to X' without app/window keyword should NOT match a11y."""
+        result = self._quick("switch to a different topic please")
+        assert result is None or result["tool"] != "accessibility"
 
     def test_accessibility_info_fallback(self):
         result = self._quick("check accessibility info")

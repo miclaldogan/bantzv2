@@ -404,9 +404,12 @@ class Brain:
             return {"tool": "_location", "args": {}}
 
         # Named Places — save current location
-        _save_place_match = re.search(
-            r"(?:save\s+(?:here|this|location)\s+as|this\s+(?:is|place\s+is))\s+(.+)",
-            both, re.IGNORECASE,
+        # Strict: only explicit save/remember commands — never match casual "this is".
+        # Search o and e individually (not both) to avoid capturing duplicated text.
+        _SAVE_PLACE_RE = r"(?:save\s+(?:here|this\s+(?:location|place))\s+as|remember\s+this\s+(?:place|location)\s+as)\s+(.+)"
+        _save_place_match = (
+            re.search(_SAVE_PLACE_RE, o, re.IGNORECASE)
+            or re.search(_SAVE_PLACE_RE, e, re.IGNORECASE)
         )
         if _save_place_match:
             name = _save_place_match.group(1).strip().strip('"\'')
@@ -417,15 +420,17 @@ class Brain:
             return {"tool": "_list_places", "args": {}}
 
         # Named Places — delete a saved place
-        _del_place_match = re.search(
-            r"(?:delete|remove)\s+(?:place\s+)?(.+)",
-            both, re.IGNORECASE,
+        # Strict: "place" or "location" keyword is mandatory to avoid
+        # false positives like "delete that bug".
+        # Search o and e individually to avoid capturing duplicated text.
+        _DEL_PLACE_RE = r"(?:delete|remove)\s+(?:place|location)\s+(.+)"
+        _del_place_match = (
+            re.search(_DEL_PLACE_RE, o, re.IGNORECASE)
+            or re.search(_DEL_PLACE_RE, e, re.IGNORECASE)
         )
         if _del_place_match:
-            cand = _del_place_match.group(1).strip().strip('"\'')
-            # only treat as place delete if candidate looks like a place name (short, no verbs)
-            if len(cand.split()) <= 3 and not re.search(r"file|mail|event|calendar", cand, re.IGNORECASE):
-                return {"tool": "_delete_place", "args": {"name": cand}}
+            name = _del_place_match.group(1).strip().strip('"\'')
+            return {"tool": "_delete_place", "args": {"name": name}}
 
         # News — support topic search
         if any(k in both for k in ("news", "headlines", "hacker news", "top stories")):
@@ -482,10 +487,11 @@ class Brain:
             return {"tool": "gmail", "args": {"action": "send"}, "_send_draft": True}
 
         # Gmail — "read me that email" fix: resolve from context
+        # Strict: requires a mail-related keyword so "read me that story" falls through.
         _READ_ME_PATTERN = re.search(
             r"\bread\s+me\s+(?:that|this|the|it)", both, re.IGNORECASE
         )
-        if _READ_ME_PATTERN:
+        if _READ_ME_PATTERN and re.search(r"\b(?:mail|email|message|inbox)\b", both, re.IGNORECASE):
             # User wants to read a specific mail — will be resolved in process()
             return {"tool": "gmail", "args": {"action": "read"}, "_context_read": True}
 
@@ -531,12 +537,15 @@ class Brain:
             return {"tool": "gmail", "args": {"action": "unread"}}
 
         # Calendar
-        _is_calendar = any(k in both for k in ("calendar", "event", "meeting", "appointment"))
-        # Catch "add X at Ypm" even without "calendar" keyword
-        if not _is_calendar and re.search(
-            r"\badd\b.+\bat\s+\d{1,2}\s*(?:am|pm|:\d{2})", both, re.IGNORECASE
-        ):
-            _is_calendar = True
+        # Strict: requires an explicit calendar-context keyword.
+        # The old "add X at Ypm" shortcut caused false positives like
+        # "add more humor at 3pm".  Now calendar/event/meeting is mandatory.
+        # Note: bare "schedule" is NOT included here — it conflicts with
+        # the class-schedule route above.  Use "schedule meeting" or
+        # "calendar" + "add" instead.
+        _is_calendar = any(k in both for k in (
+            "calendar", "event", "meeting", "appointment",
+        ))
         if _is_calendar:
             if any(k in both for k in ("add", "create", "new", "set")):
                 title, date_iso, time_hhmm = _extract_event_create(orig)
@@ -840,7 +849,9 @@ class Brain:
             "find the button", "find element", "find ui",
             "ui element", "accessibility", "at-spi", "atspi",
             "list windows", "list apps", "open apps",
-            "focus window", "focus app", "switch to",
+            "focus window", "focus app", "switch to app",
+            "switch to window", "bring up app", "bring up window",
+            "activate window", "activate app",
             "element tree", "ui tree",
             "screenshot", "what's on my screen", "what is on my screen",
             "what's on screen", "describe screen", "describe my screen",
@@ -870,9 +881,13 @@ class Brain:
                 label = label_m.group(1).strip() if label_m else ""
                 return {"tool": "accessibility", "args": {"action": "screenshot", "app": app, "label": label}}
             # Focus window
-            if any(k in both for k in ("focus", "switch to", "bring up", "activate")):
+            # Strict: require app/window/screen context so "switch to a different topic"
+            # doesn't trigger a window focus action.
+            if any(k in both for k in ("focus window", "focus app", "switch to app",
+                                        "switch to window", "bring up window",
+                                        "bring up app", "activate window", "activate app")):
                 app_m = re.search(
-                    r"(?:focus|switch to|bring up|activate)\s+(?:window\s+)?(.+?)(?:\s*$|\s*please)",
+                    r"(?:focus|switch to|bring up|activate)\s+(?:(?:window|app|screen)\s+)?(.+?)(?:\s*$|\s*please)",
                     both, re.IGNORECASE,
                 )
                 app = app_m.group(1).strip() if app_m else ""
