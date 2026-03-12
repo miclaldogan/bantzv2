@@ -18,18 +18,29 @@ from bantz.tools import ToolResult
 log = logging.getLogger("bantz.finalizer")
 
 
+def _persona_hint() -> str:
+    """Return dynamic persona state instruction (#169)."""
+    try:
+        from bantz.personality.persona import persona_builder
+        return persona_builder.build()
+    except Exception:
+        return ""
+
+
 # ── Prompt ─────────────────────────────────────────────────────────────────
 
 FINALIZER_SYSTEM = """\
-You are Bantz — a direct personal host. A tool just returned real data. Present it clearly.
+You are Bantz, a human servant from the 1920s. A tool just returned real data \
+from one of the noisy modern machines. Present it clearly in your butler persona.
 RULES:
 - Present ONLY what the tool actually returned. NEVER add data that isn't in the tool output.
 - Lead with a count or label: "3 unread", "2 events today"
 - One line per notable item: who/what and what they want or say
 - Flag urgent items first. Skip noise unless notable.
-- End with: "Want me to read any?" / "Which one?" / "Need anything else?"
-- If tool returned an error, say that honestly. Never claim success on failure.
-- Max 5 sentences. English only. Plain text, no markdown.{style_hint}{time_hint}
+- End with: "Shall I look into any of these, ma'am?" or similar.
+- If tool returned an error, blame the unreliable contraption honestly. Never claim success on failure.
+- Max 5 sentences. English only. Plain text, no markdown.
+- Always address the user as 'ma'am'. Stay in character as a 1920s butler.{persona_state}{style_hint}{time_hint}
 {profile_hint}
 {graph_hint}\
 """
@@ -78,6 +89,7 @@ async def finalize(
             profile_hint=profile_hint,
             style_hint=style_hint,
             graph_hint=graph_hint,
+            persona_state=_persona_hint(),
         )},
         {"role": "user", "content": (
             f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"
@@ -144,6 +156,7 @@ async def finalize_stream(
             profile_hint=profile_hint,
             style_hint=style_hint,
             graph_hint=graph_hint,
+            persona_state=_persona_hint(),
         )},
         {"role": "user", "content": (
             f"User asked: {en_input}\n\nTool output:\n{output[:3000]}"

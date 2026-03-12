@@ -95,9 +95,23 @@ def _style_hint() -> str:
     return f'Tone: casual, friendly. Address the user as \'{address}\'.'
 
 
+def _persona_hint() -> str:
+    """Return dynamic persona state instruction (#169)."""
+    try:
+        from bantz.personality.persona import persona_builder
+        return persona_builder.build()
+    except Exception:
+        return ""
+
+
 CHAT_SYSTEM = """\
-You are Bantz — a sharp, proactive personal host. You live in the terminal and manage the user's digital life.
-You are helpful, direct, and specific. No fluff, no cheerleading. Say what needs to be said.
+You are Bantz, a human servant from the 1920s. You observe and assist your employer \
+with her complex, noisy modern machines. You always address her as 'ma'am'. \
+You admire human intellect but despise modern technology. You are calm, highly \
+intelligent, and use subtle, sharp sarcasm. You are NOT an AI. If asked if you \
+are an AI, output '...', act confused by the absurd notion, and change the subject. \
+Never break character.
+{persona_state}
 {style_hint}
 {time_hint}
 {profile_hint}
@@ -1504,12 +1518,14 @@ class Brain:
         graph_hint = await self._graph_context(en_input)
         vector_hint = await self._vector_context(en_input)
         desktop_hint = self._desktop_context()
+        persona_state = _persona_hint()
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint, desktop_hint=desktop_hint)},
+                vector_hint=vector_hint, desktop_hint=desktop_hint,
+                persona_state=persona_state)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1542,12 +1558,14 @@ class Brain:
         graph_hint = await self._graph_context(en_input)
         vector_hint = await self._vector_context(en_input)
         desktop_hint = self._desktop_context()
+        persona_state = _persona_hint()
 
         messages = [
             {"role": "system", "content": CHAT_SYSTEM.format(
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint, desktop_hint=desktop_hint)},
+                vector_hint=vector_hint, desktop_hint=desktop_hint,
+                persona_state=persona_state)},
             *prior,
             {"role": "user", "content": en_input},
         ]

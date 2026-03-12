@@ -179,6 +179,9 @@ class Config(BaseSettings):
     health_thermal_gpu: float = Field(80.0, alias="BANTZ_HEALTH_THERMAL_GPU")
     health_eye_strain_hours: float = Field(2.0, alias="BANTZ_HEALTH_EYE_STRAIN_HOURS")
 
+    # ── Dynamic Persona (#169) ───────────────────────────────────────────
+    persona_enabled: bool = Field(True, alias="BANTZ_PERSONA_ENABLED")
+
     @property
     def db_path(self) -> Path:
         base = (
