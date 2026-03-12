@@ -297,6 +297,46 @@ class TestHandleMessage:
             mod._ALLOWED = original_allowed
 
     @pytest.mark.asyncio
+    async def test_stream_response_persisted_to_db(self):
+        """Streamed responses must be saved to DB for memory continuity."""
+        import bantz.interface.telegram_bot as mod
+        original_allowed = mod._ALLOWED
+        mod._rate_log.clear()
+        try:
+            mod._ALLOWED = None
+            update = _make_update(user_id=111, text="remember this")
+            ctx = _ctx()
+
+            async def fake_stream():
+                for chunk in ["I shall ", "remember."]:
+                    yield chunk
+
+            fake_result = FakeBrainResult(response="", stream=fake_stream())
+            mock_brain = MagicMock()
+            mock_brain.process = AsyncMock(return_value=fake_result)
+            mock_brain._graph_store = AsyncMock()
+
+            mock_dal_conv = MagicMock()
+            mock_dal = MagicMock()
+            mock_dal.conversations = mock_dal_conv
+
+            with patch.object(mod, "config") as mock_cfg:
+                mock_cfg.telegram_llm_mode = True
+                with patch.dict("sys.modules", {
+                    "bantz.core.brain": MagicMock(brain=mock_brain),
+                    "bantz.data.dal": MagicMock(data_layer=mock_dal),
+                }):
+                    await mod.handle_message(update, ctx)
+
+            # Must have called conversations.add with the assistant response
+            mock_dal_conv.add.assert_called_once_with(
+                "assistant", "I shall remember.",
+                tool_used=None,
+            )
+        finally:
+            mod._ALLOWED = original_allowed
+
+    @pytest.mark.asyncio
     async def test_empty_text_ignored(self):
         """Empty text messages are silently ignored."""
         import bantz.interface.telegram_bot as mod

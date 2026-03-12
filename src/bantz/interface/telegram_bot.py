@@ -431,7 +431,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             response = result.response
 
         if response and response.strip():
-            await _safe_reply(update, response.strip())
+            cleaned = response.strip()
+            await _safe_reply(update, cleaned)
+
+            # ── Persist streamed response to memory + graph (#178 fix) ────
+            # Brain only auto-saves non-streaming responses; for streams the
+            # consumer is responsible (mirrors TUI behaviour in app.py L718).
+            if result.stream:
+                try:
+                    from bantz.data.dal import data_layer
+                    data_layer.conversations.add(
+                        "assistant", cleaned,
+                        tool_used=result.tool_used,
+                    )
+                except Exception:
+                    log.debug("Failed to persist Telegram response to DB")
+                try:
+                    await brain._graph_store(
+                        user_text, cleaned, result.tool_used,
+                    )
+                except Exception:
+                    log.debug("Failed to persist Telegram response to graph")
         else:
             await update.message.reply_text("…")
     except Exception as exc:
