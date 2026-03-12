@@ -946,3 +946,51 @@ class TestAmbientProcessHandlers:
              patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
             result = _run(b.process("ambient status"))
         assert "waiting" in result.response.lower() or "no ambient" in result.response.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Remote Telegraph Identity Fix (third-person schizophrenia bug)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRemoteHintIdentity:
+    """remote_hint must identify the Telegram user AS ma'am, not a stranger."""
+
+    def test_remote_hint_says_directly_with_maam(self):
+        """The hint must say 'directly WITH ma'am', not 'Ma'am is not at the machine'."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat)
+        assert "directly WITH" in src or "directly with" in src.lower()
+
+    def test_remote_hint_no_stranger_phrasing(self):
+        """The hint must NOT say 'Ma'am is not at the machine'."""
+        import inspect
+        from bantz.core.brain import Brain
+        src_chat = inspect.getsource(Brain._chat)
+        src_stream = inspect.getsource(Brain._chat_stream)
+        assert "not at the machine" not in src_chat
+        assert "not at the machine" not in src_stream
+
+    def test_remote_hint_says_employer(self):
+        """The hint must tell Bantz to recognize ma'am as employer."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat)
+        assert "employer" in src
+
+    def test_remote_hint_address_directly(self):
+        """The hint must instruct Bantz to address her directly."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat)
+        assert "Address her" in src
+        assert "directly" in src
+
+    def test_remote_hint_consistent_in_stream(self):
+        """_chat_stream must have the same identity-aware hint."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat_stream)
+        assert "directly WITH" in src or "directly with" in src.lower()
+        assert "employer" in src
