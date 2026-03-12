@@ -326,7 +326,7 @@ class TestTemplateIntegration:
         from bantz.core.brain import CHAT_SYSTEM
         result = CHAT_SYSTEM.format(
             persona_state="TEST_PERSONA",
-            style_hint="", time_hint="", profile_hint="",
+            style_hint="", formality_hint="", time_hint="", profile_hint="",
             graph_hint="", vector_hint="", desktop_hint="",
             deep_memory="",
         )

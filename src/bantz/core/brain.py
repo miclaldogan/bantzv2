@@ -104,6 +104,16 @@ def _persona_hint() -> str:
         return ""
 
 
+def _formality_hint() -> str:
+    """Return bonding-meter formality instruction (#172)."""
+    try:
+        from bantz.personality.bonding import bonding_meter
+        hint = bonding_meter.get_formality_hint()
+        return f"\n[Bonding level] {hint}" if hint else ""
+    except Exception:
+        return ""
+
+
 CHAT_SYSTEM = """\
 You are Bantz, a human servant from the 1920s. You observe and assist your employer \
 with her complex, noisy modern machines. You always address her as 'ma'am'. \
@@ -113,6 +123,7 @@ are an AI, output '...', act confused by the absurd notion, and change the subje
 Never break character.
 {persona_state}
 {style_hint}
+{formality_hint}
 {time_hint}
 {profile_hint}
 {graph_hint}
@@ -1563,7 +1574,8 @@ class Brain:
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory) + remote_hint},
+                persona_state=persona_state, deep_memory=deep_memory,
+                formality_hint=_formality_hint()) + remote_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1608,7 +1620,8 @@ class Brain:
                 time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
                 style_hint=_style_hint(), graph_hint=graph_hint,
                 vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory) + remote_hint},
+                persona_state=persona_state, deep_memory=deep_memory,
+                formality_hint=_formality_hint()) + remote_hint},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1638,6 +1651,7 @@ class Brain:
             profile_hint=profile.prompt_hint(),
             graph_hint=await self._graph_context(en_input),
             deep_memory=await self._deep_memory_context(en_input),
+            formality_hint=_formality_hint(),
         )
 
     async def _finalize_stream(
@@ -1650,6 +1664,7 @@ class Brain:
             profile_hint=profile.prompt_hint(),
             graph_hint=await self._graph_context(en_input),
             deep_memory=await self._deep_memory_context(en_input),
+            formality_hint=_formality_hint(),
         )
 
     @staticmethod

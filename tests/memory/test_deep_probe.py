@@ -603,6 +603,7 @@ class TestBrainIntegration:
         formatted = CHAT_SYSTEM.format(
             persona_state="",
             style_hint="",
+            formality_hint="",
             time_hint="",
             profile_hint="",
             graph_hint="",
@@ -620,6 +621,7 @@ class TestBrainIntegration:
         formatted = CHAT_SYSTEM.format(
             persona_state="",
             style_hint="",
+            formality_hint="",
             time_hint="",
             profile_hint="",
             graph_hint="",
@@ -649,6 +651,7 @@ class TestFinalizerIntegration:
         formatted = FINALIZER_SYSTEM.format(
             persona_state="",
             style_hint="",
+            formality_hint="",
             time_hint="",
             profile_hint="",
             graph_hint="",
