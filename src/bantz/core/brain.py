@@ -589,6 +589,26 @@ class Brain:
         if re.search(r"\bsend\s+(?:that|the|this)\s+(?:mail|email|draft|message)\b", both, re.IGNORECASE):
             return {"tool": "gmail", "args": {"action": "send"}, "_send_draft": True}
 
+        # Gmail — atomic compose-and-send: "send an email to X saying Y"
+        # Non-greedy (.+?) for multi-word recipients like "John Doe"
+        _CAS_RE = re.search(
+            r"(?:send|write|compose)\s+(?:an?\s+)?(?:e?-?mail|message)\s+"
+            r"to\s+(.+?)\s+(?:saying|about|that|with)\s+(.+)",
+            en, re.IGNORECASE,
+        )
+        if not _CAS_RE:
+            _CAS_RE = re.search(
+                r"(?:send|write|compose)\s+(?:an?\s+)?(?:e?-?mail|message)\s+"
+                r"to\s+(.+?)\s+(?:saying|about|that|with)\s+(.+)",
+                orig, re.IGNORECASE,
+            )
+        if _CAS_RE:
+            return {"tool": "gmail", "args": {
+                "action": "compose_and_send",
+                "to": _CAS_RE.group(1).strip(),
+                "intent": _CAS_RE.group(2).strip(),
+            }}
+
         # Gmail — "read me that email" fix: resolve from context
         # Strict: requires a mail-related keyword so "read me that story" falls through.
         _READ_ME_PATTERN = re.search(
