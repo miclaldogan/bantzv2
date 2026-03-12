@@ -45,7 +45,7 @@ class TestWakeWordConfig:
 
     def test_picovoice_access_key_default_empty(self):
         from bantz.config import Config
-        c = Config()
+        c = Config(_env_file=None)
         assert c.picovoice_access_key == ""
 
     def test_picovoice_access_key_set(self):

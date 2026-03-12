@@ -773,3 +773,176 @@ class TestNotifyToastFallback:
         src = inspect.getsource(brain_mod._notify_toast)
         assert "notifier.send" in src
         assert "notify-send" in src or "notifier" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Audio Ducking brain routes (#171)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestAudioDuckRoutes:
+    """_quick_route must match audio ducking on/off commands."""
+
+    def _route(self, text):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        return b._quick_route(text, text.lower())
+
+    def test_enable_ducking(self):
+        r = self._route("enable ducking")
+        assert r and r["tool"] == "_audio_duck_on"
+
+    def test_ducking_on(self):
+        r = self._route("ducking on")
+        assert r and r["tool"] == "_audio_duck_on"
+
+    def test_turn_on_ducking(self):
+        r = self._route("turn on ducking")
+        assert r and r["tool"] == "_audio_duck_on"
+
+    def test_ses_kisma_ac(self):
+        r = self._route("ses kısma aç")
+        assert r and r["tool"] == "_audio_duck_on"
+
+    def test_disable_ducking(self):
+        r = self._route("disable ducking")
+        assert r and r["tool"] == "_audio_duck_off"
+
+    def test_ducking_off(self):
+        r = self._route("ducking off")
+        assert r and r["tool"] == "_audio_duck_off"
+
+    def test_turn_off_ducking(self):
+        r = self._route("turn off ducking")
+        assert r and r["tool"] == "_audio_duck_off"
+
+    def test_no_ducking(self):
+        r = self._route("no ducking please")
+        assert r and r["tool"] == "_audio_duck_off"
+
+    def test_ses_kisma_kapat(self):
+        r = self._route("ses kısma kapat")
+        assert r and r["tool"] == "_audio_duck_off"
+
+
+class TestAudioDuckProcessHandlers:
+    """process() handlers for _audio_duck_on / _audio_duck_off."""
+
+    def _make_brain(self):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._bridge = False
+        b._memory_ready = True
+        b._graph_ready = True
+        b._model = "test"
+        b._ctx = MagicMock()
+        b._session = MagicMock()
+        b._en_cache = {}
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        return b
+
+    def test_process_duck_on_available(self):
+        b = self._make_brain()
+        mock_ducker = MagicMock()
+        mock_ducker.available.return_value = True
+        with patch("bantz.core.brain.data_layer") as dl, \
+             patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            result = _run(b.process("enable ducking"))
+        assert "enabled" in result.response.lower() or "🔉" in result.response
+        assert mock_ducker.enabled is True
+
+    def test_process_duck_on_unavailable(self):
+        b = self._make_brain()
+        mock_ducker = MagicMock()
+        mock_ducker.available.return_value = False
+        with patch("bantz.core.brain.data_layer") as dl, \
+             patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            result = _run(b.process("enable ducking"))
+        assert "not available" in result.response.lower() or "❌" in result.response
+
+    def test_process_duck_off(self):
+        b = self._make_brain()
+        mock_ducker = MagicMock()
+        with patch("bantz.core.brain.data_layer") as dl, \
+             patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            result = _run(b.process("disable ducking"))
+        assert "disabled" in result.response.lower() or "🔇" in result.response
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Ambient brain routes (#166)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestAmbientRoutes:
+    """_quick_route must match ambient status queries."""
+
+    def _route(self, text):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        return b._quick_route(text, text.lower())
+
+    def test_ambient_noise(self):
+        r = self._route("ambient noise")
+        assert r and r["tool"] == "_ambient_status"
+
+    def test_ambient_status(self):
+        r = self._route("ambient status")
+        assert r and r["tool"] == "_ambient_status"
+
+    def test_environment_noise(self):
+        r = self._route("environment noise level")
+        assert r and r["tool"] == "_ambient_status"
+
+    def test_ortam_sesi(self):
+        r = self._route("ortam sesi")
+        assert r and r["tool"] == "_ambient_status"
+
+    def test_hows_the_ambient(self):
+        r = self._route("how's the ambient")
+        assert r and r["tool"] == "_ambient_status"
+
+    def test_ne_kadar_gurultu(self):
+        r = self._route("ne kadar gürültü var")
+        assert r and r["tool"] == "_ambient_status"
+
+
+class TestAmbientProcessHandlers:
+    """process() handler for _ambient_status."""
+
+    def _make_brain(self):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._bridge = False
+        b._memory_ready = True
+        b._graph_ready = True
+        b._model = "test"
+        b._ctx = MagicMock()
+        b._session = MagicMock()
+        b._en_cache = {}
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        return b
+
+    def test_process_ambient_with_data(self):
+        from bantz.agent.ambient import AmbientLabel, AmbientSnapshot
+        b = self._make_brain()
+        snap = AmbientSnapshot(timestamp=1700000000, rms=2500, zcr=0.06, label=AmbientLabel.SPEECH, duration_s=3.0)
+        mock_analyzer = MagicMock()
+        mock_analyzer.latest.return_value = snap
+        mock_analyzer.day_summary.return_value = "Ambient today (5 samples): speech: 60%, silence: 40%"
+        with patch("bantz.core.brain.data_layer") as dl, \
+             patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
+            result = _run(b.process("ambient noise"))
+        assert "SPEECH" in result.response
+        assert "🎤" in result.response
+
+    def test_process_ambient_no_data(self):
+        b = self._make_brain()
+        mock_analyzer = MagicMock()
+        mock_analyzer.latest.return_value = None
+        with patch("bantz.core.brain.data_layer") as dl, \
+             patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
+            result = _run(b.process("ambient status"))
+        assert "waiting" in result.response.lower() or "no ambient" in result.response.lower()

@@ -630,6 +630,26 @@ class Brain:
         ):
             return {"tool": "_wake_word_off", "args": {}}
 
+        # Audio Ducking control (#171)
+        if re.search(
+            r"enable\s+duck|duck(?:ing)?\s+on|turn\s+on\s+duck|ses\s+kıs(?:ma)?\s+aç",
+            both,
+        ):
+            return {"tool": "_audio_duck_on", "args": {}}
+        if re.search(
+            r"disable\s+duck|duck(?:ing)?\s+off|turn\s+off\s+duck|no\s+duck|ses\s+kıs(?:ma)?\s+kapat",
+            both,
+        ):
+            return {"tool": "_audio_duck_off", "args": {}}
+
+        # Ambient status (#166)
+        if re.search(
+            r"ambient\s+(?:noise|sound|status|level|info)|ortam\s+sesi|environment\s+noise|"
+            r"how(?:'s|\s+is)\s+(?:the\s+)?(?:noise|environment|ambient)|ne\s+kadar\s+gürültü",
+            both,
+        ):
+            return {"tool": "_ambient_status", "args": {}}
+
         # Briefing
         if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
                                     "what's today", "what do i have today")):
@@ -1128,6 +1148,46 @@ class Brain:
                 text = "Wake word listener is not available."
             data_layer.conversations.add("assistant", text, tool_used="wake_word")
             return BrainResult(response=text, tool_used="wake_word")
+
+        if quick and quick["tool"] == "_audio_duck_on":
+            try:
+                from bantz.agent.audio_ducker import audio_ducker
+                if audio_ducker.available():
+                    audio_ducker.enabled = True
+                    text = "🔉 Audio ducking enabled."
+                else:
+                    text = "❌ Audio ducking not available (pactl not found)."
+            except Exception:
+                text = "Audio ducking module is not available."
+            data_layer.conversations.add("assistant", text, tool_used="audio_ducker")
+            return BrainResult(response=text, tool_used="audio_ducker")
+
+        if quick and quick["tool"] == "_audio_duck_off":
+            try:
+                from bantz.agent.audio_ducker import audio_ducker
+                audio_ducker.enabled = False
+                text = "🔇 Audio ducking disabled."
+            except Exception:
+                text = "Audio ducking module is not available."
+            data_layer.conversations.add("assistant", text, tool_used="audio_ducker")
+            return BrainResult(response=text, tool_used="audio_ducker")
+
+        if quick and quick["tool"] == "_ambient_status":
+            try:
+                from bantz.agent.ambient import ambient_analyzer
+                snap = ambient_analyzer.latest()
+                if snap:
+                    text = (
+                        f"🎤 Ambient: **{snap.label.value.upper()}** "
+                        f"(RMS={snap.rms:.0f}, ZCR={snap.zcr:.3f})\n"
+                        f"{ambient_analyzer.day_summary()}"
+                    )
+                else:
+                    text = "No ambient data yet — analyzer is waiting for samples."
+            except Exception:
+                text = "Ambient analyzer is not available."
+            data_layer.conversations.add("assistant", text, tool_used="ambient")
+            return BrainResult(response=text, tool_used="ambient")
 
         if quick and quick["tool"] == "_briefing":
             from bantz.core.briefing import briefing as _briefing
