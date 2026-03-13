@@ -16,12 +16,24 @@ from __future__ import annotations
 
 import asyncio
 import math
-import sqlite3
+import tempfile
+import shutil
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
+
+
+# ── Pool lifecycle ─────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _reset_pool():
+    """Reset the connection pool after every test."""
+    yield
+    from bantz.data.connection_pool import SQLitePool
+    SQLitePool.reset()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -38,55 +50,63 @@ def _run(coro):
     return loop.run_until_complete(coro)
 
 
-def _make_memory_db() -> sqlite3.Connection:
-    """In-memory SQLite with Memory schema."""
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("""
-        CREATE TABLE conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at TEXT NOT NULL,
-            last_active TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-            role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-            content TEXT NOT NULL,
-            tool_used TEXT,
-            created_at TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX idx_messages_conv ON messages(conversation_id, created_at)
-    """)
-    return conn
+def _make_pool_db():
+    """Create a temp-file pool-backed SQLite DB with Memory schema.
+
+    Returns (pool, tmpdir).  Caller should clean up tmpdir after use.
+    """
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test.db"
+
+    from bantz.data.connection_pool import SQLitePool
+    pool = SQLitePool.get_instance(db_path)
+
+    with pool.connection(write=True) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                last_active TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+                role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                content TEXT NOT NULL,
+                tool_used TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at)
+        """)
+    return pool, tmpdir
 
 
-def _insert_conversation(conn) -> int:
+def _insert_conversation(pool) -> int:
     now = datetime.now().isoformat(timespec="seconds")
-    cur = conn.execute(
-        "INSERT INTO conversations(started_at, last_active) VALUES (?,?)",
-        (now, now),
-    )
-    return cur.lastrowid
+    with pool.connection(write=True) as conn:
+        cur = conn.execute(
+            "INSERT INTO conversations(started_at, last_active) VALUES (?,?)",
+            (now, now),
+        )
+        return cur.lastrowid
 
 
 def _insert_message(
-    conn, conv_id: int, role: str, content: str,
+    pool, conv_id: int, role: str, content: str,
     created_at: str | None = None,
 ) -> int:
     ts = created_at or datetime.now().isoformat(timespec="seconds")
-    cur = conn.execute(
-        "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) "
-        "VALUES (?,?,?,?,?)",
-        (conv_id, role, content, None, ts),
-    )
-    return cur.lastrowid
+    with pool.connection(write=True) as conn:
+        cur = conn.execute(
+            "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (conv_id, role, content, None, ts),
+        )
+        return cur.lastrowid
 
 
 def _fake_embedding(text: str, dim: int = 8) -> list[float]:
@@ -113,10 +133,10 @@ def _similar_embedding(base: list[float], noise: float = 0.05) -> list[float]:
     return vec
 
 
-def _setup_vector_store(conn):
-    """Create VectorStore on the given connection and migrate."""
+def _setup_vector_store():
+    """Create VectorStore (uses shared pool) and migrate."""
     from bantz.memory.vector_store import VectorStore
-    vs = VectorStore(conn)
+    vs = VectorStore()
     vs.migrate()
     return vs
 
@@ -133,17 +153,17 @@ class TestDeepMemoryProbeUnit:
         from bantz.memory.deep_probe import DeepMemoryProbe
         from bantz.memory.vector_store import VectorStore
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         # Two messages: one similar, one dissimilar
         base_vec = _fake_embedding("study for exam")
         similar_vec = _similar_embedding(base_vec, noise=0.01)  # high cosine
         dissimilar_vec = _fake_embedding("banana smoothie recipe")  # low cosine
 
-        msg1 = _insert_message(conn, conv_id, "user", "I need to study for my exam")
-        msg2 = _insert_message(conn, conv_id, "user", "banana smoothie recipe please")
+        msg1 = _insert_message(pool, conv_id, "user", "I need to study for my exam")
+        msg2 = _insert_message(pool, conv_id, "user", "banana smoothie recipe please")
         vs.store(msg1, similar_vec)
         vs.store(msg2, dissimilar_vec)
 
@@ -160,16 +180,16 @@ class TestDeepMemoryProbeUnit:
         from bantz.memory.deep_probe import DeepMemoryProbe
         from bantz.memory.vector_store import VectorStore
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         # Old message (6 months ago) but very similar embedding
         old_date = (datetime.utcnow() - timedelta(days=180)).isoformat(timespec="seconds")
         base_vec = _fake_embedding("project deadline")
         similar_vec = _similar_embedding(base_vec, noise=0.01)
 
-        msg_id = _insert_message(conn, conv_id, "user",
+        msg_id = _insert_message(pool, conv_id, "user",
                                  "The project deadline is next Friday",
                                  created_at=old_date)
         vs.store(msg_id, similar_vec)
@@ -340,13 +360,13 @@ class TestDejaVuFix:
         probe = DeepMemoryProbe(rate_every_n=1)
         probe._call_counter = 0  # next call will fire
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         base_vec = _fake_embedding("exam study")
         similar_vec = _similar_embedding(base_vec, noise=0.01)
-        msg_id = _insert_message(conn, conv_id, "user", "study for exam")
+        msg_id = _insert_message(pool, conv_id, "user", "study for exam")
         vs.store(msg_id, similar_vec)
 
         mock_config = MagicMock()
@@ -542,8 +562,8 @@ class TestErrorResilience:
         probe = DeepMemoryProbe(rate_every_n=1)
         probe._call_counter = 0
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)  # empty store
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()  # empty store
 
         mock_config = MagicMock()
         mock_config.deep_memory_enabled = True
@@ -683,14 +703,14 @@ class TestEndToEndProbe:
         """Complete flow: embed → search → rank → format."""
         from bantz.memory.deep_probe import DeepMemoryProbe
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         # Store a message with a known embedding
         base_vec = _fake_embedding("exam study")
         similar_vec = _similar_embedding(base_vec, noise=0.01)
-        msg_id = _insert_message(conn, conv_id, "user", "I have a big exam on Thursday")
+        msg_id = _insert_message(pool, conv_id, "user", "I have a big exam on Thursday")
         vs.store(msg_id, similar_vec)
 
         probe = DeepMemoryProbe(
@@ -724,13 +744,13 @@ class TestEndToEndProbe:
         """No memories above threshold → ''."""
         from bantz.memory.deep_probe import DeepMemoryProbe
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         # Store dissimilar message
         msg_vec = _fake_embedding("banana smoothie")
-        msg_id = _insert_message(conn, conv_id, "user", "banana smoothie recipe")
+        msg_id = _insert_message(pool, conv_id, "user", "banana smoothie recipe")
         vs.store(msg_id, msg_vec)
 
         probe = DeepMemoryProbe(
@@ -764,13 +784,13 @@ class TestEndToEndProbe:
         """Second probe for same topic → '' because IDs are in recently_used."""
         from bantz.memory.deep_probe import DeepMemoryProbe
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         base_vec = _fake_embedding("exam study")
         similar_vec = _similar_embedding(base_vec, noise=0.01)
-        msg_id = _insert_message(conn, conv_id, "user", "I have a big exam")
+        msg_id = _insert_message(pool, conv_id, "user", "I have a big exam")
         vs.store(msg_id, similar_vec)
 
         probe = DeepMemoryProbe(
@@ -807,16 +827,16 @@ class TestEndToEndProbe:
         """Only top-N memories are surfaced."""
         from bantz.memory.deep_probe import DeepMemoryProbe
 
-        conn = _make_memory_db()
-        vs = _setup_vector_store(conn)
-        conv_id = _insert_conversation(conn)
+        pool, _tmpdir = _make_pool_db()
+        vs = _setup_vector_store()
+        conv_id = _insert_conversation(pool)
 
         base_vec = _fake_embedding("exam")
 
         # Insert 5 similar messages
         for i in range(5):
             vec = _similar_embedding(base_vec, noise=0.01 + i * 0.001)
-            msg_id = _insert_message(conn, conv_id, "user", f"exam topic {i}")
+            msg_id = _insert_message(pool, conv_id, "user", f"exam topic {i}")
             vs.store(msg_id, vec)
 
         probe = DeepMemoryProbe(

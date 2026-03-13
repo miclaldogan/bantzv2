@@ -22,6 +22,14 @@ from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_pool():
+    """Reset the connection pool after tests that use it."""
+    yield
+    from bantz.data.connection_pool import SQLitePool
+    SQLitePool.reset()
+
+
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
@@ -311,36 +319,41 @@ class TestVectorTimeDecay:
     """search(recency_weight=...) applies exponential time decay."""
 
     def _make_vs(self, rows):
-        """Create a VectorStore with mock rows."""
-        import sqlite3
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        conn.execute("""
-            CREATE TABLE messages (
-                id INTEGER PRIMARY KEY, role TEXT, content TEXT,
-                tool_used TEXT, created_at TEXT, conversation_id TEXT
-            )""")
-        conn.execute("""
-            CREATE TABLE message_vectors (
-                message_id INTEGER PRIMARY KEY, embedding BLOB,
-                dim INTEGER, model TEXT, created_at TEXT
-            )""")
+        """Create a VectorStore with mock rows via pool."""
+        import tempfile
+        from pathlib import Path
+        from bantz.data.connection_pool import SQLitePool
 
-        from bantz.memory.vector_store import _vec_to_blob
-        for msg_id, content, created_at, vec in rows:
-            conn.execute(
-                "INSERT INTO messages VALUES (?,?,?,?,?,?)",
-                (msg_id, "user", content, None, created_at, "conv1"),
-            )
-            blob = _vec_to_blob(vec)
-            conn.execute(
-                "INSERT INTO message_vectors VALUES (?,?,?,?,?)",
-                (msg_id, blob, len(vec), "test", created_at),
-            )
-        conn.commit()
+        self._tmpdir = tempfile.mkdtemp()
+        db_path = Path(self._tmpdir) / "test_decay.db"
+        pool = SQLitePool.get_instance(db_path)
+
+        with pool.connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY, role TEXT, content TEXT,
+                    tool_used TEXT, created_at TEXT, conversation_id TEXT
+                )""")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS message_vectors (
+                    message_id INTEGER PRIMARY KEY, embedding BLOB,
+                    dim INTEGER, model TEXT, created_at TEXT
+                )""")
+
+            from bantz.memory.vector_store import _vec_to_blob
+            for msg_id, content, created_at, vec in rows:
+                conn.execute(
+                    "INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                    (msg_id, "user", content, None, created_at, "conv1"),
+                )
+                blob = _vec_to_blob(vec)
+                conn.execute(
+                    "INSERT INTO message_vectors VALUES (?,?,?,?,?)",
+                    (msg_id, blob, len(vec), "test", created_at),
+                )
 
         from bantz.memory.vector_store import VectorStore
-        return VectorStore(conn)
+        return VectorStore()
 
     def test_no_recency_weight_is_pure_cosine(self):
         now = datetime.utcnow().isoformat()

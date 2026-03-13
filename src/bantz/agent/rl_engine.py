@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from bantz.data.connection_pool import get_pool
+
 log = logging.getLogger(__name__)
 
 # ── Enums ────────────────────────────────────────────────────────────────
@@ -147,34 +149,35 @@ class QTable:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
         self._table: dict[str, dict[str, float]] = {}   # state_key → {action → q}
         self._visits: dict[str, dict[str, int]] = {}     # state_key → {action → n}
         self._lock = threading.Lock()
+        self._initialized = False
 
     def init(self, db_path) -> None:
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS rl_qtable (
-                state   TEXT NOT NULL,
-                action  TEXT NOT NULL,
-                q_value REAL NOT NULL DEFAULT 0.0,
-                visits  INTEGER NOT NULL DEFAULT 0,
-                updated_at REAL NOT NULL,
-                PRIMARY KEY (state, action)
-            )
-        """)
-        self._conn.commit()
+        get_pool(db_path)  # ensure pool singleton
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rl_qtable (
+                    state   TEXT NOT NULL,
+                    action  TEXT NOT NULL,
+                    q_value REAL NOT NULL DEFAULT 0.0,
+                    visits  INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (state, action)
+                )
+            """)
+        self._initialized = True
         self._load()
 
     def _load(self) -> None:
         """Load persisted Q-values into memory."""
-        if not self._conn:
+        if not self._initialized:
             return
-        rows = self._conn.execute(
-            "SELECT state, action, q_value, visits FROM rl_qtable"
-        ).fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                "SELECT state, action, q_value, visits FROM rl_qtable"
+            ).fetchall()
         with self._lock:
             for state_key, action, q_val, visits in rows:
                 self._table.setdefault(state_key, {})[action] = q_val
@@ -201,7 +204,7 @@ class QTable:
 
     def persist(self) -> None:
         """Write in-memory Q-table to SQLite."""
-        if not self._conn:
+        if not self._initialized:
             return
         now = time.time()
         with self._lock:
@@ -210,13 +213,13 @@ class QTable:
                 for action, q_val in actions.items():
                     visits = self._visits.get(state_key, {}).get(action, 0)
                     rows.append((state_key, action, q_val, visits, now))
-        self._conn.executemany(
-            """INSERT OR REPLACE INTO rl_qtable
-               (state, action, q_value, visits, updated_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            rows,
-        )
-        self._conn.commit()
+        with get_pool().connection(write=True) as conn:
+            conn.executemany(
+                """INSERT OR REPLACE INTO rl_qtable
+                   (state, action, q_value, visits, updated_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                rows,
+            )
 
     def total_entries(self) -> int:
         with self._lock:
@@ -228,9 +231,7 @@ class QTable:
 
     def close(self) -> None:
         self.persist()
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._initialized = False
 
 
 # ── Blacklist ────────────────────────────────────────────────────────────
@@ -245,29 +246,30 @@ class Blacklist:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
         self._entries: set[tuple[str, str]] = set()  # (state_key, action)
         self._lock = threading.Lock()
+        self._initialized = False
 
     def init(self, db_path) -> None:
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS rl_blacklist (
-                state      TEXT NOT NULL,
-                action     TEXT NOT NULL,
-                reason     TEXT NOT NULL DEFAULT '',
-                created_at REAL NOT NULL,
-                PRIMARY KEY (state, action)
-            )
-        """)
-        self._conn.commit()
+        get_pool(db_path)
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rl_blacklist (
+                    state      TEXT NOT NULL,
+                    action     TEXT NOT NULL,
+                    reason     TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (state, action)
+                )
+            """)
+        self._initialized = True
         self._load()
 
     def _load(self) -> None:
-        if not self._conn:
+        if not self._initialized:
             return
-        rows = self._conn.execute("SELECT state, action FROM rl_blacklist").fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute("SELECT state, action FROM rl_blacklist").fetchall()
         with self._lock:
             self._entries = {(r[0], r[1]) for r in rows}
 
@@ -281,24 +283,24 @@ class Blacklist:
     def block(self, state: State, action: Action, reason: str = "") -> None:
         with self._lock:
             self._entries.add((state.key, action.value))
-        if self._conn:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO rl_blacklist
-                   (state, action, reason, created_at) VALUES (?, ?, ?, ?)""",
-                (state.key, action.value, reason, time.time()),
-            )
-            self._conn.commit()
+        if self._initialized:
+            with get_pool().connection(write=True) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO rl_blacklist
+                       (state, action, reason, created_at) VALUES (?, ?, ?, ?)""",
+                    (state.key, action.value, reason, time.time()),
+                )
 
     def block_global(self, action: Action, reason: str = "") -> None:
         with self._lock:
             self._entries.add(("*", action.value))
-        if self._conn:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO rl_blacklist
-                   (state, action, reason, created_at) VALUES (?, ?, ?, ?)""",
-                ("*", action.value, reason, time.time()),
-            )
-            self._conn.commit()
+        if self._initialized:
+            with get_pool().connection(write=True) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO rl_blacklist
+                       (state, action, reason, created_at) VALUES (?, ?, ?, ?)""",
+                    ("*", action.value, reason, time.time()),
+                )
 
     def all_blocked(self) -> list[dict[str, str]]:
         with self._lock:
@@ -309,9 +311,7 @@ class Blacklist:
             return len(self._entries)
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._initialized = False
 
 
 # ── Episode Log ──────────────────────────────────────────────────────────
@@ -325,64 +325,65 @@ class EpisodeLog:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
+        self._initialized = False
 
     def init(self, db_path) -> None:
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS rl_episodes (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                state     TEXT NOT NULL,
-                action    TEXT NOT NULL,
-                reward    REAL NOT NULL,
-                timestamp REAL NOT NULL
-            )
-        """)
-        self._conn.commit()
+        get_pool(db_path)
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rl_episodes (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    state     TEXT NOT NULL,
+                    action    TEXT NOT NULL,
+                    reward    REAL NOT NULL,
+                    timestamp REAL NOT NULL
+                )
+            """)
+        self._initialized = True
 
     def record(self, state: State, action: Action, reward: float) -> None:
-        if not self._conn:
+        if not self._initialized:
             return
-        self._conn.execute(
-            "INSERT INTO rl_episodes (state, action, reward, timestamp) VALUES (?, ?, ?, ?)",
-            (state.key, action.value, reward, time.time()),
-        )
-        self._conn.commit()
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO rl_episodes (state, action, reward, timestamp) VALUES (?, ?, ?, ?)",
+                (state.key, action.value, reward, time.time()),
+            )
 
     def recent(self, n: int = 50) -> list[dict[str, Any]]:
-        if not self._conn:
+        if not self._initialized:
             return []
-        rows = self._conn.execute(
-            "SELECT state, action, reward, timestamp FROM rl_episodes "
-            "ORDER BY id DESC LIMIT ?",
-            (n,),
-        ).fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                "SELECT state, action, reward, timestamp FROM rl_episodes "
+                "ORDER BY id DESC LIMIT ?",
+                (n,),
+            ).fetchall()
         return [
             {"state": r[0], "action": r[1], "reward": r[2], "timestamp": r[3]}
             for r in rows
         ]
 
     def total_episodes(self) -> int:
-        if not self._conn:
+        if not self._initialized:
             return 0
-        row = self._conn.execute("SELECT COUNT(*) FROM rl_episodes").fetchone()
+        with get_pool().connection() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM rl_episodes").fetchone()
         return row[0] if row else 0
 
     def avg_reward(self, days: int = 7) -> float:
-        if not self._conn:
+        if not self._initialized:
             return 0.0
         cutoff = time.time() - days * 86400
-        row = self._conn.execute(
-            "SELECT AVG(reward) FROM rl_episodes WHERE timestamp > ?",
-            (cutoff,),
-        ).fetchone()
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                "SELECT AVG(reward) FROM rl_episodes WHERE timestamp > ?",
+                (cutoff,),
+            ).fetchone()
         return row[0] if row and row[0] is not None else 0.0
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._initialized = False
 
 
 # ── RL Engine ────────────────────────────────────────────────────────────
@@ -617,11 +618,12 @@ class RLEngine:
             and now - self._cum_reward_cache_ts < 60
         ):
             return self._cum_reward_cache
-        if not self._initialized or not self.episodes._conn:
+        if not self._initialized or not self.episodes._initialized:
             return 0.0
-        row = self.episodes._conn.execute(
-            "SELECT COALESCE(SUM(reward), 0) FROM rl_episodes"
-        ).fetchone()
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(reward), 0) FROM rl_episodes"
+            ).fetchone()
         total = row[0] if row else 0.0
         self._cum_reward_cache = total
         self._cum_reward_cache_ts = now

@@ -21,7 +21,7 @@ Schema:
 Usage:
     from bantz.memory.vector_store import VectorStore
 
-    vs = VectorStore(conn)      # pass existing Memory sqlite connection
+    vs = VectorStore()          # uses shared connection pool
     vs.migrate()                # create table if needed
     vs.store(42, [0.1, 0.2, ...], model="nomic-embed-text")
     results = vs.search([0.1, 0.2, ...], limit=5)
@@ -29,11 +29,8 @@ Usage:
 from __future__ import annotations
 
 import math
-import sqlite3
 import struct
-import threading
 from datetime import datetime
-from typing import Optional
 
 
 def _vec_to_blob(vec: list[float]) -> bytes:
@@ -64,35 +61,32 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 class VectorStore:
     """Pure-SQLite vector store with brute-force cosine search.
 
-    Shares the same sqlite3.Connection as Memory for zero extra I/O.
-    Thread-safe via a shared lock.
+    Uses the shared connection pool for all DB access.
+    Thread-safe via the pool's write lock.
     """
 
-    def __init__(
-        self,
-        conn: sqlite3.Connection,
-        lock: Optional[threading.Lock] = None,
-    ) -> None:
-        self._conn = conn
-        self._lock = lock or threading.Lock()
+    def __init__(self) -> None:
+        pass
 
     # ── Schema ──────────────────────────────────────────────────────────
 
     def migrate(self) -> None:
         """Create the vector table if it doesn't exist."""
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS message_vectors (
-                message_id  INTEGER PRIMARY KEY,
-                embedding   BLOB NOT NULL,
-                dim         INTEGER NOT NULL,
-                model       TEXT NOT NULL,
-                created_at  TEXT NOT NULL
-            )
-        """)
-        self._conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_mv_created
-                ON message_vectors(created_at)
-        """)
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS message_vectors (
+                    message_id  INTEGER PRIMARY KEY,
+                    embedding   BLOB NOT NULL,
+                    dim         INTEGER NOT NULL,
+                    model       TEXT NOT NULL,
+                    created_at  TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mv_created
+                    ON message_vectors(created_at)
+            """)
 
     # ── Write ───────────────────────────────────────────────────────────
 
@@ -105,8 +99,9 @@ class VectorStore:
         """Store an embedding for a message. Overwrites if exists."""
         blob = _vec_to_blob(embedding)
         now = datetime.now().isoformat(timespec="seconds")
-        with self._lock:
-            self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
                 """INSERT OR REPLACE INTO message_vectors
                    (message_id, embedding, dim, model, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -121,10 +116,11 @@ class VectorStore:
         """Store multiple embeddings.  Returns count stored."""
         now = datetime.now().isoformat(timespec="seconds")
         count = 0
-        with self._lock:
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
             for msg_id, vec in items:
                 blob = _vec_to_blob(vec)
-                self._conn.execute(
+                conn.execute(
                     """INSERT OR REPLACE INTO message_vectors
                        (message_id, embedding, dim, model, created_at)
                        VALUES (?, ?, ?, ?, ?)""",
@@ -157,13 +153,15 @@ class VectorStore:
         Returns list of ``{message_id, score, role, content, created_at}``
         sorted by descending final score.
         """
-        rows = self._conn.execute(
-            """SELECT mv.message_id, mv.embedding, mv.dim,
-                      m.role, m.content, m.tool_used, m.created_at,
-                      m.conversation_id
-               FROM message_vectors mv
-               JOIN messages m ON m.id = mv.message_id"""
-        ).fetchall()
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT mv.message_id, mv.embedding, mv.dim,
+                          m.role, m.content, m.tool_used, m.created_at,
+                          m.conversation_id
+                   FROM message_vectors mv
+                   JOIN messages m ON m.id = mv.message_id"""
+            ).fetchall()
 
         now_str = datetime.utcnow().isoformat()
         scored: list[tuple[float, dict]] = []
@@ -199,18 +197,22 @@ class VectorStore:
 
     def has_embedding(self, message_id: int) -> bool:
         """Check if a message already has an embedding."""
-        row = self._conn.execute(
-            "SELECT 1 FROM message_vectors WHERE message_id = ?",
-            (message_id,),
-        ).fetchone()
-        return row is not None
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM message_vectors WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            return row is not None
 
     def count(self) -> int:
         """Total number of stored embeddings."""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM message_vectors"
-        ).fetchone()
-        return row[0] if row else 0
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM message_vectors"
+            ).fetchone()
+            return row[0] if row else 0
 
     def unembedded_messages(self, limit: int = 100) -> list[dict]:
         """Find messages that don't have embeddings yet.
@@ -218,39 +220,44 @@ class VectorStore:
         Useful for backfilling embeddings on existing conversations.
         """
         # Use column names explicitly — works with or without row_factory
-        cur = self._conn.execute(
-            """SELECT m.id, m.role, m.content, m.created_at
-               FROM messages m
-               LEFT JOIN message_vectors mv ON mv.message_id = m.id
-               WHERE mv.message_id IS NULL
-                 AND m.role IN ('user', 'assistant')
-                 AND length(m.content) > 10
-               ORDER BY m.created_at DESC
-               LIMIT ?""",
-            (limit,),
-        )
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            cur = conn.execute(
+                """SELECT m.id, m.role, m.content, m.created_at
+                   FROM messages m
+                   LEFT JOIN message_vectors mv ON mv.message_id = m.id
+                   WHERE mv.message_id IS NULL
+                     AND m.role IN ('user', 'assistant')
+                     AND length(m.content) > 10
+                   ORDER BY m.created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ── Cleanup ─────────────────────────────────────────────────────────
 
     def prune_orphans(self) -> int:
         """Remove vectors whose messages don't exist anymore."""
-        with self._lock:
-            cur = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 """DELETE FROM message_vectors
                    WHERE message_id NOT IN (SELECT id FROM messages)"""
             )
-        return cur.rowcount
+            return cur.rowcount
 
     def stats(self) -> dict:
         """Quick stats for diagnostics."""
         total = self.count()
-        total_messages = self._conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE role IN ('user','assistant')"
-        ).fetchone()[0]
-        return {
-            "total_embeddings": total,
-            "total_messages": total_messages,
-            "coverage_pct": round(total / max(total_messages, 1) * 100, 1),
-        }
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            total_messages = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE role IN ('user','assistant')"
+            ).fetchone()[0]
+            return {
+                "total_embeddings": total,
+                "total_messages": total_messages,
+                "coverage_pct": round(total / max(total_messages, 1) * 100, 1),
+            }

@@ -269,34 +269,35 @@ def log_hallucination(
     try:
         from datetime import datetime
         from bantz.core.memory import memory
+        from bantz.data.connection_pool import get_pool
 
-        conn = memory._conn
-        if conn is None:
+        if not memory._initialized:
             return
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS hallucination_log ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "  timestamp TEXT NOT NULL,"
-            "  user_input TEXT,"
-            "  tool_used TEXT,"
-            "  tool_output TEXT,"
-            "  response TEXT,"
-            "  confidence REAL NOT NULL"
-            ")",
-        )
-        conn.execute(
-            "INSERT INTO hallucination_log"
-            "(timestamp, user_input, tool_used, tool_output, response, confidence) "
-            "VALUES (?,?,?,?,?,?)",
-            (
-                datetime.now().isoformat(timespec="seconds"),
-                user_input[:500],
-                tool_used,
-                tool_output[:2000],
-                response[:2000],
-                confidence,
-            ),
-        )
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS hallucination_log ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  timestamp TEXT NOT NULL,"
+                "  user_input TEXT,"
+                "  tool_used TEXT,"
+                "  tool_output TEXT,"
+                "  response TEXT,"
+                "  confidence REAL NOT NULL"
+                ")",
+            )
+            conn.execute(
+                "INSERT INTO hallucination_log"
+                "(timestamp, user_input, tool_used, tool_output, response, confidence) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    datetime.now().isoformat(timespec="seconds"),
+                    user_input[:500],
+                    tool_used,
+                    tool_output[:2000],
+                    response[:2000],
+                    confidence,
+                ),
+            )
         log.info(
             "Hallucination logged: confidence=%.2f tool=%s input=%s",
             confidence, tool_used, user_input[:80],

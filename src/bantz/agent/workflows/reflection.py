@@ -45,8 +45,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
-import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -198,16 +196,15 @@ def _data_dir():
     return config.db_path.parent
 
 
-def _get_conn_and_lock():
-    """Get the memory module's shared connection and lock."""
-    from bantz.core.memory import memory
-    return memory._conn, memory._lock
+def _get_pool():
+    """Return the shared SQLite connection pool."""
+    from bantz.data.connection_pool import get_pool
+    return get_pool()
 
 
 # ── Step 1: Collect today's session distillations ────────────────────────
 
 def _collect_today_distillations(
-    conn: sqlite3.Connection,
     date_str: str,
 ) -> list[dict]:
     """
@@ -215,61 +212,65 @@ def _collect_today_distillations(
     Read today's session distillation summaries from #118
     instead of raw messages — massive token savings.
     """
-    rows = conn.execute(
-        """SELECT sd.conversation_id, sd.summary, sd.topics,
-                  sd.decisions, sd.people, sd.tools_used,
-                  sd.exchange_count, sd.created_at
-           FROM session_distillations sd
-           WHERE sd.created_at LIKE ?
-           ORDER BY sd.created_at ASC""",
-        (f"{date_str}%",),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    pool = _get_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """SELECT sd.conversation_id, sd.summary, sd.topics,
+                      sd.decisions, sd.people, sd.tools_used,
+                      sd.exchange_count, sd.created_at
+               FROM session_distillations sd
+               WHERE sd.created_at LIKE ?
+               ORDER BY sd.created_at ASC""",
+            (f"{date_str}%",),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _collect_today_sessions_meta(
-    conn: sqlite3.Connection,
     date_str: str,
 ) -> tuple[int, int]:
     """Count today's sessions and total messages."""
-    sessions = conn.execute(
-        "SELECT COUNT(*) FROM conversations WHERE started_at LIKE ?",
-        (f"{date_str}%",),
-    ).fetchone()[0]
-    messages = conn.execute(
-        """SELECT COUNT(*) FROM messages m
-           JOIN conversations c ON c.id = m.conversation_id
-           WHERE c.started_at LIKE ?""",
-        (f"{date_str}%",),
-    ).fetchone()[0]
-    return sessions, messages
+    pool = _get_pool()
+    with pool.connection() as conn:
+        sessions = conn.execute(
+            "SELECT COUNT(*) FROM conversations WHERE started_at LIKE ?",
+            (f"{date_str}%",),
+        ).fetchone()[0]
+        messages = conn.execute(
+            """SELECT COUNT(*) FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               WHERE c.started_at LIKE ?""",
+            (f"{date_str}%",),
+        ).fetchone()[0]
+        return sessions, messages
 
 
 def _collect_undistilled_sessions(
-    conn: sqlite3.Connection,
     date_str: str,
 ) -> list[dict]:
     """Fallback: if no distillations exist, fetch raw session summaries.
 
     Returns lightweight summaries — first/last user messages only.
     """
-    rows = conn.execute(
-        """SELECT c.id as conversation_id,
-                  (SELECT GROUP_CONCAT(content, ' | ')
-                   FROM (SELECT content FROM messages
-                         WHERE conversation_id = c.id AND role = 'user'
-                         ORDER BY created_at LIMIT 3)) as user_preview,
-                  COUNT(m.id) as msg_count
-           FROM conversations c
-           LEFT JOIN messages m ON m.conversation_id = c.id
-           LEFT JOIN session_distillations sd ON sd.conversation_id = c.id
-           WHERE c.started_at LIKE ? AND sd.id IS NULL
-           GROUP BY c.id
-           HAVING msg_count > 0
-           ORDER BY c.started_at ASC""",
-        (f"{date_str}%",),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    pool = _get_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """SELECT c.id as conversation_id,
+                      (SELECT GROUP_CONCAT(content, ' | ')
+                       FROM (SELECT content FROM messages
+                             WHERE conversation_id = c.id AND role = 'user'
+                             ORDER BY created_at LIMIT 3)) as user_preview,
+                      COUNT(m.id) as msg_count
+               FROM conversations c
+               LEFT JOIN messages m ON m.conversation_id = c.id
+               LEFT JOIN session_distillations sd ON sd.conversation_id = c.id
+               WHERE c.started_at LIKE ? AND sd.id IS NULL
+               GROUP BY c.id
+               HAVING msg_count > 0
+               ORDER BY c.started_at ASC""",
+            (f"{date_str}%",),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── Step 2: LLM daily reflection ────────────────────────────────────────
@@ -593,8 +594,6 @@ async def _store_entities_to_graph(entities: list[dict]) -> int:
 # ── Step 4: Store reflection ────────────────────────────────────────────
 
 async def _store_reflection(
-    conn: sqlite3.Connection,
-    lock: threading.Lock,
     result: ReflectionResult,
 ) -> None:
     """Store reflection in KV store, vector DB, and memory."""
@@ -631,7 +630,7 @@ async def _store_reflection(
                 )
                 try:
                     store_distillation(
-                        conn, lock, -date_hash, dr,
+                        -date_hash, dr,
                         embedding=vec,
                         embed_model=embedder.model,
                     )
@@ -644,7 +643,7 @@ async def _store_reflection(
     # Log to memory
     try:
         from bantz.core.memory import memory
-        if memory._conn:
+        if memory._initialized:
             memory.add("assistant", result.summary_line(), tool_used="reflection")
     except Exception:
         pass
@@ -653,8 +652,6 @@ async def _store_reflection(
 # ── Step 5: Prune old raw messages (Rec #3: vector orphan cleanup) ───────
 
 def _prune_old_messages(
-    conn: sqlite3.Connection,
-    lock: threading.Lock,
     keep_days: int = _PRUNE_RAW_DAYS,
     dry_run: bool = False,
 ) -> tuple[int, int]:
@@ -665,17 +662,19 @@ def _prune_old_messages(
     Returns (messages_deleted, vectors_deleted).
     """
     cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
+    pool = _get_pool()
 
     # Find message IDs that will be deleted
-    rows = conn.execute(
-        """SELECT m.id FROM messages m
-           JOIN conversations c ON c.id = m.conversation_id
-           WHERE c.last_active < ?
-             AND c.id IN (
-                SELECT conversation_id FROM session_distillations
-             )""",
-        (cutoff,),
-    ).fetchall()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """SELECT m.id FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               WHERE c.last_active < ?
+                 AND c.id IN (
+                    SELECT conversation_id FROM session_distillations
+                 )""",
+            (cutoff,),
+        ).fetchall()
     msg_ids = [r[0] if isinstance(r, (tuple, list)) else r["id"] for r in rows]
 
     if dry_run:
@@ -688,7 +687,7 @@ def _prune_old_messages(
     vectors_deleted = 0
     try:
         placeholders = ",".join("?" * len(msg_ids))
-        with lock:
+        with pool.connection(write=True) as conn:
             cur = conn.execute(
                 f"DELETE FROM message_vectors WHERE message_id IN ({placeholders})",
                 msg_ids,
@@ -701,7 +700,7 @@ def _prune_old_messages(
     messages_deleted = 0
     try:
         placeholders = ",".join("?" * len(msg_ids))
-        with lock:
+        with pool.connection(write=True) as conn:
             cur = conn.execute(
                 f"DELETE FROM messages WHERE id IN ({placeholders})",
                 msg_ids,
@@ -712,7 +711,7 @@ def _prune_old_messages(
 
     # Clean up empty conversations
     try:
-        with lock:
+        with pool.connection(write=True) as conn:
             conn.execute(
                 """DELETE FROM conversations
                    WHERE last_active < ?
@@ -822,9 +821,7 @@ async def run_reflection(
         deadline = time.monotonic() + _TOTAL_TIMEOUT
 
         # ── 1. Collect today's data ──────────────────────────────────────
-        conn, lock = _get_conn_and_lock()
-
-        sessions, messages = _collect_today_sessions_meta(conn, date_str)
+        sessions, messages = _collect_today_sessions_meta(date_str)
         result.sessions = sessions
         result.total_messages = messages
 
@@ -834,7 +831,7 @@ async def run_reflection(
             log.info("🤔 Reflection: 0 sessions for %s, skipping LLM", date_str)
             # Still store the empty reflection
             if not dry_run:
-                await _store_reflection(conn, lock, result)
+                await _store_reflection(result)
             await _send_report(result, dry_run)
             return result
 
@@ -851,8 +848,8 @@ async def run_reflection(
             pass
 
         # ── 2. Hierarchical summarisation (Rec #1) ──────────────────────
-        distillations = _collect_today_distillations(conn, date_str)
-        undistilled = _collect_undistilled_sessions(conn, date_str)
+        distillations = _collect_today_distillations(date_str)
+        undistilled = _collect_undistilled_sessions(date_str)
         summaries_text = _build_summaries_text(distillations, undistilled)
 
         log.info("Reflection: %d distillations + %d undistilled for %s",
@@ -908,13 +905,13 @@ async def run_reflection(
 
         # ── 5. Store reflection ──────────────────────────────────────────
         if time.monotonic() < deadline:
-            await _store_reflection(conn, lock, result)
+            await _store_reflection(result)
 
         # ── 6. Prune old raw messages + vectors (Rec #3) ────────────────
         if time.monotonic() < deadline:
             try:
                 result.raw_pruned, result.vectors_pruned = _prune_old_messages(
-                    conn, lock, keep_days=_PRUNE_RAW_DAYS,
+                    keep_days=_PRUNE_RAW_DAYS,
                 )
             except Exception as exc:
                 log.debug("Pruning failed: %s", exc)

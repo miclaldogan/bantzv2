@@ -29,7 +29,6 @@ import gzip
 import logging
 import os
 import shutil
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -319,9 +318,9 @@ async def _step_service_health(dry_run: bool) -> StepResult:
     try:
         db_path = _data_dir() / "bantz.db"
         if db_path.exists():
-            conn = sqlite3.connect(str(db_path))
-            row = conn.execute("PRAGMA integrity_check").fetchone()
-            conn.close()
+            from bantz.data.connection_pool import get_pool
+            with get_pool(str(db_path)).connection() as conn:
+                row = conn.execute("PRAGMA integrity_check").fetchone()
             if row and row[0] == "ok":
                 checks.append("DB ✓")
             else:
@@ -416,7 +415,7 @@ async def _step_report(report: MaintenanceReport) -> StepResult:
     # ── Log to memory ────────────────────────────────────────────────
     try:
         from bantz.core.memory import memory
-        if memory._conn:
+        if memory._initialized:
             memory.add("assistant", summary, tool_used="maintenance")
     except Exception:
         pass

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
@@ -90,35 +89,35 @@ class MoodHistory:
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self._db_path = db_path
-        self._conn: Optional[sqlite3.Connection] = None
-        self._lock = threading.Lock()
+        self._initialized = False
 
     def init(self, db_path: Path) -> None:
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False,
-                                     isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS mood_history (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                mood       TEXT NOT NULL,
-                prev_mood  TEXT NOT NULL,
-                reason     TEXT NOT NULL DEFAULT '',
-                cpu_pct    REAL NOT NULL DEFAULT 0,
-                ram_pct    REAL NOT NULL DEFAULT 0,
-                activity   TEXT NOT NULL DEFAULT '',
-                timestamp  TEXT NOT NULL
-            )
-        """)
-        self._conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_mood_ts
-                ON mood_history(timestamp)
-        """)
+        from bantz.data.connection_pool import get_pool
+        pool = get_pool(str(db_path))
+        with pool.connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mood_history (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mood       TEXT NOT NULL,
+                    prev_mood  TEXT NOT NULL,
+                    reason     TEXT NOT NULL DEFAULT '',
+                    cpu_pct    REAL NOT NULL DEFAULT 0,
+                    ram_pct    REAL NOT NULL DEFAULT 0,
+                    activity   TEXT NOT NULL DEFAULT '',
+                    timestamp  TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mood_ts
+                    ON mood_history(timestamp)
+            """)
+        self._initialized = True
 
     @property
     def initialized(self) -> bool:
-        return self._conn is not None
+        return self._initialized
 
     def log_transition(
         self,
@@ -130,18 +129,19 @@ class MoodHistory:
         activity: str = "",
     ) -> None:
         """Record a mood transition."""
-        if not self._conn:
+        if not self._initialized:
             return
         now = datetime.now().isoformat()
-        with self._lock:
-            self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
                 """INSERT INTO mood_history
                        (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (mood.value, prev_mood.value, reason, cpu_pct, ram_pct, activity, now),
             )
             # Prune old entries beyond rolling window
-            self._conn.execute(
+            conn.execute(
                 """DELETE FROM mood_history WHERE id NOT IN (
                        SELECT id FROM mood_history ORDER BY id DESC LIMIT ?
                    )""",
@@ -150,22 +150,26 @@ class MoodHistory:
 
     def recent(self, hours: int = 24) -> list[dict]:
         """Get mood transitions from the last N hours."""
-        if not self._conn:
+        if not self._initialized:
             return []
         cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
-        rows = self._conn.execute(
-            """SELECT mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp
-               FROM mood_history WHERE timestamp >= ? ORDER BY timestamp""",
-            (cutoff,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp
+                   FROM mood_history WHERE timestamp >= ? ORDER BY timestamp""",
+                (cutoff,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def count(self) -> int:
         """Total entries in the log."""
-        if not self._conn:
+        if not self._initialized:
             return 0
-        row = self._conn.execute("SELECT COUNT(*) FROM mood_history").fetchone()
-        return row[0] if row else 0
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM mood_history").fetchone()
+            return row[0] if row else 0
 
     def summary_24h(self) -> dict[str, float]:
         """Time spent in each mood over the last 24 hours (in minutes)."""

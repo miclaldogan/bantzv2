@@ -22,7 +22,6 @@ Architecture:
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
 import time
 from collections import deque
@@ -129,79 +128,89 @@ class InterventionLog:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
+        self._initialized = False
 
     def init(self, db_path: str | Any) -> None:
-        self._conn = sqlite3.connect(str(db_path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(self._CREATE_SQL)
-        self._conn.commit()
+        from bantz.data.connection_pool import get_pool
+        pool = get_pool(str(db_path))
+        with pool.connection(write=True) as conn:
+            conn.execute(self._CREATE_SQL)
+        self._initialized = True
 
     def record(self, iv: Intervention) -> None:
         """Log an intervention and its outcome."""
-        if not self._conn:
+        if not self._initialized:
             return
-        cur = self._conn.execute(
-            """INSERT INTO intervention_log
-               (type, priority, title, reason, source, action,
-                state_key, outcome, ttl, created_at, responded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                iv.type.value,
-                iv.priority.value,
-                iv.title,
-                iv.reason,
-                iv.source,
-                iv.action,
-                iv.state_key,
-                iv.outcome.value,
-                iv.ttl,
-                iv.created_at,
-                iv.responded_at,
-            ),
-        )
-        iv.id = cur.lastrowid or 0
-        self._conn.commit()
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
+                """INSERT INTO intervention_log
+                   (type, priority, title, reason, source, action,
+                    state_key, outcome, ttl, created_at, responded_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    iv.type.value,
+                    iv.priority.value,
+                    iv.title,
+                    iv.reason,
+                    iv.source,
+                    iv.action,
+                    iv.state_key,
+                    iv.outcome.value,
+                    iv.ttl,
+                    iv.created_at,
+                    iv.responded_at,
+                ),
+            )
+            iv.id = cur.lastrowid or 0
 
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return the most recent logged interventions."""
-        if not self._conn:
+        if not self._initialized:
             return []
-        cur = self._conn.execute(
-            "SELECT * FROM intervention_log ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        )
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            cur = conn.execute(
+                "SELECT * FROM intervention_log ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     def total(self) -> int:
-        if not self._conn:
+        if not self._initialized:
             return 0
-        cur = self._conn.execute("SELECT COUNT(*) FROM intervention_log")
-        return cur.fetchone()[0]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            cur = conn.execute("SELECT COUNT(*) FROM intervention_log")
+            return cur.fetchone()[0]
 
     def outcome_counts(self) -> dict[str, int]:
         """Breakdown of outcomes."""
-        if not self._conn:
+        if not self._initialized:
             return {}
-        cur = self._conn.execute(
-            "SELECT outcome, COUNT(*) FROM intervention_log GROUP BY outcome"
-        )
-        return dict(cur.fetchall())
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            cur = conn.execute(
+                "SELECT outcome, COUNT(*) FROM intervention_log GROUP BY outcome"
+            )
+            return dict(cur.fetchall())
 
     def acceptance_rate(self) -> float:
         """Fraction of interventions that were accepted (excludes pending)."""
-        if not self._conn:
+        if not self._initialized:
             return 0.0
-        cur = self._conn.execute(
-            "SELECT COUNT(*) FROM intervention_log WHERE outcome = 'accepted'"
-        )
-        accepted = cur.fetchone()[0]
-        cur2 = self._conn.execute(
-            "SELECT COUNT(*) FROM intervention_log WHERE outcome != 'pending'"
-        )
-        total = cur2.fetchone()[0]
-        return round(accepted / total, 3) if total else 0.0
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM intervention_log WHERE outcome = 'accepted'"
+            )
+            accepted = cur.fetchone()[0]
+            cur2 = conn.execute(
+                "SELECT COUNT(*) FROM intervention_log WHERE outcome != 'pending'"
+            )
+            total = cur2.fetchone()[0]
+            return round(accepted / total, 3) if total else 0.0
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -211,9 +220,7 @@ class InterventionLog:
         }
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._initialized = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
