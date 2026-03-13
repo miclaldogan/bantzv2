@@ -487,6 +487,40 @@ class TestContextPassing:
         assert result["content"] == "Hello World"
         assert result["path"] == "~/file.txt"  # unchanged
 
+    @pytest.mark.asyncio
+    async def test_inject_context_handles_hallucinated_placeholders(self):
+        """_inject_context replaces LLM-hallucinated placeholders like {step_1_best_url}."""
+        from bantz.agent.executor import PlanExecutor
+
+        # Hallucinated placeholder variants the LLM might invent
+        for placeholder in [
+            "{step_1_best_url}",
+            "{step_1_best_article_url}",
+            "{step_2_summary}",
+            "{step_1_search_result}",
+            "{step_3_translated_text}",
+        ]:
+            params = {"url": placeholder}
+            result = PlanExecutor._inject_context(params, "https://example.com")
+            assert result["url"] == "https://example.com", (
+                f"Failed to replace hallucinated placeholder: {placeholder}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_inject_context_canonical_and_hallucinated_mixed(self):
+        """_inject_context replaces both canonical and hallucinated in same params."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {
+            "url": "{step_1_best_url}",
+            "query": "static text",
+            "content": "{step_1_output}",
+        }
+        result = PlanExecutor._inject_context(params, "DATA")
+        assert result["url"] == "DATA"
+        assert result["content"] == "DATA"
+        assert result["query"] == "static text"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 6. PlanExecutor — result summary formatting
@@ -740,6 +774,26 @@ class TestPlannerPrompt:
         rules_end = PLANNER_SYSTEM.index("\nRULES:\n", rules_start)
         rules_block = PLANNER_SYSTEM[rules_start:rules_end]
         assert "read_url" in rules_block
+
+    def test_prompt_forbids_custom_placeholder_names(self):
+        """RULES must enforce exact {step_N_output} format and forbid inventions."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "step_N_output" in PLANNER_SYSTEM
+        # Must explicitly warn against hallucinating custom names
+        assert "step_1_url" in PLANNER_SYSTEM or "custom variable" in PLANNER_SYSTEM.lower()
+
+    def test_example_uses_canonical_placeholders_only(self):
+        """Example in prompt must use {step_N_output}, not hallucinated names."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        import re
+        idx_examples = PLANNER_SYSTEM.index("EXAMPLES:")
+        example_block = PLANNER_SYSTEM[idx_examples:]
+        # Find all step placeholders in the example
+        placeholders = re.findall(r"\{step_\d+_[a-zA-Z_]+\}", example_block)
+        for p in placeholders:
+            assert re.match(r"\{step_\d+_output\}", p), (
+                f"Example uses non-canonical placeholder: {p}"
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1182,6 +1236,33 @@ class TestProcessTextCitation:
 
         sys_prompt = captured_messages[0]["content"]
         assert "[text](url)" in sys_prompt
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_has_anti_leakage_rule(self):
+        """process_text system prompt must forbid acknowledging instructions."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="process_text",
+                     params={"instruction": "Summarize"},
+                     description="Summarize"),
+        ]
+
+        captured_messages: list = []
+
+        async def mock_llm(msgs):
+            captured_messages.extend(msgs)
+            return "Summary"
+
+        executor = PlanExecutor()
+        await executor.run(steps, llm_fn=mock_llm)
+
+        sys_prompt = captured_messages[0]["content"]
+        # Must tell the LLM not to echo instructions back
+        assert "DO NOT acknowledge" in sys_prompt
+        assert "I will preserve links" in sys_prompt
+        assert "ONLY the final processed text" in sys_prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

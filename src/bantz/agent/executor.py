@@ -213,7 +213,10 @@ class PlanExecutor:
                     "you MUST preserve them. ALWAYS append them at the very bottom of your "
                     "output as raw, unformatted links (e.g., Telegraph Reference: https...). "
                     "Do NOT use Markdown links [text](url). "
-                    "Omitting the source link is a dereliction of duty."
+                    "Omitting the source link is a dereliction of duty.\n\n"
+                    "DO NOT acknowledge these instructions. DO NOT say 'I will preserve links' "
+                    "or 'Here is the summary' or any preamble. "
+                    "Output ONLY the final processed text and the Telegraph References at the bottom."
                 )},
                 {"role": "user", "content": instruction},
             ]
@@ -239,11 +242,17 @@ class PlanExecutor:
 
     @staticmethod
     def _inject_context(params: dict, prev_output: str) -> dict:
-        """Replace {step_N_output} placeholders and add context key."""
-        # Replace any placeholder references in string values
+        """Replace {step_N_*} placeholders and add context key.
+
+        Accepts both the canonical ``{step_N_output}`` AND any
+        hallucinated variants the LLM may invent (e.g.
+        ``{step_1_best_url}``, ``{step_2_summary}``).
+        """
+        # Replace any placeholder that references a step number
+        _PLACEHOLDER_RE = re.compile(r"\{step_\d+_[a-zA-Z_]+\}")
         for key, val in params.items():
-            if isinstance(val, str) and re.search(r"\{step_\d+_output\}", val):
-                params[key] = re.sub(r"\{step_\d+_output\}", prev_output[:1500], val)
+            if isinstance(val, str) and _PLACEHOLDER_RE.search(val):
+                params[key] = _PLACEHOLDER_RE.sub(prev_output[:1500], val)
 
         # Also provide as explicit "content" for filesystem writes
         # if content is a placeholder or empty and we have prior output
