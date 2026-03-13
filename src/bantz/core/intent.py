@@ -43,6 +43,7 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - classroom: {{"action": "assignments|due_today"}}
 - filesystem: {{"path": "<file path>", "action": "read|write|create_folder_and_file", "folder_path": "~/path/to/folder", "file_name": "file.txt", "content": "..."}}
 - document: {{"path": "<file path>", "action": "summarize|read|ask", "question": "..."}}
+- read_url: {{"url": "https://..."}} — fetch and read the full text of a webpage
 
 CHAIN OF THOUGHT — follow ALL three steps before deciding:
 
@@ -66,6 +67,7 @@ ROUTING RULES:
 - classroom:  assignments, homework, deadlines, courses
 - filesystem: read/write a specific file, or create a folder+file atomically (use create_folder_and_file when user wants both)
 - document:   summarize or analyze PDF/TXT/MD/DOCX
+- read_url:   fetch and read full content of a specific URL
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 
 CRITICAL:

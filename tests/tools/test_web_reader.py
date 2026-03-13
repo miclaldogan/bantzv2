@@ -1,0 +1,263 @@
+"""Tests for Web Reader tool (Plan A: Deep Reading) and Issue #182 citations.
+
+Covers:
+  1. HTML stripping — scripts, styles, tags removed
+  2. Text truncation at MAX_TEXT_LENGTH
+  3. URL validation (missing, invalid)
+  4. HTTP error handling
+  5. Telegraph Reference footer appended
+  6. Tool registered in registry
+"""
+from __future__ import annotations
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from bantz.tools import ToolResult
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. HTML stripping
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestHTMLStripping:
+    """strip_html must remove tags, scripts, styles and collapse whitespace."""
+
+    def test_strips_basic_tags(self):
+        from bantz.tools.web_reader import strip_html
+        assert strip_html("<p>Hello <b>World</b></p>") == "Hello World"
+
+    def test_strips_script_tags(self):
+        from bantz.tools.web_reader import strip_html
+        html = "<p>Before</p><script>alert('xss')</script><p>After</p>"
+        result = strip_html(html)
+        assert "alert" not in result
+        assert "Before" in result
+        assert "After" in result
+
+    def test_strips_style_tags(self):
+        from bantz.tools.web_reader import strip_html
+        html = "<style>body{color:red}</style><p>Content</p>"
+        result = strip_html(html)
+        assert "color" not in result
+        assert "Content" in result
+
+    def test_strips_noscript_and_svg(self):
+        from bantz.tools.web_reader import strip_html
+        html = "<noscript>Enable JS</noscript><svg><path/></svg><p>OK</p>"
+        result = strip_html(html)
+        assert "Enable JS" not in result
+        assert "OK" in result
+
+    def test_strips_head_content(self):
+        from bantz.tools.web_reader import strip_html
+        html = "<html><head><title>Test</title><meta charset='utf-8'></head><body><p>Body</p></body></html>"
+        result = strip_html(html)
+        assert "Test" not in result
+        assert "Body" in result
+
+    def test_collapses_whitespace(self):
+        from bantz.tools.web_reader import strip_html
+        html = "<p>  Lots   of   spaces  </p>"
+        result = strip_html(html)
+        assert result == "Lots of spaces"
+
+    def test_empty_html(self):
+        from bantz.tools.web_reader import strip_html
+        assert strip_html("") == ""
+
+    def test_plain_text_passthrough(self):
+        from bantz.tools.web_reader import strip_html
+        assert strip_html("Just plain text") == "Just plain text"
+
+    def test_nested_invisible_tags(self):
+        """Nested script inside style — all content hidden."""
+        from bantz.tools.web_reader import strip_html
+        html = "<style><script>inner</script>css</style><p>Visible</p>"
+        result = strip_html(html)
+        assert "inner" not in result
+        assert "css" not in result
+        assert "Visible" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. WebReaderTool.execute — success paths
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWebReaderExecution:
+    """WebReaderTool.execute fetches, strips, truncates, and cites."""
+
+    @pytest.mark.asyncio
+    async def test_fetches_and_strips_html(self):
+        from bantz.tools.web_reader import WebReaderTool
+
+        mock_resp = MagicMock()
+        mock_resp.text = "<html><body><p>Article content here</p></body></html>"
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://example.com/article")
+
+        assert result.success is True
+        assert "Article content here" in result.output
+        assert "Telegraph Reference: https://example.com/article" in result.output
+
+    @pytest.mark.asyncio
+    async def test_truncates_long_content(self):
+        from bantz.tools.web_reader import WebReaderTool, MAX_TEXT_LENGTH
+
+        long_text = "A" * 20_000
+        mock_resp = MagicMock()
+        mock_resp.text = f"<p>{long_text}</p>"
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://example.com/long")
+
+        assert result.success is True
+        assert result.data["truncated"] is True
+        # Output = truncated text + "\n\nTelegraph Reference: ..."
+        text_part = result.output.split("\n\nTelegraph Reference:")[0]
+        assert len(text_part) <= MAX_TEXT_LENGTH
+
+    @pytest.mark.asyncio
+    async def test_telegraph_reference_footer(self):
+        """Output must end with 'Telegraph Reference: <url>'."""
+        from bantz.tools.web_reader import WebReaderTool
+
+        mock_resp = MagicMock()
+        mock_resp.text = "<p>Some content</p>"
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://example.com/page")
+
+        assert result.output.rstrip().endswith("Telegraph Reference: https://example.com/page")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. WebReaderTool.execute — error paths
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWebReaderErrors:
+    """Error handling for invalid URLs, missing params, HTTP failures."""
+
+    @pytest.mark.asyncio
+    async def test_no_url(self):
+        from bantz.tools.web_reader import WebReaderTool
+        result = await WebReaderTool().execute()
+        assert result.success is False
+        assert "No URL" in result.error
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_scheme(self):
+        from bantz.tools.web_reader import WebReaderTool
+        result = await WebReaderTool().execute(url="ftp://bad.example.com")
+        assert result.success is False
+        assert "Invalid URL" in result.error
+
+    @pytest.mark.asyncio
+    async def test_http_error(self):
+        import httpx
+        from bantz.tools.web_reader import WebReaderTool
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=mock_resp
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://example.com/missing")
+
+        assert result.success is False
+        assert "404" in result.error
+
+    @pytest.mark.asyncio
+    async def test_network_exception(self):
+        from bantz.tools.web_reader import WebReaderTool
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=ConnectionError("DNS resolution failed"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://unreachable.example.com")
+
+        assert result.success is False
+        assert "Failed to fetch" in result.error
+
+    @pytest.mark.asyncio
+    async def test_empty_page_content(self):
+        """Page returns only scripts/styles with no readable text."""
+        from bantz.tools.web_reader import WebReaderTool
+
+        mock_resp = MagicMock()
+        mock_resp.text = "<html><script>var x=1;</script><style>body{}</style></html>"
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        tool = WebReaderTool()
+        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+            result = await tool.execute(url="https://example.com/empty")
+
+        assert result.success is True
+        assert "no readable text" in result.output.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. Tool registration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWebReaderRegistration:
+    """read_url must be registered in the global tool registry."""
+
+    def test_tool_is_registered(self):
+        from bantz.tools.web_reader import registry
+        tool = registry.get("read_url")
+        assert tool is not None
+        assert tool.name == "read_url"
+
+    def test_tool_schema(self):
+        from bantz.tools.web_reader import registry
+        tool = registry.get("read_url")
+        schema = tool.schema()
+        assert schema["name"] == "read_url"
+        assert "URL" in schema["description"] or "url" in schema["description"].lower()
+        assert schema["risk_level"] == "safe"

@@ -271,6 +271,7 @@ class Brain:
         import bantz.tools.weather      # noqa: F401
         import bantz.tools.news         # noqa: F401
         import bantz.tools.web_search   # noqa: F401
+        import bantz.tools.web_reader   # noqa: F401
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
