@@ -220,6 +220,34 @@ class TestDecomposition:
         assert steps[1].tool == "process_text"
         assert steps[1].depends_on == 1
         assert steps[2].depends_on == 2
+
+    @pytest.mark.asyncio
+    async def test_read_url_step_not_filtered(self):
+        """Steps with tool='read_url' must NOT be filtered out."""
+        from bantz.agent.planner import PlannerAgent
+
+        llm_response = json.dumps([
+            {"step": 1, "tool": "web_search", "params": {"query": "AI"},
+             "description": "Search", "depends_on": None},
+            {"step": 2, "tool": "read_url",
+             "params": {"url": "https://example.com/article"},
+             "description": "Read full article", "depends_on": 1},
+            {"step": 3, "tool": "process_text",
+             "params": {"instruction": "Summarize: {step_2_output}"},
+             "description": "Summarize", "depends_on": 2},
+        ])
+
+        agent = PlannerAgent()
+        with patch("bantz.agent.planner.ollama") as mock_llm:
+            mock_llm.chat = AsyncMock(return_value=llm_response)
+            steps = await agent.decompose(
+                "search AI, read the article, summarize",
+                ["web_search", "filesystem"],
+            )
+
+        assert len(steps) == 3
+        assert steps[1].tool == "read_url"
+        assert steps[1].depends_on == 1
         """LLM returns garbage → empty list, no crash."""
         from bantz.agent.planner import PlannerAgent
 
@@ -634,14 +662,32 @@ class TestPlannerPrompt:
         assert "summarize" in PLANNER_SYSTEM.lower()
 
     def test_example_uses_three_step_flow(self):
-        """The examples must show web_search → process_text → filesystem."""
+        """The examples must show web_search → read_url → process_text → filesystem (4-step)."""
         from bantz.agent.planner import PLANNER_SYSTEM
         # process_text must appear in the example section
         idx_examples = PLANNER_SYSTEM.index("EXAMPLES:")
         example_block = PLANNER_SYSTEM[idx_examples:]
         assert "process_text" in example_block
-        assert "step_1_output" in example_block
+        assert "read_url" in example_block
         assert "step_2_output" in example_block
+        assert "step_3_output" in example_block
+
+    def test_prompt_has_read_url_tool(self):
+        """TOOL REFERENCE must include read_url."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "read_url" in PLANNER_SYSTEM
+        assert "full text" in PLANNER_SYSTEM.lower() or "full content" in PLANNER_SYSTEM.lower()
+
+    def test_prompt_has_deep_reading_rule(self):
+        """CRITICAL TOOL RULES must mention read_url for thorough research."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "read_url" in PLANNER_SYSTEM
+        # The rule about using read_url for full article text
+        rules_start = PLANNER_SYSTEM.index("CRITICAL TOOL RULES")
+        # Find the next section header after CRITICAL TOOL RULES
+        rules_end = PLANNER_SYSTEM.index("\nRULES:\n", rules_start)
+        rules_block = PLANNER_SYSTEM[rules_start:rules_end]
+        assert "read_url" in rules_block
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -869,6 +915,66 @@ class TestProcessTextVirtualTool:
         # filesystem got the LLM summary
         assert file_params["content"] == summary_output
 
+    @pytest.mark.asyncio
+    async def test_four_step_deep_research_flow(self):
+        """Full 4-step: web_search → read_url → process_text → filesystem."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="web_search",
+                     params={"query": "quantum computing"},
+                     description="Search for articles"),
+            PlanStep(step=2, tool="read_url",
+                     params={"url": "https://example.com/quantum"},
+                     description="Read full article", depends_on=1),
+            PlanStep(step=3, tool="process_text",
+                     params={"instruction": "Summarize: {step_2_output}"},
+                     description="Summarize the article", depends_on=2),
+            PlanStep(step=4, tool="filesystem",
+                     params={"action": "write", "path": "~/summary.txt",
+                             "content": "{step_3_output}"},
+                     description="Save summary", depends_on=3),
+        ]
+
+        article_text = "Full article about quantum computing...\n\nTelegraph Reference: https://example.com/quantum"
+        summary_output = "Summary of quantum computing.\n\nTelegraph Reference: https://example.com/quantum"
+        file_params: dict = {}
+
+        mock_search = AsyncMock(return_value=ToolResult(
+            success=True, output="1. Quantum Article\n   URL: https://example.com/quantum"))
+        mock_reader = AsyncMock(return_value=ToolResult(
+            success=True, output=article_text))
+        mock_llm = AsyncMock(return_value=summary_output)
+
+        async def mock_fs_execute(**kwargs):
+            file_params.update(kwargs)
+            return ToolResult(success=True, output="File written")
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_fs = MagicMock()
+            mock_fs.execute = mock_fs_execute
+            def _get(name):
+                if name == "web_search":
+                    return MagicMock(execute=mock_search)
+                if name == "read_url":
+                    return MagicMock(execute=mock_reader)
+                if name == "filesystem":
+                    return mock_fs
+                return None
+            mock_reg.get = _get
+
+            result = await executor.run(steps, llm_fn=mock_llm)
+
+        assert result.all_success is True
+        assert result.succeeded == 4
+        # process_text received the full article text (from read_url)
+        llm_call_msgs = mock_llm.call_args[0][0]
+        assert "quantum computing" in llm_call_msgs[1]["content"].lower()
+        # filesystem received the summary with citation preserved
+        assert "Telegraph Reference" in file_params["content"]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 11. Brain integration — process_text with LLM wiring
@@ -964,3 +1070,87 @@ class TestBrainProcessTextIntegration:
         tool_names = call_args[1]
         assert "process_text" in tool_names
         assert "web_search" in tool_names
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. process_text citation preservation (#182)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestProcessTextCitation:
+    """process_text system prompt must enforce Telegraph Reference preservation."""
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_has_citation_rule(self):
+        """The system prompt sent to LLM must mention Telegraph References."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="process_text",
+                     params={"instruction": "Summarize this text"},
+                     description="Summarize"),
+        ]
+
+        captured_messages: list = []
+
+        async def mock_llm(msgs):
+            captured_messages.extend(msgs)
+            return "Summary here"
+
+        executor = PlanExecutor()
+        await executor.run(steps, llm_fn=mock_llm)
+
+        # System prompt must contain citation rule
+        sys_prompt = captured_messages[0]["content"]
+        assert "Telegraph Reference" in sys_prompt
+        assert "dereliction of duty" in sys_prompt
+        assert "Markdown" in sys_prompt  # no markdown links rule
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_forbids_markdown_links(self):
+        """Citation rule must explicitly forbid Markdown link syntax."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="process_text",
+                     params={"instruction": "Summarize"},
+                     description="Summarize"),
+        ]
+
+        captured_messages: list = []
+
+        async def mock_llm(msgs):
+            captured_messages.extend(msgs)
+            return "Summary"
+
+        executor = PlanExecutor()
+        await executor.run(steps, llm_fn=mock_llm)
+
+        sys_prompt = captured_messages[0]["content"]
+        assert "[text](url)" in sys_prompt
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. read_url in _TOOL_KEYWORDS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestReadUrlKeywords:
+    """read_url keywords for complexity detection."""
+
+    def _agent(self):
+        from bantz.agent.planner import PlannerAgent
+        return PlannerAgent()
+
+    def test_read_url_keywords_in_dict(self):
+        from bantz.agent.planner import _TOOL_KEYWORDS
+        assert "read_url" in _TOOL_KEYWORDS
+        assert any("read" in kw for kw in _TOOL_KEYWORDS["read_url"])
+
+    def test_open_link_and_save_is_complex(self):
+        """'open link and save' → complex (read_url + filesystem)."""
+        assert self._agent().is_complex(
+            "open link https://example.com and save the full article to a file"
+        ) is True

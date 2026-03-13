@@ -45,11 +45,13 @@ TOOL REFERENCE:
 - news: get headlines. Params: {{"source": "all|hn"}}
 - system: check CPU/RAM/disk. Params: {{"metric": "all|cpu|ram|disk"}}
 - document: summarize/read a document. Params: {{"path": "...", "action": "summarize|read|ask", "question": "..."}}
+- read_url: fetch and read the full text content of a specific URL/webpage. Params: {{"url": "https://..."}}
 - process_text: summarize, analyze, rewrite, or transform text from a previous step. Params: {{"instruction": "Summarize the following: {{step_N_output}}"}}
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
 - If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `process_text` tool. Put your exact instructions (e.g., "Summarize the following: {{step_1_output}}") in the "instruction" param.
+- When the user wants a THOROUGH research report (not just snippets), use `web_search` first, then `read_url` to fetch the full article text from the best URL, then `process_text` to summarize.
 
 RULES:
 1. Each step must use exactly ONE tool.
@@ -71,8 +73,9 @@ EXAMPLES:
 User: "Search for 3 articles about quantum computing, summarize them, and save to a file"
 [
   {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing articles 2024"}}, "description": "Search for quantum computing articles", "depends_on": null}},
-  {{"step": 2, "tool": "process_text", "params": {{"instruction": "Summarize the following search results into a concise report: {{step_1_output}}"}}, "description": "Summarize the search results", "depends_on": 1}},
-  {{"step": 3, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_2_output}}"}}, "description": "Save the summary to a file", "depends_on": 2}}
+  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_best_url}}"}}, "description": "Read the full text from the best search result", "depends_on": 1}},
+  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize the following article into a concise report. Preserve any source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the full article text", "depends_on": 2}},
+  {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -106,6 +109,7 @@ _TOOL_KEYWORDS: dict[str, list[str]] = {
     "system": ["cpu", "ram", "memory", "disk", "system status"],
     "shell": ["run command", "terminal", "bash"],
     "document": ["pdf", "document"],
+    "read_url": ["read url", "read page", "open link", "fetch page", "full article", "full text"],
     "process_text": ["summarize", "analyze", "rewrite", "translate", "transform"],
 }
 
@@ -217,7 +221,7 @@ class PlannerAgent:
             ))
 
         # Validate: each step must reference a known tool or virtual tool
-        _virtual_tools = {"process_text"}
+        _virtual_tools = {"process_text", "read_url"}
         allowed = set(tool_names) | _virtual_tools
         valid_steps = [s for s in steps if s.tool in allowed]
         if len(valid_steps) < len(steps):

@@ -206,7 +206,15 @@ class PlanExecutor:
             )
         try:
             messages = [
-                {"role": "system", "content": "You are a helpful text-processing assistant. Follow the user's instruction precisely."},
+                {"role": "system", "content": (
+                    "You are a helpful text-processing assistant. "
+                    "Follow the user's instruction precisely.\n\n"
+                    "CRITICAL: If the input text contains 'Telegraph References' or URLs, "
+                    "you MUST preserve them. ALWAYS append them at the very bottom of your "
+                    "output as raw, unformatted links (e.g., Telegraph Reference: https...). "
+                    "Do NOT use Markdown links [text](url). "
+                    "Omitting the source link is a dereliction of duty."
+                )},
                 {"role": "user", "content": instruction},
             ]
             llm_output = await llm_fn(messages)

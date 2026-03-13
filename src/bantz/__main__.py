@@ -686,6 +686,7 @@ async def _doctor() -> None:
     import bantz.tools.filesystem
     import bantz.tools.weather
     import bantz.tools.news
+    import bantz.tools.web_reader
     import bantz.tools.gmail
     import bantz.tools.calendar
     import bantz.tools.classroom
