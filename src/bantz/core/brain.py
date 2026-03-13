@@ -101,39 +101,25 @@ def _detect_feedback(raw_input: str) -> str | None:
     return None
 
 
-# ── Toast notification hook (#137) ──────────────────────────────────
-# Set by the TUI app on mount: ``brain_mod._toast_callback = app._on_brain_toast``
-_toast_callback = None
+# ── Toast notification hook (#137 → #225 notification_manager) ───────
+# Canonical implementation now lives in ``notification_manager.py``.
+# We keep ``_toast_callback`` and ``_notify_toast`` here as **thin
+# backward-compat shims** so that ``brain_mod._toast_callback = cb``
+# and ``brain_mod._notify_toast(…)`` still work for existing callers
+# (app.py, tests).  New code should import from notification_manager.
+import bantz.core.notification_manager as _notif_mod
+
+_toast_callback = None  # ← compat: written by app.py / tests
 
 
 def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> None:
-    """Push a toast notification to the TUI from brain / background context.
+    """Compat shim → ``notification_manager.notify_toast``.
 
-    Uses the same ``App.current`` pattern as ollama._notify_health (#136).
-    Falls back to the callback if set, then desktop notify-send, or does nothing.
+    Syncs the local ``_toast_callback`` into the canonical module before
+    delegating, so old ``brain_mod._toast_callback = cb`` callers work.
     """
-    if _toast_callback:
-        try:
-            _toast_callback(title, reason, toast_type)
-            return
-        except Exception:
-            pass
-    # Fallback: try App.current directly
-    try:
-        from textual.app import App as _App
-        app = _App.current
-        if app and hasattr(app, "push_toast"):
-            app.call_from_thread(app.push_toast, title, reason, toast_type)
-            return
-    except Exception:
-        pass
-    # Fallback: desktop notification via notify-send (#153)
-    try:
-        from bantz.agent.notifier import notifier
-        if notifier.enabled:
-            notifier.send(f"Bantz: {title}", reason or "")
-    except Exception:
-        pass
+    _notif_mod.toast_callback = _toast_callback
+    _notif_mod.notify_toast(title, reason, toast_type)
 
 
 def _style_hint() -> str:
@@ -607,40 +593,12 @@ class Brain:
         except Exception:
             pass  # never crash the pipeline
 
-    async def _check_intervention_queue(self) -> str | None:
-        """[Deprecated — #137] Queue is now consumed by TUI toast system.
-
-        Kept for backward compat in case headless mode needs it.
-        """
-        try:
-            from bantz.agent.interventions import intervention_queue
-            iv = intervention_queue.pop()
-            if iv is None:
-                return None
-            return f"💡 [{iv.source}] {iv.title}\n   {iv.reason}"
-        except Exception:
-            return None
-
-    def _prepend_intervention(self, response: str) -> str:
-        """[Deprecated — #137] Toast system renders interventions separately.
-
-        Kept for backward compat in case headless mode needs it.
-        """
-        iv = getattr(self, "_pending_intervention", None)
-        if iv:
-            self._pending_intervention = None
-            return f"{iv}\n\n{response}"
-        return response
-
     def _push_toast(
         self, title: str, reason: str = "", toast_type: str = "info",
     ) -> None:
-        """Push a toast notification from brain context (#137).
-
-        Delegates to the module-level ``_notify_toast()`` which routes
-        to the TUI via callback or App.current.
-        """
-        _notify_toast(title, reason, toast_type)
+        """Push a toast notification (#137 → #225 notification_manager)."""
+        from bantz.core.notification_manager import push_toast
+        push_toast(title, reason, toast_type)
 
     # ── Maintenance & Reflection handlers (#129, #130) ────────────────
 
@@ -720,91 +678,24 @@ class Brain:
         return BrainResult(response=resp, tool_used="planner")
 
     async def _handle_location(self) -> str:
-        """Handle 'where am i' queries — show GPS/location info."""
-        from bantz.core.location import location_service
-        from bantz.core.places import places as _places
-
-        # Check phone GPS first — it's the most accurate source
-        gps_loc = None
-        try:
-            from bantz.core.gps_server import gps_server
-            gps_loc = gps_server.latest
-        except Exception:
-            pass
-
-        try:
-            loc = await location_service.get()
-        except Exception:
-            loc = None
-
-        lines: list[str] = []
-
-        # Show current named place first if any
-        cur_label = _places.current_place_label()
-        if cur_label:
-            lines.append(f"📌 You're at: {cur_label}")
-
-        # Prefer phone GPS as primary when available
-        if gps_loc:
-            acc = round(gps_loc.get("accuracy", 0))
-            lines.append(f"📍 Phone GPS: {gps_loc['lat']:.6f}, {gps_loc['lon']:.6f} (±{acc}m)")
-        elif loc and loc.is_live:
-            lines.append(f"📍 {loc.display}")
-            if loc.lat and loc.lon:
-                lines.append(f"   Coordinates: {loc.lat:.6f}, {loc.lon:.6f}")
-            lines.append(f"   Source: {loc.source}")
-        else:
-            lines.append(
-                "I can't pinpoint where you are right now — "
-                "I need your phone GPS to figure that out."
-            )
-            try:
-                from bantz.core.gps_server import gps_server
-                lines.append(
-                    f"Open {gps_server.url} on your phone and "
-                    f"hit 'Share Location' so I can see where you are."
-                )
-            except Exception:
-                pass
-
-        return "\n".join(lines)
+        """Delegate to location_handler (#225)."""
+        from bantz.core.location_handler import handle_location
+        return await handle_location()
 
     async def _handle_save_place(self, name: str) -> str:
-        """Save current GPS position as a named place."""
-        from bantz.core.places import places as _places
-        result = _places.save_here(name)
-        if result:
-            lat = result.get("lat", 0.0)
-            lon = result.get("lon", 0.0)
-            return (
-                f"📌 Saved '{name}' as a place!\n"
-                f"   Coordinates: {lat:.6f}, {lon:.6f}\n"
-                f"   Radius: {result.get('radius', 100)}m"
-            )
-        return "❌ No GPS data — couldn't save location. Is the phone GPS on?"
+        """Delegate to location_handler (#225)."""
+        from bantz.core.location_handler import handle_save_place
+        return await handle_save_place(name)
 
     async def _handle_list_places(self) -> str:
-        """List all saved places."""
-        from bantz.core.places import places as _places
-        all_p = _places.all_places()
-        if not all_p:
-            return "No saved places yet. Say 'save here as X' to save one."
-        lines = ["📌 Saved places:"]
-        for key, p in all_p.items():
-            label = p.get("label", key)
-            lat = p.get("lat", 0.0)
-            lon = p.get("lon", 0.0)
-            radius = p.get("radius", 100)
-            marker = " ⬅ you are here" if key == _places._current_place_key else ""
-            lines.append(f"  • {label} ({lat:.4f}, {lon:.4f}, r={radius}m){marker}")
-        return "\n".join(lines)
+        """Delegate to location_handler (#225)."""
+        from bantz.core.location_handler import handle_list_places
+        return await handle_list_places()
 
     async def _handle_delete_place(self, name: str) -> str:
-        """Delete a saved place."""
-        from bantz.core.places import places as _places
-        if _places.delete_place(name):
-            return f"📌 '{name}' deleted."
-        return f"❌ No saved place named '{name}' found."
+        """Delegate to location_handler (#225)."""
+        from bantz.core.location_handler import handle_delete_place
+        return await handle_delete_place(name)
 
     async def process(self, user_input: str, confirmed: bool = False,
                       is_remote: bool = False) -> BrainResult:

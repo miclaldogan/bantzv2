@@ -492,19 +492,19 @@ class TestBrainToastIntegration:
         assert hasattr(Brain, "_push_toast")
 
     def test_brain_push_toast_delegates(self):
-        """Brain._push_toast should delegate to _notify_toast."""
+        """Brain._push_toast should delegate to notification_manager."""
         from bantz.core.brain import Brain
-        from bantz.core import brain as brain_mod
+        from bantz.core import notification_manager as _notif_mod
         calls = []
-        old_cb = brain_mod._toast_callback
+        old_cb = _notif_mod.toast_callback
         try:
-            brain_mod._toast_callback = lambda t, r, tt: calls.append((t, r, tt))
+            _notif_mod.toast_callback = lambda t, r, tt: calls.append((t, r, tt))
             b = Brain.__new__(Brain)
             b._push_toast("hello", "world", "success")
             assert len(calls) == 1
             assert calls[0] == ("hello", "world", "success")
         finally:
-            brain_mod._toast_callback = old_cb
+            _notif_mod.toast_callback = old_cb
 
     def test_process_no_longer_pops_queue(self):
         """brain.process() should NOT call _check_intervention_queue anymore."""
@@ -521,18 +521,14 @@ class TestBrainToastIntegration:
         assert "_prepend_intervention" not in src
 
     def test_deprecated_check_intervention_queue(self):
-        """_check_intervention_queue should be marked as deprecated."""
-        import inspect
+        """_check_intervention_queue was removed in #225."""
         from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._check_intervention_queue)
-        assert "Deprecated" in src or "deprecated" in src
+        assert not hasattr(Brain, "_check_intervention_queue")
 
     def test_deprecated_prepend_intervention(self):
-        """_prepend_intervention should be marked as deprecated."""
-        import inspect
+        """_prepend_intervention was removed in #225."""
         from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._prepend_intervention)
-        assert "Deprecated" in src or "deprecated" in src
+        assert not hasattr(Brain, "_prepend_intervention")
 
     def test_note_about_toast_in_process(self):
         """process() should have a comment about toast system."""
