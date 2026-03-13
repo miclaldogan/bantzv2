@@ -8,6 +8,10 @@ Extracted modules:
   - core/finalizer.py    — LLM post-processing + hallucination check
   - core/intent.py       — Qwen CoT intent parser
   - core/router.py       — simpler one-shot routing
+  - core/notification_manager.py — toast/notification routing (#225)
+  - core/location_handler.py     — GPS/place management (#225)
+  - core/translation_layer.py    — i18n bridge, feedback detection (#226)
+  - core/rl_hooks.py             — RL reward signals via AsyncDBExecutor (#226)
   - memory/nodes.py      — graph schema + entity extraction
   - memory/context_builder.py — graph → LLM context string
 """
@@ -45,60 +49,14 @@ except ImportError:
     graph_memory = None  # neo4j driver not installed
 
 
-# ── Direct RLHF: Sentiment & Feedback Keywords (#180) ───────────────
-# Uses phrase-based patterns with regex \b word boundaries to prevent
-# false positives (e.g. "Can you stop the alarm?" ≠ scolding).
-# MUST be checked against the RAW (untranslated) user input so Turkish
-# keywords are found even when brain.process() translates to English.
-
-POSITIVE_FEEDBACK_KWS: tuple[str, ...] = (
-    # English — phrases & safe single words
-    "good job", "well done", "nice work", "thank you", "thanks a lot",
-    "perfect", "great job", "excellent", "brilliant", "love it",
-    "amazing", "awesome", "impressed", "bravo", "spot on",
-    "nicely done", "good work", "great work", "much appreciated",
-    # Turkish
-    "aferin", "helal", "harikasın", "süpersin", "çok iyi",
-    "teşekkürler", "sağ ol", "güzel iş", "mükemmel", "muhteşem",
-    "bravo", "tebrikler", "eyvallah", "eline sağlık", "harika",
+# ── RLHF keywords & feedback detection (#180 → #226 translation_layer) ──
+# Canonical implementation now in ``translation_layer.py``.
+# Re-exported here for backward compat (test imports, etc.).
+from bantz.core.translation_layer import (  # noqa: F401  — public re-exports
+    POSITIVE_FEEDBACK_KWS,
+    NEGATIVE_FEEDBACK_KWS,
+    detect_feedback as _detect_feedback,
 )
-
-NEGATIVE_FEEDBACK_KWS: tuple[str, ...] = (
-    # English — intent-bearing phrases (not bare "stop" or "bad")
-    "you are wrong", "that's wrong", "that is wrong", "not right",
-    "bad answer", "terrible answer", "useless answer",
-    "you messed up", "not helpful", "completely wrong",
-    "wrong answer", "you failed", "this is wrong",
-    "are you stupid", "are you dumb", "what a mess",
-    # Turkish — intent-bearing phrases
-    "hata yapıyorsun", "saçmalama", "yanlış yaptın", "yanlış cevap",
-    "berbat cevap", "işe yaramaz", "hiç yardımcı olmadın",
-    "hayır yanlış", "olmamış", "ne saçmalıyorsun", "düzelt şunu",
-)
-
-
-def _detect_feedback(raw_input: str) -> str | None:
-    """Check if the *raw* (untranslated) user input contains explicit feedback.
-
-    Uses regex word boundaries (\\b) to prevent false positives like
-    'bus stop' triggering the 'stop' keyword.  Takes the RAW input so
-    Turkish keywords are matched before the translation layer.
-
-    Returns ``'positive'``, ``'negative'``, or ``None``.
-    Negative is checked first (higher priority).
-    """
-    lower = raw_input.lower()
-
-    # Check negative FIRST — scolding outranks praise
-    for kw in NEGATIVE_FEEDBACK_KWS:
-        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
-            return "negative"
-
-    for kw in POSITIVE_FEEDBACK_KWS:
-        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
-            return "positive"
-
-    return None
 
 
 # ── Toast notification hook (#137 → #225 notification_manager) ───────
@@ -249,7 +207,6 @@ class Brain:
             import bantz.tools.gui_action  # noqa: F401  (#123)
         except (ImportError, ModuleNotFoundError):
             pass
-        self._bridge = None
         self._memory_ready = False
         self._graph_ready = False
         # Session state: stores last tool results for contextual follow-ups
@@ -376,59 +333,19 @@ class Brain:
                 pass
 
     def _get_bridge(self):
-        if self._bridge is None:
-            try:
-                from bantz.i18n.bridge import bridge
-                self._bridge = bridge
-            except Exception:
-                self._bridge = False
-        return self._bridge or None
+        """Delegate to translation_layer (#226)."""
+        from bantz.core.translation_layer import get_bridge
+        return get_bridge()
 
     async def _to_en(self, text: str) -> str:
-        b = self._get_bridge()
-        if b and b.is_enabled():
-            try:
-                return await asyncio.wait_for(b.to_english(text), timeout=10)
-            except (asyncio.TimeoutError, Exception):
-                pass
-        return text
+        """Delegate to translation_layer (#226)."""
+        from bantz.core.translation_layer import to_en
+        return await to_en(text)
 
     def _resolve_message_ref(self, text: str) -> str | None:
-        """Resolve contextual email references like 'the first one', 'the linkedin one'."""
-        if not self._last_messages:
-            return None
-
-        t = text.lower().strip()
-
-        # Ordinals
-        _ORDINALS = {
-            "first": 0, "1st": 0, "second": 1, "2nd": 1,
-            "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
-            "fifth": 4, "5th": 4, "last": -1,
-        }
-        for word, idx in _ORDINALS.items():
-            if word in t:
-                try:
-                    return self._last_messages[idx]["id"]
-                except (IndexError, KeyError):
-                    return None
-
-        # Keyword match against sender/subject
-        # "the linkedin one", "the google cloud one", "read the mail from ali"
-        for msg in self._last_messages:
-            sender = (msg.get("from") or "").lower()
-            subject = (msg.get("subject") or "").lower()
-            # Check if any significant word from user input appears in sender or subject
-            words = re.findall(r"[a-zA-Z0-9]{3,}", t)
-            skip = {"read", "that", "this", "the", "one", "email", "mail", "from", "about",
-                    "please", "can", "you", "want", "open", "show", "check"}
-            keywords = [w for w in words if w not in skip]
-            for kw in keywords:
-                if kw in sender or kw in subject:
-                    return msg["id"]
-
-        # No match — return first message as fallback
-        return self._last_messages[0]["id"] if self._last_messages else None
+        """Delegate to translation_layer (#226)."""
+        from bantz.core.translation_layer import resolve_message_ref
+        return resolve_message_ref(text, self._last_messages)
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
@@ -576,20 +493,10 @@ class Brain:
     # ── RL & Intervention hooks (#125, #126) ─────────────────────────
 
     def _rl_reward_hook(self, tool_name: str, result: ToolResult) -> None:
-        """Fire-and-forget: give RL engine a positive reward on tool success."""
+        """Delegate to rl_hooks — offloaded via AsyncDBExecutor (#226)."""
         try:
-            from bantz.agent.rl_engine import rl_engine, encode_state
-            if not rl_engine.initialized:
-                return
-            tc = time_ctx.snapshot()
-            state = encode_state(
-                time_segment=tc.get("time_segment", "morning"),
-                day=tc.get("day_name", "monday").lower(),
-                location=tc.get("location", "home"),
-                recent_tool=tool_name,
-            )
-            reward_val = 1.0 if result.success else -0.5
-            rl_engine.reward(reward_val, next_state=state)
+            from bantz.core.rl_hooks import rl_reward_hook
+            asyncio.get_event_loop().create_task(rl_reward_hook(tool_name, result))
         except Exception:
             pass  # never crash the pipeline
 
@@ -710,18 +617,12 @@ class Brain:
         # before the translation layer converts them to English.
         feedback = _detect_feedback(user_input)
         if feedback:
+            # Offload RL write to AsyncDBExecutor thread-pool (#226)
             try:
-                from bantz.agent.rl_engine import rl_engine, Action, encode_state
-                if rl_engine.initialized:
-                    state = encode_state(
-                        time_segment=tc.get("time_segment", "morning"),
-                        day=tc.get("day_name", "monday").lower(),
-                        location=tc.get("location", "home"),
-                        recent_tool="feedback_chat",
-                    )
-                    reward_val = 2.0 if feedback == "positive" else -2.0
-                    rl_engine.force_reward(state, Action.FEEDBACK_CHAT, reward_val)
-                    log.info("RLHF sentiment: %s → reward %.1f", feedback, reward_val)
+                from bantz.core.rl_hooks import rl_feedback_reward
+                asyncio.get_event_loop().create_task(
+                    rl_feedback_reward(feedback, tc)
+                )
             except Exception:
                 pass  # never crash the pipeline
             if feedback == "positive":

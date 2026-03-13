@@ -120,12 +120,11 @@ class TestQuickRouteMaintenanceReflection:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestRLRewardHook:
-    """Verify _rl_reward_hook calls rl_engine.reward on tool success/failure."""
+    """Verify _rl_reward_hook delegates to rl_hooks module (#226)."""
 
     def _make_brain(self):
         from bantz.core.brain import Brain
         b = Brain.__new__(Brain)
-        b._bridge = False
         b._memory_ready = True
         b._graph_ready = True
         b._last_messages = []
@@ -134,58 +133,43 @@ class TestRLRewardHook:
         return b
 
     def test_reward_positive_on_success(self):
+        """_rl_reward_hook creates a task that calls rl_hooks.rl_reward_hook."""
         b = self._make_brain()
         from bantz.tools import ToolResult
         result = ToolResult(success=True, output="ok")
 
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock(key="morning|monday|home|weather"))
+        mock_rl_hook = AsyncMock()
+        mock_task = MagicMock()
 
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode):
+        with patch("bantz.core.rl_hooks.rl_reward_hook", mock_rl_hook), \
+             patch("asyncio.get_event_loop") as mock_loop:
+            mock_loop.return_value.create_task = mock_task
             b._rl_reward_hook("weather", result)
 
-        mock_engine.reward.assert_called_once()
-        call_args = mock_engine.reward.call_args
-        assert call_args[0][0] == 1.0  # positive reward
+        mock_task.assert_called_once()
 
     def test_reward_negative_on_failure(self):
+        """_rl_reward_hook fires for failure results too."""
         b = self._make_brain()
         from bantz.tools import ToolResult
         result = ToolResult(success=False, output="", error="fail")
 
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock(key="morning|monday|home|shell"))
+        mock_rl_hook = AsyncMock()
+        mock_task = MagicMock()
 
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode):
+        with patch("bantz.core.rl_hooks.rl_reward_hook", mock_rl_hook), \
+             patch("asyncio.get_event_loop") as mock_loop:
+            mock_loop.return_value.create_task = mock_task
             b._rl_reward_hook("shell", result)
 
-        mock_engine.reward.assert_called_once()
-        call_args = mock_engine.reward.call_args
-        assert call_args[0][0] == -0.5  # negative reward
-
-    def test_hook_noop_when_uninitialized(self):
-        b = self._make_brain()
-        from bantz.tools import ToolResult
-        result = ToolResult(success=True, output="ok")
-
-        mock_engine = MagicMock()
-        mock_engine.initialized = False
-
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine):
-            b._rl_reward_hook("shell", result)
-
-        mock_engine.reward.assert_not_called()
+        mock_task.assert_called_once()
 
     def test_hook_no_crash_on_import_error(self):
         b = self._make_brain()
         from bantz.tools import ToolResult
         result = ToolResult(success=True, output="ok")
 
-        with patch.dict("sys.modules", {"bantz.agent.rl_engine": None}):
+        with patch.dict("sys.modules", {"bantz.core.rl_hooks": None}):
             # Should not raise even when module fails to import
             b._rl_reward_hook("weather", result)
 
