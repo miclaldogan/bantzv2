@@ -916,8 +916,15 @@ class BantzApp(App):
             pass
 
     def _wire_brain_toast_hook(self) -> None:
-        """Connect brain._notify_toast to this app's push_toast (#137)."""
+        """Connect notification system to this app's push_toast (#137, #225)."""
         try:
+            # Canonical: set on notification_manager directly
+            from bantz.core import notification_manager as _notif_mod
+            _notif_mod.toast_callback = self._on_brain_toast
+        except Exception:
+            pass
+        try:
+            # Backward compat: old brain_mod._toast_callback
             from bantz.core import brain as brain_mod
             brain_mod._toast_callback = self._on_brain_toast
         except Exception:

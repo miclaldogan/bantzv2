@@ -623,7 +623,6 @@ class TestBrainTTSStopHandler:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
-        b._pending_intervention = None
         return b
 
     @pytest.mark.asyncio
@@ -640,7 +639,6 @@ class TestBrainTTSStopHandler:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="shut up"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch.object(b, "_check_intervention_queue", new_callable=AsyncMock, return_value=None), \
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
@@ -663,7 +661,6 @@ class TestBrainTTSStopHandler:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="shut up"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch.object(b, "_check_intervention_queue", new_callable=AsyncMock, return_value=None), \
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
@@ -690,7 +687,6 @@ class TestBrainBriefingWithTTS:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
-        b._pending_intervention = None
         return b
 
     @pytest.mark.asyncio
@@ -712,7 +708,6 @@ class TestBrainBriefingWithTTS:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch.object(b, "_check_intervention_queue", new_callable=AsyncMock, return_value=None), \
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
@@ -740,7 +735,6 @@ class TestBrainBriefingWithTTS:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch.object(b, "_check_intervention_queue", new_callable=AsyncMock, return_value=None), \
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv

@@ -195,72 +195,15 @@ class TestRLRewardHook:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestInterventionQueueHook:
-    """Verify _check_intervention_queue pops next intervention."""
+    """Deprecated methods removed in #225 — verify they no longer exist."""
 
-    def _make_brain(self):
+    def test_check_intervention_queue_removed(self):
         from bantz.core.brain import Brain
-        b = Brain.__new__(Brain)
-        b._bridge = False
-        b._memory_ready = True
-        b._graph_ready = True
-        b._last_messages = []
-        b._last_events = []
-        b._last_draft = None
-        return b
+        assert not hasattr(Brain, "_check_intervention_queue")
 
-    def test_pop_returns_formatted_text(self):
-        b = self._make_brain()
-        mock_iv = MagicMock()
-        mock_iv.source = "rl_engine"
-        mock_iv.title = "Start focus mode"
-        mock_iv.reason = "You usually focus at this time"
-
-        mock_queue = MagicMock()
-        mock_queue.pop.return_value = mock_iv
-
-        with patch("bantz.agent.interventions.intervention_queue", mock_queue):
-            text = _run(b._check_intervention_queue())
-
-        assert text is not None
-        assert "rl_engine" in text
-        assert "Start focus mode" in text
-
-    def test_pop_returns_none_when_empty(self):
-        b = self._make_brain()
-        mock_queue = MagicMock()
-        mock_queue.pop.return_value = None
-
-        with patch("bantz.agent.interventions.intervention_queue", mock_queue):
-            text = _run(b._check_intervention_queue())
-
-        assert text is None
-
-    def test_pop_no_crash_on_error(self):
-        b = self._make_brain()
-        with patch.dict("sys.modules", {"bantz.agent.interventions": None}):
-            text = _run(b._check_intervention_queue())
-        assert text is None
-
-    def test_prepend_intervention_with_text(self):
-        b = self._make_brain()
-        b._pending_intervention = "💡 [observer] High CPU\n   CPU at 95%"
-        result = b._prepend_intervention("It's sunny outside.")
-        assert result.startswith("💡 [observer]")
-        assert "It's sunny outside." in result
-        # Consumed after use
-        assert b._pending_intervention is None
-
-    def test_prepend_intervention_none(self):
-        b = self._make_brain()
-        b._pending_intervention = None
-        result = b._prepend_intervention("Hello")
-        assert result == "Hello"
-
-    def test_prepend_intervention_no_attr(self):
-        b = self._make_brain()
-        # No _pending_intervention set at all
-        result = b._prepend_intervention("Hello")
-        assert result == "Hello"
+    def test_prepend_intervention_removed(self):
+        from bantz.core.brain import Brain
+        assert not hasattr(Brain, "_prepend_intervention")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -767,12 +710,12 @@ class TestNotifyToastFallback:
             brain_mod._toast_callback = old_cb
 
     def test_notifier_src_has_fallback(self):
-        """Source code must reference notifier.send as fallback."""
+        """notification_manager source must reference notifier.send as fallback."""
         import inspect
-        import bantz.core.brain as brain_mod
-        src = inspect.getsource(brain_mod._notify_toast)
+        from bantz.core import notification_manager
+        src = inspect.getsource(notification_manager.notify_toast)
         assert "notifier.send" in src
-        assert "notify-send" in src or "notifier" in src
+        assert "notifier" in src
 
 
 # ═══════════════════════════════════════════════════════════════════════════
