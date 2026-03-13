@@ -795,6 +795,44 @@ class TestPlannerPrompt:
                 f"Example uses non-canonical placeholder: {p}"
             )
 
+    def test_prompt_has_tool_usage_best_practices(self):
+        """Prompt must contain TOOL USAGE BEST PRACTICES section."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "TOOL USAGE BEST PRACTICES" in PLANNER_SYSTEM
+
+    def test_best_practices_web_search_short_queries(self):
+        """Best practices must instruct short/broad web_search queries."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("TOOL USAGE BEST PRACTICES")
+        block = PLANNER_SYSTEM[idx:]
+        assert "web_search" in block
+        assert "SHORT" in block or "short" in block
+        assert "broad" in block.lower()
+
+    def test_best_practices_read_url_requires_http(self):
+        """Best practices must state read_url needs a valid HTTP/HTTPS URL."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("TOOL USAGE BEST PRACTICES")
+        block = PLANNER_SYSTEM[idx:]
+        assert "read_url" in block
+        assert "HTTP" in block or "http" in block.lower()
+        assert "natural language" in block.lower() or "Do NOT pass" in block
+
+    def test_best_practices_short_plans(self):
+        """Best practices must recommend 3-4 step deep reading workflow."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("TOOL USAGE BEST PRACTICES")
+        block = PLANNER_SYSTEM[idx:]
+        assert "3 or 4 steps" in block or "3 or 4" in block
+
+    def test_example_shows_url_data_flow(self):
+        """Example description must show that read_url receives URL from web_search."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("EXAMPLES:")
+        block = PLANNER_SYSTEM[idx:]
+        # read_url description should mention it gets URL from a previous step
+        assert "URL returned" in block or "url returned" in block.lower()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 9. PlanStep parsing edge cases

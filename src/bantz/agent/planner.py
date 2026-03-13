@@ -53,6 +53,11 @@ CRITICAL TOOL RULES:
 - If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `process_text` tool. Put your exact instructions (e.g., "Summarize the following: {{step_1_output}}") in the "instruction" param.
 - When the user wants a THOROUGH research report (not just snippets), use `web_search` first, then `read_url` to fetch the full article text from the best URL, then `process_text` to summarize.
 
+TOOL USAGE BEST PRACTICES:
+- For `web_search`: Keep queries SHORT and broad (e.g., "Google quantum computer study", NOT "Search for the article titled Google Quantum Computer Makes Breakthrough in Quantum Error Correction"). The search engine works best with concise keywords.
+- For `read_url`: The parameter MUST be a valid HTTP/HTTPS URL. Do NOT pass natural language or search queries to this tool. You get this URL from `{{step_N_output}}` of a previous `web_search` step.
+- Keep plans as SHORT as possible. A complete deep reading workflow should only be 3 or 4 steps: `web_search` -> `read_url` -> `process_text` -> `filesystem`.
+
 RULES:
 1. Each step must use exactly ONE tool.
 2. Steps execute in order. Later steps can reference output of earlier steps.
@@ -71,10 +76,10 @@ OUTPUT FORMAT (return a JSON array of objects):
 
 EXAMPLES:
 
-User: "Search for 3 articles about quantum computing, summarize them, and save to a file"
+User: "Search for articles about quantum computing, summarize the best one, and save to a file"
 [
-  {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing articles 2024"}}, "description": "Search for quantum computing articles", "depends_on": null}},
-  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full text from the best search result", "depends_on": 1}},
+  {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs"}}, "description": "Search for quantum computing articles (returns a list of URLs)", "depends_on": null}},
+  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Fetch the full article text from the URL returned by web_search", "depends_on": 1}},
   {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize the following article into a concise report. Preserve any source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the full article text", "depends_on": 2}},
   {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
