@@ -15,8 +15,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import sqlite3
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -66,10 +64,7 @@ Summarise this conversation session:\n\n{transcript}\
 
 # ── Schema ─────────────────────────────────────────────────────────────────
 
-def migrate_distillation_table(
-    conn: sqlite3.Connection,
-    lock: Optional[threading.Lock] = None,
-) -> None:
+def migrate_distillation_table() -> None:
     """Create the session_distillations table if it doesn't exist."""
     sql = """\
 CREATE TABLE IF NOT EXISTS session_distillations (
@@ -87,10 +82,8 @@ CREATE TABLE IF NOT EXISTS session_distillations (
     created_at      TEXT    NOT NULL,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 )"""
-    if lock:
-        with lock:
-            conn.execute(sql)
-    else:
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection(write=True) as conn:
         conn.execute(sql)
 
 
@@ -166,18 +159,19 @@ def _parse_csv(val: str) -> list[str]:
 # ── Core distillation ─────────────────────────────────────────────────────
 
 def fetch_session_messages(
-    conn: sqlite3.Connection,
     session_id: int,
 ) -> list[dict]:
     """Fetch all messages for a session, in chronological order."""
-    rows = conn.execute(
-        """SELECT role, content, tool_used, created_at
-           FROM messages
-           WHERE conversation_id = ?
-           ORDER BY created_at ASC""",
-        (session_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            """SELECT role, content, tool_used, created_at
+               FROM messages
+               WHERE conversation_id = ?
+               ORDER BY created_at ASC""",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 async def _llm_summarise(transcript: str) -> str:
@@ -201,8 +195,6 @@ async def _llm_summarise(transcript: str) -> str:
 
 
 def store_distillation(
-    conn: sqlite3.Connection,
-    lock: threading.Lock,
     session_id: int,
     result: DistillationResult,
     embedding: Optional[list[float]] = None,
@@ -218,7 +210,8 @@ def store_distillation(
         blob = struct.pack(f"{len(embedding)}f", *embedding)
         dim = len(embedding)
 
-    with lock:
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection(write=True) as conn:
         cur = conn.execute(
             """INSERT OR REPLACE INTO session_distillations
                (conversation_id, summary, topics, decisions, people,
@@ -239,12 +232,10 @@ def store_distillation(
                 now,
             ),
         )
-    return cur.lastrowid
+        return cur.lastrowid
 
 
 async def distill_session(
-    conn: sqlite3.Connection,
-    lock: threading.Lock,
     session_id: int,
     *,
     min_exchanges: int = 5,
@@ -264,7 +255,7 @@ async def distill_session(
     Returns DistillationResult or None if session is too short.
     """
     # 1. Fetch messages
-    messages = fetch_session_messages(conn, session_id)
+    messages = fetch_session_messages(session_id)
     exchanges = _count_exchanges(messages)
 
     if exchanges < min_exchanges:
@@ -316,7 +307,7 @@ async def distill_session(
     # 4. Store
     try:
         store_distillation(
-            conn, lock, session_id, result,
+            session_id, result,
             embedding=embedding, embed_model=embed_model,
         )
         log.info(
@@ -362,7 +353,6 @@ async def distill_session(
 # ── Vector search on distillations ─────────────────────────────────────────
 
 def search_distillations(
-    conn: sqlite3.Connection,
     query_vec: list[float],
     limit: int = 5,
     min_score: float = 0.3,
@@ -370,13 +360,15 @@ def search_distillations(
     """Search distillation summaries by vector similarity."""
     import struct
 
-    rows = conn.execute(
-        """SELECT id, conversation_id, summary, topics, decisions,
-                  people, tools_used, exchange_count, embedding,
-                  embed_dim, created_at
-           FROM session_distillations
-           WHERE embedding IS NOT NULL"""
-    ).fetchall()
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            """SELECT id, conversation_id, summary, topics, decisions,
+                      people, tools_used, exchange_count, embedding,
+                      embed_dim, created_at
+               FROM session_distillations
+               WHERE embedding IS NOT NULL"""
+        ).fetchall()
 
     from bantz.memory.vector_store import _cosine_similarity, _blob_to_vec
 
@@ -403,34 +395,37 @@ def search_distillations(
 
 
 def get_distillation(
-    conn: sqlite3.Connection,
     session_id: int,
 ) -> Optional[dict]:
     """Get the distillation record for a specific session."""
-    row = conn.execute(
-        """SELECT id, conversation_id, summary, topics, decisions,
-                  people, tools_used, exchange_count, created_at
-           FROM session_distillations
-           WHERE conversation_id = ?""",
-        (session_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            """SELECT id, conversation_id, summary, topics, decisions,
+                      people, tools_used, exchange_count, created_at
+               FROM session_distillations
+               WHERE conversation_id = ?""",
+            (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
-def distillation_stats(conn: sqlite3.Connection) -> dict:
+def distillation_stats() -> dict:
     """Get distillation statistics."""
-    total = conn.execute(
-        "SELECT COUNT(*) FROM session_distillations"
-    ).fetchone()[0]
-    embedded = conn.execute(
-        "SELECT COUNT(*) FROM session_distillations WHERE embedding IS NOT NULL"
-    ).fetchone()[0]
-    total_sessions = conn.execute(
-        "SELECT COUNT(*) FROM conversations"
-    ).fetchone()[0]
-    return {
-        "total_distillations": total,
-        "embedded_distillations": embedded,
-        "total_sessions": total_sessions,
-        "coverage_pct": round(total / max(total_sessions, 1) * 100, 1),
-    }
+    from bantz.data.connection_pool import get_pool
+    with get_pool().connection() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM session_distillations"
+        ).fetchone()[0]
+        embedded = conn.execute(
+            "SELECT COUNT(*) FROM session_distillations WHERE embedding IS NOT NULL"
+        ).fetchone()[0]
+        total_sessions = conn.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        return {
+            "total_distillations": total,
+            "embedded_distillations": embedded,
+            "total_sessions": total_sessions,
+            "coverage_pct": round(total / max(total_sessions, 1) * 100, 1),
+        }

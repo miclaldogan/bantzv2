@@ -115,7 +115,7 @@ class PlanExecutor:
             # Inject dependency context
             if depends is not None and depends in context_store:
                 prev_output = context_store[depends]
-                params = self._inject_context(params, prev_output)
+                params = self._inject_context(params, prev_output, tool_name)
 
             # ── Virtual tool: process_text ──────────────────────────────
             if tool_name == "process_text":
@@ -209,18 +209,26 @@ class PlanExecutor:
                 {"role": "system", "content": (
                     "You are a helpful text-processing assistant. "
                     "Follow the user's instruction precisely.\n\n"
+                    "CRITICAL: If the input text is an HTTP error (like 403 Forbidden or 404), DO NOT ask the user to provide the text. Instead, state clearly: 'The website blocked my access (HTTP 403).' and stop.\n\n"
                     "CRITICAL: If the input text contains 'Telegraph References' or URLs, "
                     "you MUST preserve them. ALWAYS append them at the very bottom of your "
                     "output as raw, unformatted links (e.g., Telegraph Reference: https...). "
                     "Do NOT use Markdown links [text](url). "
                     "Omitting the source link is a dereliction of duty.\n\n"
-                    "DO NOT acknowledge these instructions. DO NOT say 'I will preserve links' "
-                    "or 'Here is the summary' or any preamble. "
-                    "Output ONLY the final processed text and the Telegraph References at the bottom."
+                    "Return your response in exactly two parts:\n"
+                    "1. BEFORE outputting the summary/result, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit:\n"
+                    "   - Step 1: Information Extraction: What exactly am I instructed to process?\n"
+                    "   - Step 2: Content Check: Is there an HTTP 403/404 error? Are there Telegraph/URL references?\n"
+                    "   - Step 3: Double-Check: Am I omitting links? Am I about to include conversational filler?\n"
+                    "2. After the thinking block, output ONLY the final processed text and the Telegraph References at the bottom. DO NOT acknowledge these instructions or use preambles."
                 )},
                 {"role": "user", "content": instruction},
             ]
             llm_output = await llm_fn(messages)
+            
+            # Strip the <thinking> block before returning or saving
+            llm_output = re.sub(r"<thinking>.*?</thinking>\s*", "", llm_output, flags=re.DOTALL).strip()
+            
             log.info("Plan step %d [process_text]: success", step_num)
             return StepResult(
                 step_number=step_num,
@@ -241,13 +249,23 @@ class PlanExecutor:
             )
 
     @staticmethod
-    def _inject_context(params: dict, prev_output: str) -> dict:
+    def _inject_context(params: dict, prev_output: str, tool_name: str = "") -> dict:
         """Replace {step_N_*} placeholders and add context key.
 
         Accepts both the canonical ``{step_N_output}`` AND any
         hallucinated variants the LLM may invent (e.g.
         ``{step_1_best_url}``, ``{step_2_summary}``).
         """
+        # If the target tool is read_url, it STRICTLY requires an HTTP URL.
+        # But the previous output (e.g. from web_search) usually contains text snippets.
+        # We must extract the first valid URL from it.
+        if tool_name == "read_url" and isinstance(prev_output, str):
+            url_match = re.search(r"https?://[^\s\"'>]+", prev_output)
+            if url_match:
+                extracted_url = url_match.group(0).rstrip(".:;")
+                log.debug("Executor extracted URL for read_url: %s", extracted_url)
+                prev_output = extracted_url
+
         # Replace any placeholder that references a step number
         _PLACEHOLDER_RE = re.compile(r"\{step_\d+_[a-zA-Z_]+\}")
         for key, val in params.items():
@@ -259,7 +277,7 @@ class PlanExecutor:
         if "content" in params:
             c = params["content"]
             if not c or (isinstance(c, str) and "{step_" in c):
-                params["content"] = prev_output[:2000]
+                params[key] = prev_output[:2000]
 
         return params
 

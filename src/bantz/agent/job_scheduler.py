@@ -218,7 +218,7 @@ async def _job_reminder_check() -> None:
     """Legacy reminder poll — bridge until all reminders are in APScheduler."""
     try:
         from bantz.core.scheduler import scheduler as _old_scheduler
-        if not _old_scheduler._conn:
+        if not _old_scheduler._initialized:
             return
         due = _old_scheduler.check_due()
         for r in due:

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -112,81 +111,77 @@ def migrate_to_sqlite(
         A results dict with per-file status and counts.
     """
     results: dict[str, Any] = {}
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
+    from bantz.data.connection_pool import get_pool
+    pool = get_pool(str(db_path))
+    with pool.connection(write=True) as conn:
+        # Create unified tables
+        conn.executescript(_UNIFIED_SCHEMA)
 
-    # Create unified tables
-    conn.executescript(_UNIFIED_SCHEMA)
+        # ── profile → user_profile ────────────────────────────────────────
+        _migrate_kv(conn, data_dir / "profile.json", "user_profile", results, dry_run)
 
-    # ── profile → user_profile ────────────────────────────────────────
-    _migrate_kv(conn, data_dir / "profile.json", "user_profile", results, dry_run)
+        # ── session → session_state ───────────────────────────────────────
+        _migrate_kv(conn, data_dir / "session.json", "session_state", results, dry_run)
 
-    # ── session → session_state ───────────────────────────────────────
-    _migrate_kv(conn, data_dir / "session.json", "session_state", results, dry_run)
-
-    # ── places → places table ─────────────────────────────────────────
-    places_path = data_dir / "places.json"
-    if places_path.exists():
-        try:
-            data = json.loads(places_path.read_text("utf-8"))
-            count = 0
-            if not dry_run:
-                for key, place in data.items():
-                    conn.execute(
-                        """INSERT OR REPLACE INTO places(key, label, lat, lon, radius)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (
-                            key,
-                            place.get("label", key),
-                            place.get("lat", 0.0),
-                            place.get("lon", 0.0),
-                            place.get("radius", 100.0),
-                        ),
-                    )
-                    count += 1
-            else:
-                count = len(data)
-            results["places"] = {"migrated": count, "status": "ok"}
-        except Exception as exc:
-            results["places"] = {"status": "error", "error": str(exc)}
-    else:
-        results["places"] = {"status": "skipped", "reason": "file not found"}
-
-    # ── schedule → schedule_entries table ─────────────────────────────
-    schedule_path = data_dir / "schedule.json"
-    if schedule_path.exists():
-        try:
-            data = json.loads(schedule_path.read_text("utf-8"))
-            count = 0
-            if not dry_run:
-                for day, entries in data.items():
-                    for idx, entry in enumerate(entries):
+        # ── places → places table ─────────────────────────────────────────
+        places_path = data_dir / "places.json"
+        if places_path.exists():
+            try:
+                data = json.loads(places_path.read_text("utf-8"))
+                count = 0
+                if not dry_run:
+                    for key, place in data.items():
                         conn.execute(
-                            """INSERT OR REPLACE INTO schedule_entries
-                                   (day, idx, name, time, duration, location, type)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            """INSERT OR REPLACE INTO places(key, label, lat, lon, radius)
+                               VALUES (?, ?, ?, ?, ?)""",
                             (
-                                day,
-                                idx,
-                                entry.get("name", ""),
-                                entry.get("time", ""),
-                                entry.get("duration", 60),
-                                entry.get("location", ""),
-                                entry.get("type", ""),
+                                key,
+                                place.get("label", key),
+                                place.get("lat", 0.0),
+                                place.get("lon", 0.0),
+                                place.get("radius", 100.0),
                             ),
                         )
                         count += 1
-            else:
-                count = sum(len(v) for v in data.values() if isinstance(v, list))
-            results["schedule"] = {"migrated": count, "status": "ok"}
-        except Exception as exc:
-            results["schedule"] = {"status": "error", "error": str(exc)}
-    else:
-        results["schedule"] = {"status": "skipped", "reason": "file not found"}
+                else:
+                    count = len(data)
+                results["places"] = {"migrated": count, "status": "ok"}
+            except Exception as exc:
+                results["places"] = {"status": "error", "error": str(exc)}
+        else:
+            results["places"] = {"status": "skipped", "reason": "file not found"}
 
-    if not dry_run:
-        conn.commit()
-    conn.close()
+        # ── schedule → schedule_entries table ─────────────────────────────
+        schedule_path = data_dir / "schedule.json"
+        if schedule_path.exists():
+            try:
+                data = json.loads(schedule_path.read_text("utf-8"))
+                count = 0
+                if not dry_run:
+                    for day, entries in data.items():
+                        for idx, entry in enumerate(entries):
+                            conn.execute(
+                                """INSERT OR REPLACE INTO schedule_entries
+                                       (day, idx, name, time, duration, location, type)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    day,
+                                    idx,
+                                    entry.get("name", ""),
+                                    entry.get("time", ""),
+                                    entry.get("duration", 60),
+                                    entry.get("location", ""),
+                                    entry.get("type", ""),
+                                ),
+                            )
+                            count += 1
+                else:
+                    count = sum(len(v) for v in data.values() if isinstance(v, list))
+                results["schedule"] = {"migrated": count, "status": "ok"}
+            except Exception as exc:
+                results["schedule"] = {"status": "error", "error": str(exc)}
+        else:
+            results["schedule"] = {"status": "skipped", "reason": "file not found"}
 
     log.info("Migration %s: %s", "dry-run" if dry_run else "complete", results)
     return results

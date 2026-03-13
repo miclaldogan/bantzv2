@@ -30,12 +30,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+
+from bantz.data.connection_pool import get_pool
 
 log = logging.getLogger("bantz.vision.navigator")
 
@@ -123,30 +124,29 @@ class NavigationAnalytics:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
-        self._lock = threading.Lock()
+        self._initialized = False
 
     def init(self, db_path: Path) -> None:
         """Initialize analytics table — reuses main DB."""
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS nav_analytics (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                app_name    TEXT NOT NULL,
-                element     TEXT NOT NULL,
-                method      TEXT NOT NULL,
-                success     INTEGER NOT NULL DEFAULT 0,
-                latency_ms  REAL,
-                confidence  REAL,
-                created_at  TEXT NOT NULL
-            )
-        """)
-        self._conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_nav_app
-                ON nav_analytics(app_name)
-        """)
+        get_pool(db_path)
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS nav_analytics (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    app_name    TEXT NOT NULL,
+                    element     TEXT NOT NULL,
+                    method      TEXT NOT NULL,
+                    success     INTEGER NOT NULL DEFAULT 0,
+                    latency_ms  REAL,
+                    confidence  REAL,
+                    created_at  TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_nav_app
+                    ON nav_analytics(app_name)
+            """)
+        self._initialized = True
         log.debug("Navigation analytics table ready")
 
     def record(
@@ -159,11 +159,11 @@ class NavigationAnalytics:
         confidence: float = 0.0,
     ) -> None:
         """Record a single navigation attempt."""
-        if not self._conn:
+        if not self._initialized:
             return
         now = datetime.now().isoformat(timespec="seconds")
-        with self._lock:
-            self._conn.execute(
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
                 """INSERT INTO nav_analytics
                    (app_name, element, method, success, latency_ms, confidence, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -176,9 +176,10 @@ class NavigationAnalytics:
 
         Returns None if no data or too few samples.
         """
-        if not self._conn:
+        if not self._initialized:
             return None
-        rows = self._conn.execute(
+        with get_pool().connection() as conn:
+            rows = conn.execute(
             """SELECT method, COUNT(*) as cnt, AVG(success) as rate
                FROM nav_analytics
                WHERE app_name = ? AND success = 1
@@ -193,14 +194,15 @@ class NavigationAnalytics:
 
     def app_stats(self, app_name: Optional[str] = None) -> dict:
         """Aggregated stats per method, optionally filtered by app."""
-        if not self._conn:
+        if not self._initialized:
             return {"enabled": False}
         where = ""
         params: tuple = ()
         if app_name:
             where = "WHERE app_name = ?"
             params = (app_name.lower(),)
-        rows = self._conn.execute(
+        with get_pool().connection() as conn:
+            rows = conn.execute(
             f"""SELECT method,
                        COUNT(*) as attempts,
                        SUM(success) as successes,
@@ -217,9 +219,7 @@ class NavigationAnalytics:
         }
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._initialized = False
 
 
 # ━━ Navigator Pipeline ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

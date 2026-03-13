@@ -29,8 +29,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import sqlite3
-import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -44,46 +42,43 @@ _REPEAT_MODES = ("none", "daily", "weekly", "weekdays", "custom")
 
 class Scheduler(ReminderStore):
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
-        self._lock = threading.Lock()
+        self._initialized = False
 
     # ── Init ──────────────────────────────────────────────────────────────
 
     def init(self, db_path: Path) -> None:
         """Call once at startup — uses the same DB as memory."""
-        self._conn = sqlite3.connect(
-            str(db_path),
-            check_same_thread=False,
-            isolation_level=None,
-        )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        from bantz.data.connection_pool import get_pool
+        get_pool(str(db_path))
         self._migrate()
+        self._initialized = True
         log.debug("Scheduler initialized: %s", db_path)
 
     def _migrate(self) -> None:
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS reminders (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                title            TEXT NOT NULL,
-                fire_at          TEXT NOT NULL,
-                repeat           TEXT NOT NULL DEFAULT 'none',
-                repeat_interval  INTEGER DEFAULT 0,
-                created_at       TEXT NOT NULL,
-                fired            INTEGER NOT NULL DEFAULT 0,
-                snoozed_until    TEXT,
-                trigger_place    TEXT
-            )
-        """)
-        self._conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_reminders_fire
-                ON reminders(fire_at, fired)
-        """)
-        # Migration: add trigger_place column to existing tables
-        try:
-            self._conn.execute("ALTER TABLE reminders ADD COLUMN trigger_place TEXT")
-        except Exception:
-            pass  # column already exists
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reminders (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title            TEXT NOT NULL,
+                    fire_at          TEXT NOT NULL,
+                    repeat           TEXT NOT NULL DEFAULT 'none',
+                    repeat_interval  INTEGER DEFAULT 0,
+                    created_at       TEXT NOT NULL,
+                    fired            INTEGER NOT NULL DEFAULT 0,
+                    snoozed_until    TEXT,
+                    trigger_place    TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminders_fire
+                    ON reminders(fire_at, fired)
+            """)
+            # Migration: add trigger_place column to existing tables
+            try:
+                conn.execute("ALTER TABLE reminders ADD COLUMN trigger_place TEXT")
+            except Exception:
+                pass  # column already exists
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -104,8 +99,9 @@ class Scheduler(ReminderStore):
         if repeat not in _REPEAT_MODES:
             repeat = "none"
 
-        with self._lock:
-            cur = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 """INSERT INTO reminders
                        (title, fire_at, repeat, repeat_interval, created_at, trigger_place)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -136,8 +132,9 @@ class Scheduler(ReminderStore):
         now = datetime.now()
         now_iso = now.isoformat()
 
-        with self._lock:
-            rows = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            rows = conn.execute(
                 """SELECT * FROM reminders
                    WHERE fired = 0
                      AND fire_at <= ?
@@ -153,7 +150,7 @@ class Scheduler(ReminderStore):
 
                 repeat = item["repeat"]
                 if repeat == "none":
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE reminders SET fired = 1 WHERE id = ?",
                         (item["id"],),
                     )
@@ -164,7 +161,7 @@ class Scheduler(ReminderStore):
                         repeat,
                         item["repeat_interval"],
                     )
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
                         (next_fire.isoformat(), item["id"]),
                     )
@@ -173,29 +170,34 @@ class Scheduler(ReminderStore):
 
     def list_upcoming(self, limit: int = 10) -> list[dict]:
         """Return upcoming (unfired) reminders sorted by fire_at."""
-        rows = self._conn.execute(
-            """SELECT * FROM reminders
-               WHERE fired = 0
-               ORDER BY fire_at
-               LIMIT ?""",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM reminders
+                   WHERE fired = 0
+                   ORDER BY fire_at
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def list_all(self, limit: int = 20) -> list[dict]:
         """Return all reminders (including fired), newest first."""
-        rows = self._conn.execute(
-            """SELECT * FROM reminders
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM reminders
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def cancel(self, reminder_id: int) -> bool:
         """Delete a reminder by ID. Returns True if found."""
-        with self._lock:
-            cur = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "DELETE FROM reminders WHERE id = ?", (reminder_id,)
             )
             deleted = cur.rowcount > 0
@@ -205,8 +207,9 @@ class Scheduler(ReminderStore):
 
     def cancel_by_title(self, title: str) -> int:
         """Delete all reminders matching title (case-insensitive). Returns count."""
-        with self._lock:
-            cur = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "DELETE FROM reminders WHERE lower(title) = lower(?)", (title,)
             )
             count = cur.rowcount
@@ -217,8 +220,9 @@ class Scheduler(ReminderStore):
     def snooze(self, reminder_id: int, minutes: int = 10) -> bool:
         """Snooze a reminder by N minutes."""
         until = datetime.now() + timedelta(minutes=minutes)
-        with self._lock:
-            cur = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "UPDATE reminders SET snoozed_until = ?, fired = 0 WHERE id = ?",
                 (until.isoformat(), reminder_id),
             )
@@ -228,22 +232,25 @@ class Scheduler(ReminderStore):
         """Return reminders due today (for briefing)."""
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
-        rows = self._conn.execute(
-            """SELECT * FROM reminders
-               WHERE fired = 0
-                 AND fire_at >= ? AND fire_at < ?
-               ORDER BY fire_at""",
-            (today_start.isoformat(), today_end.isoformat()),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM reminders
+                   WHERE fired = 0
+                     AND fire_at >= ? AND fire_at < ?
+                   ORDER BY fire_at""",
+                (today_start.isoformat(), today_end.isoformat()),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def check_place_due(self, place_key: str) -> list[dict]:
         """Return location-triggered reminders for the given place and mark fired.
 
         Called by places.py when the user enters a known place.
         """
-        with self._lock:
-            rows = self._conn.execute(
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection(write=True) as conn:
+            rows = conn.execute(
                 """SELECT * FROM reminders
                    WHERE fired = 0
                      AND trigger_place = ?
@@ -259,7 +266,7 @@ class Scheduler(ReminderStore):
 
                 repeat = item["repeat"]
                 if repeat == "none":
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE reminders SET fired = 1 WHERE id = ?",
                         (item["id"],),
                     )
@@ -268,14 +275,16 @@ class Scheduler(ReminderStore):
 
     def count_active(self) -> int:
         """Count unfired reminders."""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM reminders WHERE fired = 0"
-        ).fetchone()
-        return row[0] if row else 0
+        from bantz.data.connection_pool import get_pool
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM reminders WHERE fired = 0"
+            ).fetchone()
+            return row[0] if row else 0
 
     def status_line(self) -> str:
         """Short status for --doctor."""
-        if not self._conn:
+        if not self._initialized:
             return "Scheduler: not initialized"
         n = self.count_active()
         return f"Scheduler: {n} active reminder(s)"

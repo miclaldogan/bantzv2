@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -38,161 +37,167 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_pool():
+    """Reset the connection pool after every test."""
+    yield
+    from bantz.data.connection_pool import SQLitePool
+    SQLitePool.reset()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture
 def tmp_db(tmp_path):
-    """Create a test SQLite DB with conversations, messages, and distillations."""
-    import threading
+    """Create a test SQLite DB with conversations, messages, and distillations.
+
+    Also initializes the connection pool pointing to this DB so that
+    reflection.py functions (which use the pool internally) read from it.
+    """
     db_path = tmp_path / "bantz.db"
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
 
-    # conversations table
-    conn.execute("""
-        CREATE TABLE conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at TEXT NOT NULL,
-            last_active TEXT NOT NULL
-        )
-    """)
+    # Initialize pool first — this creates the DB file
+    from bantz.data.connection_pool import get_pool
+    pool = get_pool(db_path)
 
-    # messages table
-    conn.execute("""
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            tool_used TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        )
-    """)
+    # Create schema via pool
+    with pool.connection(write=True) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                last_active TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_used TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_distillations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL UNIQUE,
+                summary TEXT NOT NULL,
+                topics TEXT NOT NULL DEFAULT '',
+                decisions TEXT NOT NULL DEFAULT '',
+                people TEXT NOT NULL DEFAULT '',
+                tools_used TEXT NOT NULL DEFAULT '',
+                exchange_count INTEGER NOT NULL DEFAULT 0,
+                embedding BLOB,
+                embed_dim INTEGER,
+                embed_model TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS message_vectors (
+                message_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                dim INTEGER NOT NULL,
+                model TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
 
-    # session_distillations table
-    conn.execute("""
-        CREATE TABLE session_distillations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL UNIQUE,
-            summary TEXT NOT NULL,
-            topics TEXT NOT NULL DEFAULT '',
-            decisions TEXT NOT NULL DEFAULT '',
-            people TEXT NOT NULL DEFAULT '',
-            tools_used TEXT NOT NULL DEFAULT '',
-            exchange_count INTEGER NOT NULL DEFAULT 0,
-            embedding BLOB,
-            embed_dim INTEGER,
-            embed_model TEXT,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    # message_vectors table
-    conn.execute("""
-        CREATE TABLE message_vectors (
-            message_id INTEGER PRIMARY KEY,
-            embedding BLOB NOT NULL,
-            dim INTEGER NOT NULL,
-            model TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    lock = threading.Lock()
-    return conn, lock, tmp_path
+    return pool, tmp_path
 
 
 @pytest.fixture
 def populated_db(tmp_db):
     """DB with today's conversations and distillations."""
-    conn, lock, tmp_path = tmp_db
+    pool, tmp_path = tmp_db
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Insert 2 conversations with messages
-    conn.execute(
-        "INSERT INTO conversations (id, started_at, last_active) VALUES (1, ?, ?)",
-        (f"{today}T10:00:00", f"{today}T10:30:00"),
-    )
-    conn.execute(
-        "INSERT INTO conversations (id, started_at, last_active) VALUES (2, ?, ?)",
-        (f"{today}T14:00:00", f"{today}T15:00:00"),
-    )
+    with pool.connection(write=True) as conn:
+        # Insert 2 conversations with messages
+        conn.execute(
+            "INSERT INTO conversations (id, started_at, last_active) VALUES (1, ?, ?)",
+            (f"{today}T10:00:00", f"{today}T10:30:00"),
+        )
+        conn.execute(
+            "INSERT INTO conversations (id, started_at, last_active) VALUES (2, ?, ?)",
+            (f"{today}T14:00:00", f"{today}T15:00:00"),
+        )
 
-    for conv_id, msgs in [
-        (1, [
-            ("user", "What's the weather?", "weather"),
-            ("assistant", "Sunny, 22°C in Ankara.", None),
-            ("user", "Check my calendar", "calendar"),
-            ("assistant", "You have a meeting with Prof. Yilmaz at 3pm.", None),
-            ("user", "Remind me to study", None),
-            ("assistant", "Reminder set for 8pm.", "reminder"),
-        ]),
-        (2, [
-            ("user", "Help me with Docker networking", "shell"),
-            ("assistant", "The bridge network is misconfigured. Try...", None),
-            ("user", "That worked, thanks!", None),
-            ("assistant", "Great! Docker bridge is fixed.", None),
-            ("user", "Now let's work on Bantz v3 planning", None),
-            ("assistant", "Let's outline the architecture. I suggest LanceDB for vectors.", None),
-        ]),
-    ]:
-        for role, content, tool in msgs:
-            conn.execute(
-                "INSERT INTO messages (conversation_id, role, content, tool_used, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (conv_id, role, content, tool, f"{today}T10:00:00"),
-            )
+        for conv_id, msgs in [
+            (1, [
+                ("user", "What's the weather?", "weather"),
+                ("assistant", "Sunny, 22°C in Ankara.", None),
+                ("user", "Check my calendar", "calendar"),
+                ("assistant", "You have a meeting with Prof. Yilmaz at 3pm.", None),
+                ("user", "Remind me to study", None),
+                ("assistant", "Reminder set for 8pm.", "reminder"),
+            ]),
+            (2, [
+                ("user", "Help me with Docker networking", "shell"),
+                ("assistant", "The bridge network is misconfigured. Try...", None),
+                ("user", "That worked, thanks!", None),
+                ("assistant", "Great! Docker bridge is fixed.", None),
+                ("user", "Now let's work on Bantz v3 planning", None),
+                ("assistant", "Let's outline the architecture. I suggest LanceDB for vectors.", None),
+            ]),
+        ]:
+            for role, content, tool in msgs:
+                conn.execute(
+                    "INSERT INTO messages (conversation_id, role, content, tool_used, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (conv_id, role, content, tool, f"{today}T10:00:00"),
+                )
 
-    # Insert distillation for conversation 1
-    conn.execute(
-        """INSERT INTO session_distillations
-           (conversation_id, summary, topics, decisions, people,
-            tools_used, exchange_count, created_at)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            "Checked weather and calendar. Reminder to study set.",
-            "weather,calendar,reminder",
-            "none",
-            "Prof. Yilmaz",
-            "weather,calendar",
-            3,
-            f"{today}T10:30:00",
-        ),
-    )
+        # Insert distillation for conversation 1
+        conn.execute(
+            """INSERT INTO session_distillations
+               (conversation_id, summary, topics, decisions, people,
+                tools_used, exchange_count, created_at)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "Checked weather and calendar. Reminder to study set.",
+                "weather,calendar,reminder",
+                "none",
+                "Prof. Yilmaz",
+                "weather,calendar",
+                3,
+                f"{today}T10:30:00",
+            ),
+        )
 
-    # Insert distillation for conversation 2
-    conn.execute(
-        """INSERT INTO session_distillations
-           (conversation_id, summary, topics, decisions, people,
-            tools_used, exchange_count, created_at)
-           VALUES (2, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            "Fixed Docker networking. Started Bantz v3 planning. Chose LanceDB for vectors.",
-            "docker,architecture,planning",
-            "Chose LanceDB over ChromaDB",
-            "",
-            "shell",
-            3,
-            f"{today}T15:00:00",
-        ),
-    )
+        # Insert distillation for conversation 2
+        conn.execute(
+            """INSERT INTO session_distillations
+               (conversation_id, summary, topics, decisions, people,
+                tools_used, exchange_count, created_at)
+               VALUES (2, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "Fixed Docker networking. Started Bantz v3 planning. Chose LanceDB for vectors.",
+                "docker,architecture,planning",
+                "Chose LanceDB over ChromaDB",
+                "",
+                "shell",
+                3,
+                f"{today}T15:00:00",
+            ),
+        )
 
-    return conn, lock, tmp_path
+    return pool, tmp_path
 
 
 @pytest.fixture
 def mock_memory(populated_db):
     """Mock the memory singleton to use our test DB."""
-    conn, lock, tmp_path = populated_db
+    pool, tmp_path = populated_db
     mock_mem = MagicMock()
-    mock_mem._conn = conn
-    mock_mem._lock = lock
+    mock_mem._initialized = True
     mock_mem.add = MagicMock()
-    return mock_mem, conn, lock, tmp_path
+    return mock_mem, pool, tmp_path
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -276,49 +281,50 @@ class TestReflectionResult:
 class TestDataCollection:
     def test_collect_today_distillations(self, populated_db):
         from bantz.agent.workflows.reflection import _collect_today_distillations
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
         today = datetime.now().strftime("%Y-%m-%d")
-        distills = _collect_today_distillations(conn, today)
+        distills = _collect_today_distillations(today)
         assert len(distills) == 2
         assert "weather" in distills[0]["summary"].lower() or "docker" in distills[0]["summary"].lower()
 
     def test_collect_today_distillations_empty(self, tmp_db):
         from bantz.agent.workflows.reflection import _collect_today_distillations
-        conn, lock, _ = tmp_db
-        distills = _collect_today_distillations(conn, "2099-01-01")
+        pool, _ = tmp_db
+        distills = _collect_today_distillations("2099-01-01")
         assert distills == []
 
     def test_collect_today_sessions_meta(self, populated_db):
         from bantz.agent.workflows.reflection import _collect_today_sessions_meta
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
         today = datetime.now().strftime("%Y-%m-%d")
-        sessions, messages = _collect_today_sessions_meta(conn, today)
+        sessions, messages = _collect_today_sessions_meta(today)
         assert sessions == 2
         assert messages == 12
 
     def test_collect_undistilled_sessions(self, populated_db):
         from bantz.agent.workflows.reflection import _collect_undistilled_sessions
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
         today = datetime.now().strftime("%Y-%m-%d")
         # All sessions have distillations
-        undistilled = _collect_undistilled_sessions(conn, today)
+        undistilled = _collect_undistilled_sessions(today)
         assert len(undistilled) == 0
 
     def test_collect_undistilled_sessions_with_gap(self, populated_db):
         from bantz.agent.workflows.reflection import _collect_undistilled_sessions
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
         today = datetime.now().strftime("%Y-%m-%d")
         # Add a third conversation without distillation
-        conn.execute(
-            "INSERT INTO conversations (id, started_at, last_active) VALUES (3, ?, ?)",
-            (f"{today}T18:00:00", f"{today}T18:30:00"),
-        )
-        conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, created_at) "
-            "VALUES (3, 'user', 'Quick question', ?)",
-            (f"{today}T18:00:00",),
-        )
-        undistilled = _collect_undistilled_sessions(conn, today)
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations (id, started_at, last_active) VALUES (3, ?, ?)",
+                (f"{today}T18:00:00", f"{today}T18:30:00"),
+            )
+            conn.execute(
+                "INSERT INTO messages (conversation_id, role, content, created_at) "
+                "VALUES (3, 'user', 'Quick question', ?)",
+                (f"{today}T18:00:00",),
+            )
+        undistilled = _collect_undistilled_sessions(today)
         assert len(undistilled) == 1
         assert undistilled[0]["conversation_id"] == 3
 
@@ -506,120 +512,126 @@ class TestPruneOldMessages:
     def test_prune_removes_old_messages_and_vectors(self, populated_db):
         """Messages AND vectors older than 30 days should be deleted."""
         from bantz.agent.workflows.reflection import _prune_old_messages
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
 
         # Add an old conversation (40 days ago) with distillation
         old_date = (datetime.now() - timedelta(days=40)).isoformat()
-        conn.execute(
-            "INSERT INTO conversations (id, started_at, last_active) VALUES (10, ?, ?)",
-            (old_date, old_date),
-        )
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-            "VALUES (100, 10, 'user', 'old message', ?)",
-            (old_date,),
-        )
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-            "VALUES (101, 10, 'assistant', 'old response', ?)",
-            (old_date,),
-        )
-        conn.execute(
-            """INSERT INTO session_distillations
-               (conversation_id, summary, created_at)
-               VALUES (10, 'Old session summary', ?)""",
-            (old_date,),
-        )
-        # Add vector embeddings for those messages
         import struct
         dummy_blob = struct.pack("3f", 0.1, 0.2, 0.3)
-        conn.execute(
-            "INSERT INTO message_vectors (message_id, embedding, dim, model, created_at) "
-            "VALUES (100, ?, 3, 'test', ?)",
-            (dummy_blob, old_date),
-        )
-        conn.execute(
-            "INSERT INTO message_vectors (message_id, embedding, dim, model, created_at) "
-            "VALUES (101, ?, 3, 'test', ?)",
-            (dummy_blob, old_date),
-        )
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations (id, started_at, last_active) VALUES (10, ?, ?)",
+                (old_date, old_date),
+            )
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, created_at) "
+                "VALUES (100, 10, 'user', 'old message', ?)",
+                (old_date,),
+            )
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, created_at) "
+                "VALUES (101, 10, 'assistant', 'old response', ?)",
+                (old_date,),
+            )
+            conn.execute(
+                """INSERT INTO session_distillations
+                   (conversation_id, summary, created_at)
+                   VALUES (10, 'Old session summary', ?)""",
+                (old_date,),
+            )
+            # Add vector embeddings for those messages
+            conn.execute(
+                "INSERT INTO message_vectors (message_id, embedding, dim, model, created_at) "
+                "VALUES (100, ?, 3, 'test', ?)",
+                (dummy_blob, old_date),
+            )
+            conn.execute(
+                "INSERT INTO message_vectors (message_id, embedding, dim, model, created_at) "
+                "VALUES (101, ?, 3, 'test', ?)",
+                (dummy_blob, old_date),
+            )
 
-        msgs_deleted, vecs_deleted = _prune_old_messages(conn, lock, keep_days=30)
+        msgs_deleted, vecs_deleted = _prune_old_messages(keep_days=30)
         assert msgs_deleted == 2
         assert vecs_deleted == 2
 
         # Verify vectors are actually gone
-        remaining = conn.execute(
-            "SELECT COUNT(*) FROM message_vectors WHERE message_id IN (100, 101)"
-        ).fetchone()[0]
-        assert remaining == 0
+        with pool.connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM message_vectors WHERE message_id IN (100, 101)"
+            ).fetchone()[0]
+            assert remaining == 0
 
-        # Distillation should STILL exist (we keep summaries)
-        dist = conn.execute(
-            "SELECT COUNT(*) FROM session_distillations WHERE conversation_id = 10"
-        ).fetchone()[0]
-        assert dist == 1
+            # Distillation should STILL exist (we keep summaries)
+            dist = conn.execute(
+                "SELECT COUNT(*) FROM session_distillations WHERE conversation_id = 10"
+            ).fetchone()[0]
+            assert dist == 1
 
     def test_prune_skips_recent_messages(self, populated_db):
         from bantz.agent.workflows.reflection import _prune_old_messages
-        conn, lock, _ = populated_db
-        msgs_deleted, vecs_deleted = _prune_old_messages(conn, lock, keep_days=30)
+        pool, _ = populated_db
+        msgs_deleted, vecs_deleted = _prune_old_messages(keep_days=30)
         # Today's messages should NOT be deleted
         assert msgs_deleted == 0
 
     def test_prune_dry_run(self, populated_db):
         from bantz.agent.workflows.reflection import _prune_old_messages
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
         # Add old data
         old_date = (datetime.now() - timedelta(days=40)).isoformat()
-        conn.execute(
-            "INSERT INTO conversations (id, started_at, last_active) VALUES (10, ?, ?)",
-            (old_date, old_date),
-        )
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-            "VALUES (100, 10, 'user', 'old', ?)",
-            (old_date,),
-        )
-        conn.execute(
-            """INSERT INTO session_distillations
-               (conversation_id, summary, created_at)
-               VALUES (10, 'summary', ?)""",
-            (old_date,),
-        )
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations (id, started_at, last_active) VALUES (10, ?, ?)",
+                (old_date, old_date),
+            )
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, created_at) "
+                "VALUES (100, 10, 'user', 'old', ?)",
+                (old_date,),
+            )
+            conn.execute(
+                """INSERT INTO session_distillations
+                   (conversation_id, summary, created_at)
+                   VALUES (10, 'summary', ?)""",
+                (old_date,),
+            )
 
-        msgs, vecs = _prune_old_messages(conn, lock, keep_days=30, dry_run=True)
+        msgs, vecs = _prune_old_messages(keep_days=30, dry_run=True)
         assert msgs > 0  # would delete
 
         # But messages should still exist
-        remaining = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE id = 100"
-        ).fetchone()[0]
-        assert remaining == 1
+        with pool.connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE id = 100"
+            ).fetchone()[0]
+            assert remaining == 1
 
     def test_prune_only_distilled_conversations(self, populated_db):
         """Only conversations WITH distillations should be pruned."""
         from bantz.agent.workflows.reflection import _prune_old_messages
-        conn, lock, _ = populated_db
+        pool, _ = populated_db
 
         old_date = (datetime.now() - timedelta(days=40)).isoformat()
         # Old conversation WITHOUT distillation — should NOT be pruned
-        conn.execute(
-            "INSERT INTO conversations (id, started_at, last_active) VALUES (11, ?, ?)",
-            (old_date, old_date),
-        )
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-            "VALUES (110, 11, 'user', 'important', ?)",
-            (old_date,),
-        )
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations (id, started_at, last_active) VALUES (11, ?, ?)",
+                (old_date, old_date),
+            )
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, created_at) "
+                "VALUES (110, 11, 'user', 'important', ?)",
+                (old_date,),
+            )
 
-        msgs_deleted, _ = _prune_old_messages(conn, lock, keep_days=30)
+        msgs_deleted, _ = _prune_old_messages(keep_days=30)
         # Should NOT delete this undistilled conversation's messages
-        remaining = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE id = 110"
-        ).fetchone()[0]
-        assert remaining == 1
+        with pool.connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE id = 110"
+            ).fetchone()[0]
+            assert remaining == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -630,13 +642,10 @@ class TestStoreReflection:
     @pytest.mark.asyncio
     async def test_stores_to_kv(self, tmp_path):
         from bantz.agent.workflows.reflection import _store_reflection, ReflectionResult
-        import threading
+        from bantz.data.connection_pool import get_pool
         # The KV store inside _store_reflection opens _data_dir()/bantz.db
         kv_db_path = tmp_path / "bantz.db"
-        # Use a separate connection for the test fixture
-        conn = sqlite3.connect(str(tmp_path / "memory.db"), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        lock = threading.Lock()
+        pool = get_pool(kv_db_path)
 
         result = ReflectionResult(
             date="2026-03-10",
@@ -646,12 +655,11 @@ class TestStoreReflection:
         )
         with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
             with patch("bantz.core.memory.memory") as mock_mem:
-                mock_mem._conn = conn
+                mock_mem._initialized = True
                 mock_mem.add = MagicMock()
                 with patch("bantz.config.config") as mock_cfg:
                     mock_cfg.embedding_enabled = False
-                    await _store_reflection(conn, lock, result)
-        conn.close()
+                    await _store_reflection(result)
 
         from bantz.data.sqlite_store import SQLiteKVStore
         kv = SQLiteKVStore(kv_db_path)
@@ -701,20 +709,19 @@ class TestRunReflection:
     async def test_zero_sessions_graceful(self, tmp_db):
         """0 sessions → immediate return with 'No conversations today'."""
         from bantz.agent.workflows.reflection import run_reflection
-        conn, lock, tmp_path = tmp_db
+        pool, tmp_path = tmp_db
 
-        with patch("bantz.agent.workflows.reflection._get_conn_and_lock", return_value=(conn, lock)):
-            with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
-                with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
-                    mock_inh.return_value.__enter__ = MagicMock()
-                    mock_inh.return_value.__exit__ = MagicMock(return_value=False)
-                    with patch("bantz.agent.notifier.notifier") as mock_not:
-                        mock_not.enabled = False
-                        with patch("bantz.config.config") as mock_cfg:
-                            mock_cfg.telegram_bot_token = ""
-                            mock_cfg.telegram_allowed_users = ""
-                            mock_cfg.embedding_enabled = False
-                            result = await run_reflection(dry_run=False)
+        with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
+            with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
+                mock_inh.return_value.__enter__ = MagicMock()
+                mock_inh.return_value.__exit__ = MagicMock(return_value=False)
+                with patch("bantz.agent.notifier.notifier") as mock_not:
+                    mock_not.enabled = False
+                    with patch("bantz.config.config") as mock_cfg:
+                        mock_cfg.telegram_bot_token = ""
+                        mock_cfg.telegram_allowed_users = ""
+                        mock_cfg.embedding_enabled = False
+                        result = await run_reflection(dry_run=False)
 
         assert result.sessions == 0
         assert "No conversations" in result.summary
@@ -723,20 +730,19 @@ class TestRunReflection:
     async def test_dry_run_no_llm_calls(self, populated_db):
         """Dry-run mode should NOT call the LLM."""
         from bantz.agent.workflows.reflection import run_reflection
-        conn, lock, tmp_path = populated_db
+        pool, tmp_path = populated_db
 
-        with patch("bantz.agent.workflows.reflection._get_conn_and_lock", return_value=(conn, lock)):
-            with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
-                with patch("bantz.agent.workflows.reflection._llm_reflect") as mock_llm:
-                    with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
-                        mock_inh.return_value.__enter__ = MagicMock()
-                        mock_inh.return_value.__exit__ = MagicMock(return_value=False)
-                        with patch("bantz.agent.notifier.notifier") as mock_not:
-                            mock_not.enabled = False
-                            with patch("bantz.config.config") as mock_cfg:
-                                mock_cfg.telegram_bot_token = ""
-                                mock_cfg.telegram_allowed_users = ""
-                                result = await run_reflection(dry_run=True)
+        with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
+            with patch("bantz.agent.workflows.reflection._llm_reflect") as mock_llm:
+                with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
+                    mock_inh.return_value.__enter__ = MagicMock()
+                    mock_inh.return_value.__exit__ = MagicMock(return_value=False)
+                    with patch("bantz.agent.notifier.notifier") as mock_not:
+                        mock_not.enabled = False
+                        with patch("bantz.config.config") as mock_cfg:
+                            mock_cfg.telegram_bot_token = ""
+                            mock_cfg.telegram_allowed_users = ""
+                            result = await run_reflection(dry_run=True)
 
         mock_llm.assert_not_called()
         assert "DRY-RUN" in result.summary
@@ -745,7 +751,7 @@ class TestRunReflection:
     async def test_normal_run_with_mocked_llm(self, populated_db):
         """Normal run should call LLM, parse result, and store."""
         from bantz.agent.workflows.reflection import run_reflection
-        conn, lock, tmp_path = populated_db
+        pool, tmp_path = populated_db
 
         llm_response = json.dumps({
             "summary": "Worked on weather, Docker, and Bantz v3 planning.",
@@ -757,28 +763,27 @@ class TestRunReflection:
             "unresolved": ["Exam prep"],
         })
 
-        with patch("bantz.agent.workflows.reflection._get_conn_and_lock", return_value=(conn, lock)):
-            with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
-                with patch("bantz.agent.workflows.reflection._llm_reflect",
-                           new_callable=AsyncMock, return_value=llm_response):
-                    with patch("bantz.agent.workflows.reflection._llm_extract_entities",
-                               new_callable=AsyncMock, return_value=[]):
-                        with patch("bantz.agent.workflows.reflection._store_entities_to_graph",
-                                   new_callable=AsyncMock, return_value=0):
-                            with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
-                                mock_inh.return_value.__enter__ = MagicMock()
-                                mock_inh.return_value.__exit__ = MagicMock(return_value=False)
-                                with patch("bantz.agent.notifier.notifier") as mock_not:
-                                    mock_not.enabled = False
-                                    with patch("bantz.config.config") as mock_cfg:
-                                        mock_cfg.telegram_bot_token = ""
-                                        mock_cfg.telegram_allowed_users = ""
-                                        mock_cfg.embedding_enabled = False
-                                        mock_cfg.db_path = tmp_path / "bantz.db"
-                                        with patch("bantz.core.memory.memory") as mock_mem:
-                                            mock_mem._conn = conn
-                                            mock_mem.add = MagicMock()
-                                            result = await run_reflection(dry_run=False)
+        with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
+            with patch("bantz.agent.workflows.reflection._llm_reflect",
+                       new_callable=AsyncMock, return_value=llm_response):
+                with patch("bantz.agent.workflows.reflection._llm_extract_entities",
+                           new_callable=AsyncMock, return_value=[]):
+                    with patch("bantz.agent.workflows.reflection._store_entities_to_graph",
+                               new_callable=AsyncMock, return_value=0):
+                        with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
+                            mock_inh.return_value.__enter__ = MagicMock()
+                            mock_inh.return_value.__exit__ = MagicMock(return_value=False)
+                            with patch("bantz.agent.notifier.notifier") as mock_not:
+                                mock_not.enabled = False
+                                with patch("bantz.config.config") as mock_cfg:
+                                    mock_cfg.telegram_bot_token = ""
+                                    mock_cfg.telegram_allowed_users = ""
+                                    mock_cfg.embedding_enabled = False
+                                    mock_cfg.db_path = tmp_path / "bantz.db"
+                                    with patch("bantz.core.memory.memory") as mock_mem:
+                                        mock_mem._initialized = True
+                                        mock_mem.add = MagicMock()
+                                        result = await run_reflection(dry_run=False)
 
         assert result.sessions == 2
         assert result.summary == "Worked on weather, Docker, and Bantz v3 planning."
@@ -801,23 +806,22 @@ class TestRunReflection:
     async def test_date_override(self, populated_db):
         """date_override should reflect on a specific date."""
         from bantz.agent.workflows.reflection import run_reflection
-        conn, lock, tmp_path = populated_db
+        pool, tmp_path = populated_db
 
-        with patch("bantz.agent.workflows.reflection._get_conn_and_lock", return_value=(conn, lock)):
-            with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
-                with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
-                    mock_inh.return_value.__enter__ = MagicMock()
-                    mock_inh.return_value.__exit__ = MagicMock(return_value=False)
-                    with patch("bantz.agent.notifier.notifier") as mock_not:
-                        mock_not.enabled = False
-                        with patch("bantz.config.config") as mock_cfg:
-                            mock_cfg.telegram_bot_token = ""
-                            mock_cfg.telegram_allowed_users = ""
-                            mock_cfg.embedding_enabled = False
-                            result = await run_reflection(
-                                dry_run=False,
-                                date_override="2099-12-31",
-                            )
+        with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
+            with patch("bantz.agent.job_scheduler.inhibit_sleep") as mock_inh:
+                mock_inh.return_value.__enter__ = MagicMock()
+                mock_inh.return_value.__exit__ = MagicMock(return_value=False)
+                with patch("bantz.agent.notifier.notifier") as mock_not:
+                    mock_not.enabled = False
+                    with patch("bantz.config.config") as mock_cfg:
+                        mock_cfg.telegram_bot_token = ""
+                        mock_cfg.telegram_allowed_users = ""
+                        mock_cfg.embedding_enabled = False
+                        result = await run_reflection(
+                            dry_run=False,
+                            date_override="2099-12-31",
+                        )
 
         assert result.date == "2099-12-31"
         assert result.sessions == 0
@@ -830,7 +834,7 @@ class TestRunReflection:
 class TestListReflections:
     def test_list_empty(self, tmp_db):
         from bantz.agent.workflows.reflection import list_reflections
-        _, _, tmp_path = tmp_db
+        _, tmp_path = tmp_db
         with patch("bantz.agent.workflows.reflection._data_dir", return_value=tmp_path):
             results = list_reflections()
         assert results == []
@@ -838,7 +842,7 @@ class TestListReflections:
     def test_list_with_data(self, tmp_db):
         from bantz.agent.workflows.reflection import list_reflections
         from bantz.data.sqlite_store import SQLiteKVStore
-        _, _, tmp_path = tmp_db
+        _, tmp_path = tmp_db
         kv = SQLiteKVStore(tmp_path / "bantz.db")
         kv.set("reflection_2026-03-08", json.dumps({"date": "2026-03-08", "summary": "Day 1"}))
         kv.set("reflection_2026-03-09", json.dumps({"date": "2026-03-09", "summary": "Day 2"}))

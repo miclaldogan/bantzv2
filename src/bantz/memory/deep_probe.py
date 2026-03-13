@@ -157,14 +157,16 @@ class DeepMemoryProbe:
         *ranking* among the survivors.
         """
         from bantz.memory.vector_store import _cosine_similarity, _blob_to_vec
+        from bantz.data.connection_pool import get_pool
 
-        rows = vs._conn.execute(
-            """SELECT mv.message_id, mv.embedding, mv.dim,
-                      m.role, m.content, m.tool_used, m.created_at,
-                      m.conversation_id
-               FROM message_vectors mv
-               JOIN messages m ON m.id = mv.message_id"""
-        ).fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                """SELECT mv.message_id, mv.embedding, mv.dim,
+                          m.role, m.content, m.tool_used, m.created_at,
+                          m.conversation_id
+                   FROM message_vectors mv
+                   JOIN messages m ON m.id = mv.message_id"""
+            ).fetchall()
 
         results: list[dict] = []
         for row in rows:

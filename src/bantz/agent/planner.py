@@ -58,8 +58,12 @@ CRITICAL TOOL RULES:
 
 TOOL USAGE BEST PRACTICES:
 - For `web_search`: Keep queries SHORT and broad (e.g., "Google quantum computer study", NOT "Search for the article titled Google Quantum Computer Makes Breakthrough in Quantum Error Correction"). The search engine works best with concise keywords.
-- For `read_url`: The parameter MUST be a valid HTTP/HTTPS URL. Do NOT pass natural language or search queries to this tool. You get this URL from `{{step_N_output}}` of a previous `web_search` step.
+- For `read_url`: The `read_url` tool strictly requires ONLY a valid 'http' URL. Do NOT pass natural language to it. However, `{{step_N_output}}` from `web_search` contains full text snippets. Therefore it is heavily recommended to instruct the system accurately. Actually, the rule is: ALWAYS use `{{step_N_output}}` from `web_search` as the `url` parameter for `read_url`. The system will automatically extract the best URL from the search results text.
 - Keep plans as SHORT as possible. A complete deep reading workflow should only be 3 or 4 steps: `web_search` -> `read_url` -> `process_text` -> `filesystem`.
+
+STANDARD OPERATING PROCEDURES (SOP) & FALLBACKS:
+- Rule 1 (Strict Path Selection): NEVER create conditional steps (e.g., 'If Step 1 fails...'). The executor runs ALL steps sequentially. You must choose ONE path before planning: EITHER use the simple specialist tool (like `weather`) OR use the deep research flow (`web_search` -> `read_url` -> `process_text`). Do NOT mix them in the same plan.
+- Deep Research bypass: If the user explicitly asks you to search the internet, read a site, or bypass your normal tools, or asks for "latest news about [topic]", choose the deep research flow. Always chain `web_search` -> `read_url` -> `process_text` to extract detailed facts from the actual articles.
 
 RULES:
 1. Each step must use exactly ONE tool.
@@ -67,10 +71,20 @@ RULES:
 3. If a step needs the output of a previous step, note it in "depends_on".
 4. Keep it minimal — don't add unnecessary steps.
 5. For file writing, default to ~/Desktop/ if no path is specified.
-6. Return ONLY a valid JSON array. No markdown fences. No explanation.
+6. Return your response in exactly two parts:
+   a. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit:
+      - Step 1: Goal & Information Extraction: What is the final goal? What strict parameters (file names, exact URLs, locations) did the user provide?
+      - Step 2: Path Selection & Tool Matching: Which seq of tools achieves this? If reading an article, do I have the URL or do I need to search first?
+      - Step 3: Double-Check / Self-Correction: Have I skipped any required tools? Am I faking variables? Are my params correct and based on real input?
+   b. After the thinking block, output ONLY a valid JSON array. No markdown fences. No explanation.
 7. CRITICAL: When referencing output from a previous step, you MUST use the EXACT format `{{step_N_output}}` (e.g. `{{step_1_output}}`, `{{step_2_output}}`). Do NOT invent custom variable names like `{{step_1_url}}`, `{{step_1_best_article_url}}`, or `{{step_1_summary}}`. The ONLY valid placeholder is `{{step_N_output}}`.
 
 OUTPUT FORMAT (return a JSON array of objects):
+<thinking>
+Step 1: The user wants to [objective here]. Key entities observed: [x, y].
+Step 2: The optimal chain of tools is tool_A -> tool_B.
+Step 3: Double-Check: I must not hallucinate the output of tool_A. I will use {{step_1_output}}.
+</thinking>
 [
   {{"step": 1, "tool": "<tool_name>", "params": {{...}}, "description": "Brief description", "depends_on": null}},
   {{"step": 2, "tool": "<tool_name>", "params": {{...}}, "description": "Brief description", "depends_on": 1}},
@@ -80,6 +94,11 @@ OUTPUT FORMAT (return a JSON array of objects):
 EXAMPLES:
 
 User: "Search for articles about quantum computing, summarize the best one, and save to a file"
+<thinking>
+Step 1: Goal is to find, read, summarize, and save an article. Entities: Query="quantum computing breakthrough", Target File=Quantum summary.
+Step 2: Needs deep research flow: web_search -> read_url -> process_text -> filesystem.
+Step 3: Double-Check: read_url needs a URL, which I will dynamically get from {{step_1_output}}. process_text will summarize {{step_2_output}}. Correct.
+</thinking>
 [
   {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing breakthrough"}}, "description": "Search for quantum computing articles — returns a list of URLs", "depends_on": null}},
   {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full article from the URL returned by step 1", "depends_on": 1}},
@@ -88,6 +107,11 @@ User: "Search for articles about quantum computing, summarize the best one, and 
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
+<thinking>
+Step 1: Goal is three independent tasks: Email unread, Weather in Istanbul, Today's Calendar.
+Step 2: Tools needed: gmail In parallel to weather In parallel to calendar. Series execution is fine.
+Step 3: Double-Check: I have the city "Istanbul". I don't need any complex variables between steps as they don't depend on each other.
+</thinking>
 [
   {{"step": 1, "tool": "gmail", "params": {{"action": "unread"}}, "description": "Check unread emails", "depends_on": null}},
   {{"step": 2, "tool": "weather", "params": {{"city": "Istanbul"}}, "description": "Check weather in Istanbul", "depends_on": null}},

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import math
-import sqlite3
 import threading
 from typing import Optional
 
@@ -63,7 +62,6 @@ class BondingMeter:
 
     def __init__(self) -> None:
         self._highwater: float = 0.0
-        self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.Lock()
         self._initialized = False
 
@@ -73,26 +71,24 @@ class BondingMeter:
         """Load highwater from SQLite (creates table if needed)."""
         if self._initialized:
             return
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS bonding_meter (
-                key   TEXT PRIMARY KEY,
-                value REAL NOT NULL
-            )
-        """)
-        self._conn.commit()
-        row = self._conn.execute(
-            "SELECT value FROM bonding_meter WHERE key = 'highwater'"
-        ).fetchone()
+        from bantz.data.connection_pool import get_pool
+        pool = get_pool(str(db_path))
+        with pool.connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bonding_meter (
+                    key   TEXT PRIMARY KEY,
+                    value REAL NOT NULL
+                )
+            """)
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM bonding_meter WHERE key = 'highwater'"
+            ).fetchone()
         self._highwater = row[0] if row else 0.0
         self._initialized = True
         log.info("Bonding meter initialised — highwater=%.3f", self._highwater)
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
         self._initialized = False
 
     # ── Core math ─────────────────────────────────────────────────────
@@ -150,15 +146,16 @@ class BondingMeter:
         return TIERS[-1]
 
     def _persist_highwater(self) -> None:
-        if not self._conn:
+        if not self._initialized:
             return
         try:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO bonding_meter (key, value) "
-                "VALUES ('highwater', ?)",
-                (self._highwater,),
-            )
-            self._conn.commit()
+            from bantz.data.connection_pool import get_pool
+            with get_pool().connection(write=True) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO bonding_meter (key, value) "
+                    "VALUES ('highwater', ?)",
+                    (self._highwater,),
+                )
         except Exception:
             log.debug("Failed to persist bonding highwater")
 

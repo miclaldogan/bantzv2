@@ -26,6 +26,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from bantz.data.connection_pool import get_pool, SQLitePool
 from bantz.vision.spatial_cache import (
     SpatialCacheDB,
     CacheEntry,
@@ -39,6 +40,12 @@ from bantz.vision.spatial_cache import (
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _reset_pool():
+    yield
+    SQLitePool.reset()
+
 
 @pytest.fixture
 def db(tmp_path: Path) -> SpatialCacheDB:
@@ -67,15 +74,17 @@ def populated_db(db: SpatialCacheDB) -> SpatialCacheDB:
 class TestSchema:
     def test_table_created(self, db: SpatialCacheDB):
         """spatial_cache table exists with correct columns."""
-        rows = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='spatial_cache'"
-        ).fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='spatial_cache'"
+            ).fetchall()
         assert len(rows) == 1
 
     def test_index_created(self, db: SpatialCacheDB):
-        rows = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_spatial_app_label'"
-        ).fetchall()
+        with get_pool().connection() as conn:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_spatial_app_label'"
+            ).fetchall()
         assert len(rows) == 1
 
     def test_unique_constraint(self, db: SpatialCacheDB):
@@ -83,11 +92,13 @@ class TestSchema:
         db.store("app", "button", 1920, 1080, x=100, y=200, source="atspi")
         # Second store with same key should upsert, not duplicate
         db.store("app", "button", 1920, 1080, x=150, y=250, source="vlm")
-        count = db._conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
+        with get_pool().connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
         assert count == 1
 
     def test_wal_mode(self, db: SpatialCacheDB):
-        mode = db._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        with get_pool().connection() as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         assert mode == "wal"
 
     def test_double_init_safe(self, tmp_path: Path):
@@ -201,9 +212,10 @@ class TestTTL:
         db.store("app", "btn", 1920, 1080, x=100, y=200, source="atspi")
         # Manually age the entry
         old_time = (datetime.now() - timedelta(hours=TTL_HOURS + 1)).isoformat(timespec="seconds")
-        db._conn.execute(
-            "UPDATE spatial_cache SET last_verified = ?", (old_time,)
-        )
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "UPDATE spatial_cache SET last_verified = ?", (old_time,)
+            )
         entry = db.lookup("app", "btn", 1920, 1080)
         assert entry is None  # expired entries return None
 
@@ -212,10 +224,11 @@ class TestTTL:
         db.store("app", "b", 1920, 1080, x=0, y=0, source="atspi")
         # Age one entry
         old = (datetime.now() - timedelta(hours=TTL_HOURS + 1)).isoformat(timespec="seconds")
-        db._conn.execute(
-            "UPDATE spatial_cache SET last_verified = ? WHERE element_label = 'a'",
-            (old,),
-        )
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "UPDATE spatial_cache SET last_verified = ? WHERE element_label = 'a'",
+                (old,),
+            )
         removed = db.invalidate_expired()
         assert removed == 1
         assert db.lookup("app", "a", 1920, 1080) is None
@@ -234,7 +247,8 @@ class TestConfidenceDecay:
         db.store("app", "btn", 1920, 1080, x=0, y=0, source="atspi")
         # Age by 10 days (within TTL since we're 10*24 = 240h > 24h, but let's use 12h = 0.5 days)
         aging = (datetime.now() - timedelta(hours=12)).isoformat(timespec="seconds")
-        db._conn.execute("UPDATE spatial_cache SET last_verified = ?", (aging,))
+        with get_pool().connection(write=True) as conn:
+            conn.execute("UPDATE spatial_cache SET last_verified = ?", (aging,))
 
         entry = db.lookup("app", "btn", 1920, 1080)
         assert entry is not None
@@ -246,7 +260,8 @@ class TestConfidenceDecay:
         db.store("app", "btn", 1920, 1080, x=0, y=0, source="vlm", confidence=0.35)
         # Age by 20h (0.83 days → decay 0.042) → effective ≈ 0.308, still above
         aging = (datetime.now() - timedelta(hours=20)).isoformat(timespec="seconds")
-        db._conn.execute("UPDATE spatial_cache SET last_verified = ?", (aging,))
+        with get_pool().connection(write=True) as conn:
+            conn.execute("UPDATE spatial_cache SET last_verified = ?", (aging,))
         entry = db.lookup("app", "btn", 1920, 1080)
         # Should still be above 0.3
         assert entry is not None
@@ -261,27 +276,30 @@ class TestLRUEviction:
         for i in range(MAX_ENTRIES + 10):
             db.store("app", f"btn_{i}", 1920, 1080, x=i, y=i, source="atspi")
 
-        count = db._conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
+        with get_pool().connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
         assert count <= MAX_ENTRIES
 
     def test_oldest_evicted_first(self, db: SpatialCacheDB):
         """The oldest entries are evicted (LRU by last_verified)."""
         # Insert a few with staggered timestamps
         base = datetime.now() - timedelta(hours=10)
-        for i in range(5):
-            ts = (base + timedelta(minutes=i)).isoformat(timespec="seconds")
-            db._conn.execute("""
-                INSERT INTO spatial_cache
-                    (app_name, element_label, resolution_w, resolution_h,
-                     x, y, source, last_verified)
-                VALUES (?, ?, 1920, 1080, ?, ?, 'atspi', ?)
-            """, (f"app", f"btn_{i}", i, i, ts))
+        with get_pool().connection(write=True) as conn:
+            for i in range(5):
+                ts = (base + timedelta(minutes=i)).isoformat(timespec="seconds")
+                conn.execute("""
+                    INSERT INTO spatial_cache
+                        (app_name, element_label, resolution_w, resolution_h,
+                         x, y, source, last_verified)
+                    VALUES (?, ?, 1920, 1080, ?, ?, 'atspi', ?)
+                """, (f"app", f"btn_{i}", i, i, ts))
 
         # Now fill to max + overflow
         for i in range(5, MAX_ENTRIES + 2):
             db.store("app", f"btn_{i}", 1920, 1080, x=i, y=i, source="atspi")
 
-        count = db._conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
+        with get_pool().connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
         assert count <= MAX_ENTRIES
 
         # The oldest (btn_0) should be evicted
@@ -307,7 +325,8 @@ class TestInvalidation:
     def test_invalidate_all(self, populated_db: SpatialCacheDB):
         removed = populated_db.invalidate_all()
         assert removed >= 4
-        count = populated_db._conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
+        with get_pool().connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM spatial_cache").fetchone()[0]
         assert count == 0
 
     def test_invalidate_not_initialized(self):
@@ -325,7 +344,8 @@ class TestVerify:
         db.store("app", "btn", 1920, 1080, x=100, y=200, source="atspi")
         # Age it
         old = (datetime.now() - timedelta(hours=20)).isoformat(timespec="seconds")
-        db._conn.execute("UPDATE spatial_cache SET last_verified = ?", (old,))
+        with get_pool().connection(write=True) as conn:
+            conn.execute("UPDATE spatial_cache SET last_verified = ?", (old,))
 
         result = db.verify("app", "btn", 1920, 1080)
         assert result is True

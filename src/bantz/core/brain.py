@@ -215,31 +215,6 @@ RULES:
 5. NEVER invent extra files or directories\
 """
 
-# ── LLM-based filesystem parameter extractor (#196-v2) ──────────────────────
-# Replaces rigid regex with LLM understanding for folder+file creation.
-_FS_EXTRACT_SYSTEM = """\
-Extract folder + file creation parameters from the user request.
-Return ONLY a valid JSON object with these keys:
-- folder_path: path for the folder (default ~/Desktop/<name> if no path given)
-- file_name: the file to create (include extension; default .txt if none given)
-- content: text to write in the file (empty string if not specified)
-
-Examples:
-"create a stark folder then create a text file and write heeey into it"
-→ {"folder_path": "~/Desktop/stark", "file_name": "file.txt", "content": "heeey"}
-
-"make a directory called Projects and put readme.md in it with hello world"
-→ {"folder_path": "~/Desktop/Projects", "file_name": "readme.md", "content": "hello world"}
-
-"yeni klasör aç adı work olsun, içine notes.txt yaz, test yaz"
-→ {"folder_path": "~/Desktop/work", "file_name": "notes.txt", "content": "test"}
-
-"create a folder named reports then create data.csv"
-→ {"folder_path": "~/Desktop/reports", "file_name": "data.csv", "content": ""}
-
-Return ONLY the JSON object. No markdown fences. No explanation.\
-"""
-
 _REFUSAL_PATTERNS = (
     "sorry", "can't assist", "cannot assist", "i'm unable",
     "i cannot", "not able to", "inappropriate",
@@ -711,32 +686,6 @@ class Brain:
         ])
         return raw.strip().strip("`")
 
-    async def _extract_fs_params(self, orig: str, en: str) -> dict:
-        """Use LLM to extract folder+file creation params from natural language.
-
-        Returns dict with keys: folder_path, file_name, content.
-        Falls back to sensible defaults if parsing fails.
-        """
-        import json as _json
-
-        raw = await ollama.chat([
-            {"role": "system", "content": _FS_EXTRACT_SYSTEM},
-            {"role": "user", "content": en or orig},
-        ])
-
-        # Strip markdown fences and extract JSON
-        text = raw.strip().strip("`")
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        params = _json.loads(m.group() if m else text)
-
-        # Ensure required keys exist with defaults
-        params.setdefault("folder_path", "~/Desktop/new_folder")
-        params.setdefault("file_name", "file.txt")
-        params.setdefault("content", "")
-        return params
-
     async def _execute_plan(
         self, user_input: str, en_input: str, tc: dict,
     ) -> BrainResult | None:
@@ -915,27 +864,6 @@ class Brain:
                     return plan_result
         except Exception as exc:
             log.debug("Planner check failed: %s — falling through", exc)
-
-        # ── Workflow detection: multi-tool chained commands (#34) ──
-        # Regex-based workflow engine handles simple multi-step patterns
-        # that the planner didn't claim.
-        from bantz.core.workflow import workflow_engine
-        steps = workflow_engine.detect(user_input, en_input)
-        if steps:
-            resp = await workflow_engine.execute(steps, self, en_input, tc)
-            # Check if any step produced a draft → store for "send that" follow-up
-            for s in steps:
-                if s.result and s.result.data and s.result.data.get("draft"):
-                    d = s.result.data
-                    self._last_draft = {
-                        "to": d["to"],
-                        "subject": d.get("subject", ""),
-                        "body": d["body"],
-                    }
-            data_layer.conversations.add("assistant", resp, tool_used="workflow")
-            await self._graph_store(user_input, resp, "workflow")
-            self._fire_embeddings()
-            return BrainResult(response=resp, tool_used="workflow")
 
         quick = self._quick_route(user_input, en_input)
 
@@ -1139,93 +1067,23 @@ class Brain:
             data_layer.conversations.add("assistant", text, tool_used="schedule")
             return BrainResult(response=text, tool_used="schedule")
 
-        # ── FS autochain: LLM extracts folder/file params (#196-v2) ──────
-        if quick and quick["tool"] == "_fs_autochain":
-            try:
-                params = await self._extract_fs_params(user_input, en_input)
-                plan = {
-                    "route": "tool",
-                    "tool_name": "filesystem",
-                    "tool_args": {
-                        "action": "create_folder_and_file",
-                        "folder_path": params.get("folder_path", "~/Desktop/new_folder"),
-                        "file_name": params.get("file_name", "file.txt"),
-                        "content": params.get("content", ""),
-                    },
-                    "risk_level": "moderate",
-                }
-            except Exception as exc:
-                log.warning("FS autochain extraction failed: %s — falling back to shell", exc)
-                cmd = await self._generate_command(user_input, en_input)
-                plan = {"route": "tool", "tool_name": "shell",
-                        "tool_args": {"command": cmd}, "risk_level": "moderate"}
-
-        elif quick and quick["tool"] == "_generate":
+        if quick and quick["tool"] == "_generate":
             cmd = await self._generate_command(user_input, en_input)
             plan = {"route": "tool", "tool_name": "shell",
                     "tool_args": {"command": cmd}, "risk_level": "moderate"}
 
         elif quick:
-            # Resolve contextual email reads (#56)
-            if quick.get("_context_read") and quick["tool"] == "gmail":
-                msg_id = self._resolve_message_ref(user_input)
-                if msg_id:
-                    quick["args"]["message_id"] = msg_id
-
-            # Resolve "send that mail/draft" from last draft context
-            if quick.get("_send_draft") and quick["tool"] == "gmail":
-                if self._last_draft:
-                    quick["args"] = {
-                        "action": "send",
-                        "to": self._last_draft["to"],
-                        "subject": self._last_draft.get("subject", ""),
-                        "body": self._last_draft["body"],
-                    }
-                else:
-                    text = "No draft to send. Compose a mail first."
-                    data_layer.conversations.add("assistant", text)
-                    return BrainResult(response=text, tool_used=None)
-
             plan = {"route": "tool", "tool_name": quick["tool"],
                     "tool_args": quick["args"], "risk_level": "safe"}
 
         else:
-            # Short ambiguous input with recent email context?
-            # e.g. "medium" after listing emails → probably "emails from medium"
-            # BUT: "yes", "eh?", "aa", "ok" should NOT be routed to Gmail (#155)
-            _words = en_input.strip().split()
-            _short_input = len(_words) <= 2
-            _email_followup = False
-
-            if _short_input and self._last_messages:
-                _input_lower = en_input.strip().lower()
-                # Only route if input looks like a sender reference
-                # (matches a sender name/domain from last messages, or is ordinal)
-                _ORDINALS = {"first", "1st", "second", "2nd", "third", "3rd",
-                             "fourth", "4th", "fifth", "5th", "last", "next",
-                             "previous", "that one", "this one"}
-                if _input_lower in _ORDINALS or any(w in _input_lower for w in _ORDINALS):
-                    _email_followup = True
-                else:
-                    # Check if input matches any sender name/domain in recent messages
-                    for msg in self._last_messages:
-                        sender = msg.get("from", "").lower()
-                        if _input_lower in sender or sender.split("@")[0] in _input_lower:
-                            _email_followup = True
-                            break
-
-            if _email_followup:
-                plan = {"route": "tool", "tool_name": "gmail",
-                        "tool_args": {"action": "search", "from_sender": en_input.strip()},
-                        "risk_level": "safe"}
-            else:
-                plan = await cot_route(en_input, registry.all_schemas())
-                if plan is None:
-                    # Stream chat responses for lower perceived latency (#67)
-                    stream = self._chat_stream(en_input, tc)
-                    return BrainResult(
-                        response="", tool_used=None, stream=stream,
-                    )
+            plan = await cot_route(en_input, registry.all_schemas())
+            if plan is None:
+                # Stream chat responses for lower perceived latency (#67)
+                stream = self._chat_stream(en_input, tc)
+                return BrainResult(
+                    response="", tool_used=None, stream=stream,
+                )
 
         route     = plan.get("route", "chat")
         tool_name = plan.get("tool_name") or ""

@@ -77,6 +77,8 @@ ROUTING RULES:
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 
 CRITICAL:
+- If the user's request contains ambiguous pronouns (e.g., 'him', 'her') or refers to unspecified files/reports ('that report'), you MUST ask for clarification. Do NOT invent a fake report, do NOT roleplay sending a message to a fake person, and do not route to a tool until the ambiguity is resolved. Route to "chat" to ask for clarification.
+- NEVER hallucinate, guess, or roleplay factual data (weather, news, dates, events). If the user asks for weather, you MUST output a JSON routing to the `weather` tool. Do NOT answer directly in chat.
 - System queries (CPU, RAM, disk) are SAFE. Never refuse them.
 - NEVER route to "chat" if a tool can handle it.
 - Literal bash commands (ls, df -h, etc.) → shell with the command as-is.
@@ -96,11 +98,16 @@ ANTI-FALSE-POSITIVE RULES (critical — read carefully):
 - Emotional or corrective statements ("bud you got me wrong", "that's bad",
   "come on man") are ALWAYS "chat" — never trigger any tool.
 
-Return ONLY valid JSON — no markdown fences, no explanation outside the JSON:
+Return your response in exactly two parts:
+1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit using these exact steps:
+   - Step 1: Information Extraction: What exactly does the user want? What hard data (file paths, names, cities) did they provide?
+   - Step 2: Tool Matching: Is there a tool meant exactly for this? (e.g. if reading a file, I need 'document' or 'filesystem').
+   - Step 3: Double-Check / Self-Correction: Am I about to invent an answer without using a tool? I am a digital entity; I cannot see files, weather, or websites without using my tools. If I lack information to use a tool, my tool is 'chat' to ask for clarification.
+2. After the thinking block, output ONLY the valid JSON object exactly as specified below.
 
-{{"chain":[{{"step":"intent","thought":"..."}},{{"step":"tool","thought":"..."}},{{"step":"params","thought":"..."}}],"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95}}
+{{"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95}}
 
-For chat: {{"chain":[...],"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9}}\
+For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -117,21 +124,21 @@ def _is_refusal(text: str) -> bool:
 
 
 def _extract_json(text: str) -> dict:
-    """Extract the first JSON object from *text*, ignoring markdown fences."""
+    """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks."""
+    # Remove thinking block before extracting JSON
+    text = re.sub(r"<thinking>.*?</thinking>\s*", "", text, flags=re.DOTALL)
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text)
     m = re.search(r"\{.*\}", text, re.DOTALL)
     return json.loads(m.group() if m else text)
 
 
-def _log_chain(chain: list[dict], tag: str = "") -> None:
-    """Pretty-log the reasoning chain at DEBUG level."""
-    if not chain:
-        return
-    parts = " → ".join(
-        f"[{s.get('step', '?')}] {s.get('thought', '')}" for s in chain
-    )
-    log.debug("CoT%s: %s", f" ({tag})" if tag else "", parts)
+def _log_thinking(raw: str, tag: str = "") -> None:
+    """Pretty-log the thinking section at DEBUG level."""
+    m = re.search(r"<thinking>(.*?)</thinking>", raw, re.DOTALL)
+    if m:
+        thought = m.group(1).strip()
+        log.debug("Thinking%s: %s", f" ({tag})" if tag else "", thought)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -172,8 +179,8 @@ async def cot_route(
             log.warning("CoT refused (attempt 1): %.100s", raw)
             return None
 
+        _log_thinking(raw)
         plan = _extract_json(raw)
-        _log_chain(plan.get("chain", []))
 
         if plan.get("confidence", 0.8) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])
@@ -193,15 +200,16 @@ async def cot_route(
         messages.append({
             "role": "user",
             "content": (
-                "That was not valid JSON. Return ONLY a single JSON object "
-                "with keys: chain, route, tool_name, tool_args, risk_level, confidence. "
+                "That was not valid JSON. Ensure you include the <thinking> tags FIRST, "
+                "then output ONLY a single JSON object "
+                "with keys: route, tool_name, tool_args, risk_level, confidence. "
                 "No markdown. No explanation."
             ),
         })
 
         raw2 = await ollama.chat(messages)
+        _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)
-        _log_chain(plan.get("chain", []), tag="retry")
         return plan
 
     except Exception as exc:

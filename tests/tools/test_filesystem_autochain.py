@@ -241,6 +241,7 @@ class TestQuickRouteFilesystem:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skip(reason="Legacy _fs_autochain removed")
 class TestExtractFsParams:
     """Brain._extract_fs_params uses LLM to extract folder/file/content."""
 
@@ -306,6 +307,7 @@ class TestExtractFsParams:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skip(reason="Legacy _fs_autochain removed")
 class TestFsExtractPrompt:
     """The LLM prompt for filesystem extraction must exist and be well-formed."""
 

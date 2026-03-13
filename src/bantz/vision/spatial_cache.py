@@ -52,11 +52,12 @@ from __future__ import annotations
 import logging
 import sqlite3
 import subprocess
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from bantz.data.connection_pool import get_pool
 
 log = logging.getLogger("bantz.vision.spatial_cache")
 
@@ -201,48 +202,42 @@ class SpatialCacheDB:
     """
 
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
-        self._lock = threading.Lock()
         self._initialized = False
 
     def init(self, db_path: Path) -> None:
         """Initialize the spatial cache table.  Call once at startup."""
         if self._initialized:
             return
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            str(db_path), check_same_thread=False, isolation_level=None,
-        )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        get_pool(db_path)
         self._migrate()
         self._initialized = True
         log.debug("Spatial cache initialized: %s", db_path)
 
     def _migrate(self) -> None:
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS spatial_cache (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                app_name        TEXT NOT NULL,
-                element_label   TEXT NOT NULL,
-                resolution_w    INTEGER NOT NULL,
-                resolution_h    INTEGER NOT NULL,
-                x               INTEGER NOT NULL,
-                y               INTEGER NOT NULL,
-                width           INTEGER DEFAULT 0,
-                height          INTEGER DEFAULT 0,
-                role            TEXT DEFAULT 'other',
-                confidence      REAL DEFAULT 1.0,
-                source          TEXT NOT NULL,
-                last_verified   TEXT DEFAULT (datetime('now', 'localtime')),
-                hit_count       INTEGER DEFAULT 0,
-                UNIQUE(app_name, element_label, resolution_w, resolution_h)
-            )
-        """)
-        self._conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_spatial_app_label
-            ON spatial_cache(app_name, element_label)
-        """)
+        with get_pool().connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS spatial_cache (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    app_name        TEXT NOT NULL,
+                    element_label   TEXT NOT NULL,
+                    resolution_w    INTEGER NOT NULL,
+                    resolution_h    INTEGER NOT NULL,
+                    x               INTEGER NOT NULL,
+                    y               INTEGER NOT NULL,
+                    width           INTEGER DEFAULT 0,
+                    height          INTEGER DEFAULT 0,
+                    role            TEXT DEFAULT 'other',
+                    confidence      REAL DEFAULT 1.0,
+                    source          TEXT NOT NULL,
+                    last_verified   TEXT DEFAULT (datetime('now', 'localtime')),
+                    hit_count       INTEGER DEFAULT 0,
+                    UNIQUE(app_name, element_label, resolution_w, resolution_h)
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_spatial_app_label
+                ON spatial_cache(app_name, element_label)
+            """)
 
     # ── Lookup ────────────────────────────────────────────────────────────
 
@@ -259,18 +254,19 @@ class SpatialCacheDB:
         Returns CacheEntry if found and not expired, None otherwise.
         Automatically increments hit_count on success.
         """
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return None
 
         if resolution_w is None or resolution_h is None:
             resolution_w, resolution_h = get_screen_resolution()
 
-        row = self._conn.execute(
-            """SELECT * FROM spatial_cache
-               WHERE app_name = ? AND element_label = ?
-                 AND resolution_w = ? AND resolution_h = ?""",
-            (app_name.lower(), element_label.lower(), resolution_w, resolution_h),
-        ).fetchone()
+        with get_pool().connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM spatial_cache
+                   WHERE app_name = ? AND element_label = ?
+                     AND resolution_w = ? AND resolution_h = ?""",
+                (app_name.lower(), element_label.lower(), resolution_w, resolution_h),
+            ).fetchone()
 
         if row is None:
             return None
@@ -289,8 +285,8 @@ class SpatialCacheDB:
             return None
 
         # Increment hit count
-        with self._lock:
-            self._conn.execute(
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
                 "UPDATE spatial_cache SET hit_count = hit_count + 1 WHERE id = ?",
                 (row["id"],),
             )
@@ -321,7 +317,7 @@ class SpatialCacheDB:
         If confidence is None, uses SOURCE_CONFIDENCE[source] default.
         Performs LRU eviction if at max capacity.
         """
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return
 
         if resolution_w is None or resolution_h is None:
@@ -332,9 +328,9 @@ class SpatialCacheDB:
 
         now = datetime.now().isoformat(timespec="seconds")
 
-        with self._lock:
+        with get_pool().connection(write=True) as conn:
             # Upsert
-            self._conn.execute("""
+            conn.execute("""
                 INSERT INTO spatial_cache
                     (app_name, element_label, resolution_w, resolution_h,
                      x, y, width, height, role, confidence, source, last_verified, hit_count)
@@ -357,12 +353,12 @@ class SpatialCacheDB:
             ))
 
             # LRU eviction if over max
-            count = self._conn.execute(
+            count = conn.execute(
                 "SELECT COUNT(*) FROM spatial_cache"
             ).fetchone()[0]
             if count > MAX_ENTRIES:
                 excess = count - MAX_ENTRIES
-                self._conn.execute("""
+                conn.execute("""
                     DELETE FROM spatial_cache
                     WHERE id IN (
                         SELECT id FROM spatial_cache
@@ -376,10 +372,10 @@ class SpatialCacheDB:
 
     def invalidate_app(self, app_name: str) -> int:
         """Remove all cached entries for an application."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return 0
-        with self._lock:
-            cur = self._conn.execute(
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "DELETE FROM spatial_cache WHERE app_name = ?",
                 (app_name.lower(),),
             )
@@ -387,10 +383,10 @@ class SpatialCacheDB:
 
     def invalidate_resolution(self, resolution_w: int, resolution_h: int) -> int:
         """Remove all entries for a specific resolution."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return 0
-        with self._lock:
-            cur = self._conn.execute(
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "DELETE FROM spatial_cache WHERE resolution_w = ? AND resolution_h = ?",
                 (resolution_w, resolution_h),
             )
@@ -398,19 +394,19 @@ class SpatialCacheDB:
 
     def invalidate_all(self) -> int:
         """Clear the entire spatial cache."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return 0
-        with self._lock:
-            cur = self._conn.execute("DELETE FROM spatial_cache")
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute("DELETE FROM spatial_cache")
             return cur.rowcount
 
     def invalidate_expired(self) -> int:
         """Remove entries older than TTL_HOURS."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return 0
         cutoff = (datetime.now() - timedelta(hours=TTL_HOURS)).isoformat(timespec="seconds")
-        with self._lock:
-            cur = self._conn.execute(
+        with get_pool().connection(write=True) as conn:
+            cur = conn.execute(
                 "DELETE FROM spatial_cache WHERE last_verified < ?",
                 (cutoff,),
             )
@@ -434,7 +430,7 @@ class SpatialCacheDB:
         Optionally update coordinates if they changed.
         Returns True if entry existed and was updated.
         """
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return False
 
         if resolution_w is None or resolution_h is None:
@@ -442,9 +438,9 @@ class SpatialCacheDB:
 
         now = datetime.now().isoformat(timespec="seconds")
 
-        with self._lock:
+        with get_pool().connection(write=True) as conn:
             if x is not None and y is not None:
-                cur = self._conn.execute("""
+                cur = conn.execute("""
                     UPDATE spatial_cache
                     SET x = ?, y = ?, last_verified = ?,
                         confidence = COALESCE(?, confidence)
@@ -454,7 +450,7 @@ class SpatialCacheDB:
                       app_name.lower(), element_label.lower(),
                       resolution_w, resolution_h))
             else:
-                cur = self._conn.execute("""
+                cur = conn.execute("""
                     UPDATE spatial_cache
                     SET last_verified = ?,
                         confidence = COALESCE(?, confidence)
@@ -469,7 +465,7 @@ class SpatialCacheDB:
 
     def stats(self) -> dict:
         """Return cache statistics for the CLI command."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return {
                 "total_entries": 0,
                 "apps": {},
@@ -479,49 +475,50 @@ class SpatialCacheDB:
                 "top_elements": [],
             }
 
-        total = self._conn.execute(
-            "SELECT COUNT(*) FROM spatial_cache"
-        ).fetchone()[0]
+        with get_pool().connection() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM spatial_cache"
+            ).fetchone()[0]
 
-        # Per-app counts
-        apps = {}
-        for row in self._conn.execute(
-            "SELECT app_name, COUNT(*) as cnt FROM spatial_cache GROUP BY app_name ORDER BY cnt DESC"
-        ):
-            apps[row["app_name"]] = row["cnt"]
+            # Per-app counts
+            apps = {}
+            for row in conn.execute(
+                "SELECT app_name, COUNT(*) as cnt FROM spatial_cache GROUP BY app_name ORDER BY cnt DESC"
+            ):
+                apps[row["app_name"]] = row["cnt"]
 
-        # Per-source counts
-        sources = {}
-        for row in self._conn.execute(
-            "SELECT source, COUNT(*) as cnt FROM spatial_cache GROUP BY source ORDER BY cnt DESC"
-        ):
-            sources[row["source"]] = row["cnt"]
+            # Per-source counts
+            sources = {}
+            for row in conn.execute(
+                "SELECT source, COUNT(*) as cnt FROM spatial_cache GROUP BY source ORDER BY cnt DESC"
+            ):
+                sources[row["source"]] = row["cnt"]
 
-        # Expired count
-        cutoff = (datetime.now() - timedelta(hours=TTL_HOURS)).isoformat(timespec="seconds")
-        expired = self._conn.execute(
-            "SELECT COUNT(*) FROM spatial_cache WHERE last_verified < ?",
-            (cutoff,),
-        ).fetchone()[0]
+            # Expired count
+            cutoff = (datetime.now() - timedelta(hours=TTL_HOURS)).isoformat(timespec="seconds")
+            expired = conn.execute(
+                "SELECT COUNT(*) FROM spatial_cache WHERE last_verified < ?",
+                (cutoff,),
+            ).fetchone()[0]
 
-        # Total hits
-        total_hits = self._conn.execute(
-            "SELECT COALESCE(SUM(hit_count), 0) FROM spatial_cache"
-        ).fetchone()[0]
+            # Total hits
+            total_hits = conn.execute(
+                "SELECT COALESCE(SUM(hit_count), 0) FROM spatial_cache"
+            ).fetchone()[0]
 
-        # Top elements by hit count
-        top = []
-        for row in self._conn.execute(
-            "SELECT app_name, element_label, hit_count, source, confidence "
-            "FROM spatial_cache ORDER BY hit_count DESC LIMIT 10"
-        ):
-            top.append({
-                "app": row["app_name"],
-                "label": row["element_label"],
-                "hits": row["hit_count"],
-                "source": row["source"],
-                "confidence": row["confidence"],
-            })
+            # Top elements by hit count
+            top = []
+            for row in conn.execute(
+                "SELECT app_name, element_label, hit_count, source, confidence "
+                "FROM spatial_cache ORDER BY hit_count DESC LIMIT 10"
+            ):
+                top.append({
+                    "app": row["app_name"],
+                    "label": row["element_label"],
+                    "hits": row["hit_count"],
+                    "source": row["source"],
+                    "confidence": row["confidence"],
+                })
 
         return {
             "total_entries": total,
@@ -536,18 +533,19 @@ class SpatialCacheDB:
 
     def all_entries(self, app_name: str | None = None) -> list[CacheEntry]:
         """List all cache entries, optionally filtered by app."""
-        if not self._initialized or not self._conn:
+        if not self._initialized:
             return []
 
-        if app_name:
-            rows = self._conn.execute(
-                "SELECT * FROM spatial_cache WHERE app_name = ? ORDER BY last_verified DESC",
-                (app_name.lower(),),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM spatial_cache ORDER BY last_verified DESC"
-            ).fetchall()
+        with get_pool().connection() as conn:
+            if app_name:
+                rows = conn.execute(
+                    "SELECT * FROM spatial_cache WHERE app_name = ? ORDER BY last_verified DESC",
+                    (app_name.lower(),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM spatial_cache ORDER BY last_verified DESC"
+                ).fetchall()
 
         return [self._row_to_entry(row) for row in rows]
 
@@ -572,10 +570,7 @@ class SpatialCacheDB:
         )
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
-            self._initialized = False
+        self._initialized = False
 
 
 # Module-level singleton

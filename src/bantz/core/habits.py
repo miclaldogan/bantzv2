@@ -11,7 +11,6 @@ Usage:
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -30,16 +29,14 @@ _SEGMENTS: dict[str, tuple[int, int]] = {
 
 class HabitEngine:
     def __init__(self) -> None:
-        self._conn: Optional[sqlite3.Connection] = None
+        self._initialized = False
 
-    def _ensure_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            db_path = config.db_path
-            if not db_path.exists():
-                raise RuntimeError(f"DB not found: {db_path}")
-            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
+    def _get_conn(self):
+        from bantz.data.connection_pool import get_pool
+        db_path = config.db_path
+        if not db_path.exists():
+            raise RuntimeError(f"DB not found: {db_path}")
+        return get_pool(str(db_path)).connection()
 
     # ── Core queries ──────────────────────────────────────────────────────
 
@@ -50,51 +47,51 @@ class HabitEngine:
         Top N tools used in a time segment over the last `days` days.
         Returns: [{"tool": "weather", "count": 12}, ...]
         """
-        conn = self._ensure_conn()
-        hour_start, hour_end = _SEGMENTS.get(segment, (0, 24))
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with self._get_conn() as conn:
+            hour_start, hour_end = _SEGMENTS.get(segment, (0, 24))
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
-        rows = conn.execute(
-            """
-            SELECT tool_used, COUNT(*) as cnt
-            FROM messages
-            WHERE role = 'assistant'
-              AND tool_used IS NOT NULL
-              AND tool_used != 'startup'
-              AND created_at > ?
-              AND CAST(strftime('%H', created_at) AS INTEGER) >= ?
-              AND CAST(strftime('%H', created_at) AS INTEGER) < ?
-            GROUP BY tool_used
-            ORDER BY cnt DESC
-            LIMIT ?
-            """,
-            (cutoff, hour_start, hour_end, n),
-        ).fetchall()
+            rows = conn.execute(
+                """
+                SELECT tool_used, COUNT(*) as cnt
+                FROM messages
+                WHERE role = 'assistant'
+                  AND tool_used IS NOT NULL
+                  AND tool_used != 'startup'
+                  AND created_at > ?
+                  AND CAST(strftime('%H', created_at) AS INTEGER) >= ?
+                  AND CAST(strftime('%H', created_at) AS INTEGER) < ?
+                GROUP BY tool_used
+                ORDER BY cnt DESC
+                LIMIT ?
+                """,
+                (cutoff, hour_start, hour_end, n),
+            ).fetchall()
 
-        return [{"tool": r["tool_used"], "count": r["cnt"]} for r in rows]
+            return [{"tool": r["tool_used"], "count": r["cnt"]} for r in rows]
 
     def should_add_to_briefing(self, tool: str, days: int = 7) -> bool:
         """
         Returns True if `tool` was used in morning segment (06-12)
         on 3+ distinct days in the last `days` days.
         """
-        conn = self._ensure_conn()
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with self._get_conn() as conn:
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
-        row = conn.execute(
-            """
-            SELECT COUNT(DISTINCT DATE(created_at)) as day_count
-            FROM messages
-            WHERE role = 'assistant'
-              AND tool_used = ?
-              AND created_at > ?
-              AND CAST(strftime('%H', created_at) AS INTEGER) >= 6
-              AND CAST(strftime('%H', created_at) AS INTEGER) < 12
-            """,
-            (tool, cutoff),
-        ).fetchone()
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT DATE(created_at)) as day_count
+                FROM messages
+                WHERE role = 'assistant'
+                  AND tool_used = ?
+                  AND created_at > ?
+                  AND CAST(strftime('%H', created_at) AS INTEGER) >= 6
+                  AND CAST(strftime('%H', created_at) AS INTEGER) < 12
+                """,
+                (tool, cutoff),
+            ).fetchone()
 
-        return (row["day_count"] or 0) >= 3
+            return (row["day_count"] or 0) >= 3
 
     def analyze(self, days: int = 14) -> dict:
         """
@@ -106,95 +103,95 @@ class HabitEngine:
             "total_interactions": int,
         }
         """
-        conn = self._ensure_conn()
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with self._get_conn() as conn:
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
-        # Per-segment breakdown
-        segments = {}
-        for seg in ("morning", "afternoon", "evening", "night"):
-            segments[seg] = self.top_tools_for_segment(seg, n=5, days=days)
+            # Per-segment breakdown
+            segments = {}
+            for seg in ("morning", "afternoon", "evening", "night"):
+                segments[seg] = self.top_tools_for_segment(seg, n=5, days=days)
 
-        # Briefing candidates: tools used 3+ morning days
-        all_tools = conn.execute(
-            """
-            SELECT DISTINCT tool_used FROM messages
-            WHERE role = 'assistant'
-              AND tool_used IS NOT NULL
-              AND tool_used != 'startup'
-              AND created_at > ?
-            """,
-            (cutoff,),
-        ).fetchall()
+            # Briefing candidates: tools used 3+ morning days
+            all_tools = conn.execute(
+                """
+                SELECT DISTINCT tool_used FROM messages
+                WHERE role = 'assistant'
+                  AND tool_used IS NOT NULL
+                  AND tool_used != 'startup'
+                  AND created_at > ?
+                """,
+                (cutoff,),
+            ).fetchall()
 
-        briefing_candidates = [
-            r["tool_used"]
-            for r in all_tools
-            if self.should_add_to_briefing(r["tool_used"], days)
-        ]
+            briefing_candidates = [
+                r["tool_used"]
+                for r in all_tools
+                if self.should_add_to_briefing(r["tool_used"], days)
+            ]
 
-        # Top overall
-        top_overall = conn.execute(
-            """
-            SELECT tool_used, COUNT(*) as cnt
-            FROM messages
-            WHERE role = 'assistant'
-              AND tool_used IS NOT NULL
-              AND tool_used != 'startup'
-              AND created_at > ?
-            GROUP BY tool_used
-            ORDER BY cnt DESC
-            LIMIT 10
-            """,
-            (cutoff,),
-        ).fetchall()
+            # Top overall
+            top_overall = conn.execute(
+                """
+                SELECT tool_used, COUNT(*) as cnt
+                FROM messages
+                WHERE role = 'assistant'
+                  AND tool_used IS NOT NULL
+                  AND tool_used != 'startup'
+                  AND created_at > ?
+                GROUP BY tool_used
+                ORDER BY cnt DESC
+                LIMIT 10
+                """,
+                (cutoff,),
+            ).fetchall()
 
-        # Total interactions
-        total = conn.execute(
-            """
-            SELECT COUNT(*) FROM messages
-            WHERE role = 'user' AND created_at > ?
-            """,
-            (cutoff,),
-        ).fetchone()[0]
+            # Total interactions
+            total = conn.execute(
+                """
+                SELECT COUNT(*) FROM messages
+                WHERE role = 'user' AND created_at > ?
+                """,
+                (cutoff,),
+            ).fetchone()[0]
 
-        return {
-            "segments": segments,
-            "briefing_candidates": briefing_candidates,
-            "top_overall": [
-                {"tool": r["tool_used"], "count": r["cnt"]} for r in top_overall
-            ],
-            "total_interactions": total,
-        }
+            return {
+                "segments": segments,
+                "briefing_candidates": briefing_candidates,
+                "top_overall": [
+                    {"tool": r["tool_used"], "count": r["cnt"]} for r in top_overall
+                ],
+                "total_interactions": total,
+            }
 
     def recurring_patterns(self, days: int = 7) -> list[dict]:
         """
         Find tools used at the same hour on 3+ distinct days.
         Returns: [{"tool": "weather", "hour": 8, "days": 5}, ...]
         """
-        conn = self._ensure_conn()
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with self._get_conn() as conn:
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
-        rows = conn.execute(
-            """
-            SELECT tool_used,
-                   CAST(strftime('%H', created_at) AS INTEGER) as hour,
-                   COUNT(DISTINCT DATE(created_at)) as day_count
-            FROM messages
-            WHERE role = 'assistant'
-              AND tool_used IS NOT NULL
-              AND tool_used != 'startup'
-              AND created_at > ?
-            GROUP BY tool_used, hour
-            HAVING day_count >= 3
-            ORDER BY day_count DESC
-            """,
-            (cutoff,),
-        ).fetchall()
+            rows = conn.execute(
+                """
+                SELECT tool_used,
+                       CAST(strftime('%H', created_at) AS INTEGER) as hour,
+                       COUNT(DISTINCT DATE(created_at)) as day_count
+                FROM messages
+                WHERE role = 'assistant'
+                  AND tool_used IS NOT NULL
+                  AND tool_used != 'startup'
+                  AND created_at > ?
+                GROUP BY tool_used, hour
+                HAVING day_count >= 3
+                ORDER BY day_count DESC
+                """,
+                (cutoff,),
+            ).fetchall()
 
-        return [
-            {"tool": r["tool_used"], "hour": r["hour"], "days": r["day_count"]}
-            for r in rows
-        ]
+            return [
+                {"tool": r["tool_used"], "hour": r["hour"], "days": r["day_count"]}
+                for r in rows
+            ]
 
     def status_line(self) -> str:
         """Short summary for --doctor."""

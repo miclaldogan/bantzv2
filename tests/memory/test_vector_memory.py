@@ -177,30 +177,79 @@ class TestBlobEncoding:
 
 class TestVectorStore:
     def setup_method(self):
-        self.conn = _make_memory_db()
+        import tempfile
+        self._tmpdir = tempfile.mkdtemp()
+        db_path = Path(self._tmpdir) / "test_vector.db"
+
+        from bantz.data.connection_pool import SQLitePool
+        self.pool = SQLitePool.get_instance(db_path)
+
+        # Create base tables via pool
+        with self.pool.connection(write=True) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at TEXT NOT NULL,
+                    last_active TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+                    role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                    content TEXT NOT NULL,
+                    tool_used TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at)")
+
         from bantz.memory.vector_store import VectorStore
-        self.vs = VectorStore(self.conn)
+        self.vs = VectorStore()
         self.vs.migrate()
-        self.conv_id = _insert_conversation(self.conn)
+        self.conv_id = self._insert_conversation()
 
     def teardown_method(self):
-        self.conn.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _insert_conversation(self) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.pool.connection(write=True) as conn:
+            cur = conn.execute(
+                "INSERT INTO conversations(started_at, last_active) VALUES (?,?)",
+                (now, now),
+            )
+            return cur.lastrowid
+
+    def _insert_message(self, conv_id: int, role: str, content: str) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.pool.connection(write=True) as conn:
+            cur = conn.execute(
+                "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) VALUES (?,?,?,?,?)",
+                (conv_id, role, content, None, now),
+            )
+            return cur.lastrowid
 
     def test_migrate_creates_table(self):
-        tables = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='message_vectors'"
-        ).fetchone()
+        with self.pool.connection() as conn:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='message_vectors'"
+            ).fetchone()
         assert tables is not None
 
     def test_store_and_count(self):
-        msg_id = _insert_message(self.conn, self.conv_id, "user", "hello world")
+        msg_id = self._insert_message(self.conv_id, "user", "hello world")
         vec = _fake_embedding("hello world")
         self.vs.store(msg_id, vec, model="test-model")
         assert self.vs.count() == 1
         assert self.vs.has_embedding(msg_id)
 
     def test_store_overwrites(self):
-        msg_id = _insert_message(self.conn, self.conv_id, "user", "test")
+        msg_id = self._insert_message(self.conv_id, "user", "test")
         vec1 = _fake_embedding("test1")
         vec2 = _fake_embedding("test2")
         self.vs.store(msg_id, vec1)
@@ -216,7 +265,7 @@ class TestVectorStore:
             "what time is my meeting",
         ]
         for text in texts:
-            msg_id = _insert_message(self.conn, self.conv_id, "user", text)
+            msg_id = self._insert_message(self.conv_id, "user", text)
             self.vs.store(msg_id, _fake_embedding(text))
 
         # Search with a similar query
@@ -228,7 +277,7 @@ class TestVectorStore:
         assert all("content" in r for r in results)
 
     def test_search_respects_min_score(self):
-        msg_id = _insert_message(self.conn, self.conv_id, "user", "some content")
+        msg_id = self._insert_message(self.conv_id, "user", "some content")
         self.vs.store(msg_id, [1.0, 0.0, 0.0])
 
         # Orthogonal query — score should be 0
@@ -242,7 +291,7 @@ class TestVectorStore:
     def test_store_batch(self):
         items = []
         for i in range(5):
-            msg_id = _insert_message(self.conn, self.conv_id, "user", f"message {i}")
+            msg_id = self._insert_message(self.conv_id, "user", f"message {i}")
             items.append((msg_id, _fake_embedding(f"message {i}")))
         count = self.vs.store_batch(items)
         assert count == 5
@@ -251,7 +300,7 @@ class TestVectorStore:
     def test_unembedded_messages(self):
         # Insert messages but only embed some
         for i in range(5):
-            msg_id = _insert_message(self.conn, self.conv_id, "user", f"long content message number {i}")
+            msg_id = self._insert_message(self.conv_id, "user", f"long content message number {i}")
             if i < 2:  # Only embed first 2
                 self.vs.store(msg_id, _fake_embedding(f"message {i}"))
 
@@ -259,7 +308,7 @@ class TestVectorStore:
         assert len(unembedded) == 3
 
     def test_prune_orphans(self):
-        msg_id = _insert_message(self.conn, self.conv_id, "user", "real message")
+        msg_id = self._insert_message(self.conv_id, "user", "real message")
         self.vs.store(msg_id, _fake_embedding("real"))
 
         # Store an embedding for a non-existent message
@@ -271,8 +320,8 @@ class TestVectorStore:
         assert self.vs.count() == 1
 
     def test_stats(self):
-        msg_id = _insert_message(self.conn, self.conv_id, "user", "test message for stats")
-        _insert_message(self.conn, self.conv_id, "assistant", "reply for stats")
+        msg_id = self._insert_message(self.conv_id, "user", "test message for stats")
+        self._insert_message(self.conv_id, "assistant", "reply for stats")
         self.vs.store(msg_id, _fake_embedding("test"))
 
         stats = self.vs.stats()

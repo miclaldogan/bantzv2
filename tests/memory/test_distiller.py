@@ -16,9 +16,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import struct
-import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,120 +24,121 @@ import pytest
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
 
-@pytest.fixture
-def conn():
-    """In-memory SQLite with conversations + messages schema."""
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL")
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("""
-        CREATE TABLE conversations (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at  TEXT NOT NULL,
-            last_active TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE messages (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-            role            TEXT NOT NULL,
-            content         TEXT NOT NULL,
-            tool_used       TEXT,
-            created_at      TEXT NOT NULL
-        )
-    """)
-    yield c
-    c.close()
+@pytest.fixture(autouse=True)
+def _pool_db(tmp_path):
+    """Set up a temporary pool-backed SQLite database for every test."""
+    from bantz.data.connection_pool import SQLitePool, get_pool
+
+    db = tmp_path / "test_bantz.db"
+    pool = SQLitePool.get_instance(db)
+
+    # Create base tables that distiller depends on
+    with pool.connection(write=True) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at  TEXT NOT NULL,
+                last_active TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+                role            TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                tool_used       TEXT,
+                created_at      TEXT NOT NULL
+            )
+        """)
+
+    yield pool
+
+    SQLitePool.reset()
 
 
 @pytest.fixture
-def lock():
-    return threading.Lock()
+def pool(_pool_db):
+    """Expose the pool fixture explicitly for tests that need it."""
+    return _pool_db
 
 
 @pytest.fixture
-def session_with_messages(conn):
+def session_with_messages(pool):
     """Create a session with 6 exchanges (12 messages)."""
-    conn.execute(
-        "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01T10:00:00', '2025-01-01T11:00:00')"
-    )
-    messages = [
-        (1, "user", "What's the weather today?", None, "2025-01-01T10:00:01"),
-        (1, "assistant", "It's 15°C and sunny in Istanbul.", "weather", "2025-01-01T10:00:02"),
-        (1, "user", "Check my email", None, "2025-01-01T10:05:00"),
-        (1, "assistant", "You have 3 unread emails. One from Ahmet about the project.", "gmail", "2025-01-01T10:05:01"),
-        (1, "user", "What's on my calendar?", None, "2025-01-01T10:10:00"),
-        (1, "assistant", "You have 2 events today: Team standup at 11am and lunch with Mehmet at 1pm.", "calendar", "2025-01-01T10:10:01"),
-        (1, "user", "Let's go with the new design for the project", None, "2025-01-01T10:15:00"),
-        (1, "assistant", "Got it — noted the decision to go with the new design.", None, "2025-01-01T10:15:01"),
-        (1, "user", "Remind me to call Ali tomorrow", None, "2025-01-01T10:20:00"),
-        (1, "assistant", "Reminder set: call Ali tomorrow.", "reminder", "2025-01-01T10:20:01"),
-        (1, "user", "Thanks, that's all for now", None, "2025-01-01T10:25:00"),
-        (1, "assistant", "No problem! Have a great day.", None, "2025-01-01T10:25:01"),
-    ]
-    for conv_id, role, content, tool, ts in messages:
+    with pool.connection(write=True) as conn:
         conn.execute(
-            "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) VALUES (?,?,?,?,?)",
-            (conv_id, role, content, tool, ts),
+            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01T10:00:00', '2025-01-01T11:00:00')"
         )
-    return conn
+        messages = [
+            (1, "user", "What's the weather today?", None, "2025-01-01T10:00:01"),
+            (1, "assistant", "It's 15°C and sunny in Istanbul.", "weather", "2025-01-01T10:00:02"),
+            (1, "user", "Check my email", None, "2025-01-01T10:05:00"),
+            (1, "assistant", "You have 3 unread emails. One from Ahmet about the project.", "gmail", "2025-01-01T10:05:01"),
+            (1, "user", "What's on my calendar?", None, "2025-01-01T10:10:00"),
+            (1, "assistant", "You have 2 events today: Team standup at 11am and lunch with Mehmet at 1pm.", "calendar", "2025-01-01T10:10:01"),
+            (1, "user", "Let's go with the new design for the project", None, "2025-01-01T10:15:00"),
+            (1, "assistant", "Got it — noted the decision to go with the new design.", None, "2025-01-01T10:15:01"),
+            (1, "user", "Remind me to call Ali tomorrow", None, "2025-01-01T10:20:00"),
+            (1, "assistant", "Reminder set: call Ali tomorrow.", "reminder", "2025-01-01T10:20:01"),
+            (1, "user", "Thanks, that's all for now", None, "2025-01-01T10:25:00"),
+            (1, "assistant", "No problem! Have a great day.", None, "2025-01-01T10:25:01"),
+        ]
+        for conv_id, role, content, tool, ts in messages:
+            conn.execute(
+                "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) VALUES (?,?,?,?,?)",
+                (conv_id, role, content, tool, ts),
+            )
 
 
 @pytest.fixture
-def short_session(conn):
+def short_session(pool):
     """Create a session with only 2 exchanges (below threshold)."""
-    conn.execute(
-        "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01T10:00:00', '2025-01-01T10:05:00')"
-    )
-    messages = [
-        (1, "user", "Hello", None, "2025-01-01T10:00:01"),
-        (1, "assistant", "Hi there!", None, "2025-01-01T10:00:02"),
-        (1, "user", "Bye", None, "2025-01-01T10:04:00"),
-        (1, "assistant", "Goodbye!", None, "2025-01-01T10:04:01"),
-    ]
-    for conv_id, role, content, tool, ts in messages:
+    with pool.connection(write=True) as conn:
         conn.execute(
-            "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) VALUES (?,?,?,?,?)",
-            (conv_id, role, content, tool, ts),
+            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01T10:00:00', '2025-01-01T10:05:00')"
         )
-    return conn
+        messages = [
+            (1, "user", "Hello", None, "2025-01-01T10:00:01"),
+            (1, "assistant", "Hi there!", None, "2025-01-01T10:00:02"),
+            (1, "user", "Bye", None, "2025-01-01T10:04:00"),
+            (1, "assistant", "Goodbye!", None, "2025-01-01T10:04:01"),
+        ]
+        for conv_id, role, content, tool, ts in messages:
+            conn.execute(
+                "INSERT INTO messages(conversation_id, role, content, tool_used, created_at) VALUES (?,?,?,?,?)",
+                (conv_id, role, content, tool, ts),
+            )
 
 
 # ── Schema tests ───────────────────────────────────────────────────────────
 
 class TestDistillationSchema:
-    def test_migrate_creates_table(self, conn, lock):
+    def test_migrate_creates_table(self, pool):
         from bantz.memory.distiller import migrate_distillation_table
-        migrate_distillation_table(conn, lock)
+        migrate_distillation_table()
         # Table should exist
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='session_distillations'"
-        ).fetchone()
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='session_distillations'"
+            ).fetchone()
         assert row is not None
 
-    def test_migrate_idempotent(self, conn, lock):
+    def test_migrate_idempotent(self, pool):
         from bantz.memory.distiller import migrate_distillation_table
-        migrate_distillation_table(conn, lock)
-        migrate_distillation_table(conn, lock)  # Should not raise
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='session_distillations'"
-        ).fetchone()
+        migrate_distillation_table()
+        migrate_distillation_table()  # Should not raise
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='session_distillations'"
+            ).fetchone()
         assert row is not None
 
-    def test_migrate_without_lock(self, conn):
+    def test_table_columns(self, pool):
         from bantz.memory.distiller import migrate_distillation_table
-        migrate_distillation_table(conn, None)
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='session_distillations'"
-        ).fetchone()
-        assert row is not None
-
-    def test_table_columns(self, conn, lock):
-        from bantz.memory.distiller import migrate_distillation_table
-        migrate_distillation_table(conn, lock)
-        cols = conn.execute("PRAGMA table_info(session_distillations)").fetchall()
+        migrate_distillation_table()
+        with pool.connection() as conn:
+            cols = conn.execute("PRAGMA table_info(session_distillations)").fetchall()
         col_names = {c["name"] for c in cols}
         expected = {
             "id", "conversation_id", "summary", "topics", "decisions",
@@ -154,7 +153,7 @@ class TestDistillationSchema:
 class TestTranscriptBuilding:
     def test_build_transcript(self, session_with_messages):
         from bantz.memory.distiller import fetch_session_messages, _build_transcript
-        msgs = fetch_session_messages(session_with_messages, 1)
+        msgs = fetch_session_messages(1)
         transcript = _build_transcript(msgs)
         assert "USER:" in transcript
         assert "ASSISTANT:" in transcript
@@ -162,12 +161,12 @@ class TestTranscriptBuilding:
 
     def test_build_transcript_truncation(self, session_with_messages):
         from bantz.memory.distiller import fetch_session_messages, _build_transcript
-        msgs = fetch_session_messages(session_with_messages, 1)
+        msgs = fetch_session_messages(1)
         transcript = _build_transcript(msgs, max_chars=100)
         assert "truncated" in transcript.lower()
         assert len(transcript) < 200
 
-    def test_build_transcript_empty(self, conn):
+    def test_build_transcript_empty(self):
         from bantz.memory.distiller import _build_transcript
         assert _build_transcript([]) == ""
 
@@ -213,13 +212,13 @@ class TestParsingLLMOutput:
 class TestExchangeCounting:
     def test_count_exchanges(self, session_with_messages):
         from bantz.memory.distiller import fetch_session_messages, _count_exchanges
-        msgs = fetch_session_messages(session_with_messages, 1)
+        msgs = fetch_session_messages(1)
         count = _count_exchanges(msgs)
         assert count == 6  # 6 user messages
 
     def test_count_exchanges_short(self, short_session):
         from bantz.memory.distiller import fetch_session_messages, _count_exchanges
-        msgs = fetch_session_messages(short_session, 1)
+        msgs = fetch_session_messages(1)
         count = _count_exchanges(msgs)
         assert count == 2
 
@@ -248,17 +247,18 @@ class TestCSVParsing:
 # ── Store / Retrieve tests ────────────────────────────────────────────────
 
 class TestStoreDistillation:
-    def test_store_and_retrieve(self, conn, lock):
+    def test_store_and_retrieve(self, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             get_distillation, DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
+        migrate_distillation_table()
 
         # Need a conversation row first
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
 
         result = DistillationResult(
             session_id=1,
@@ -269,78 +269,82 @@ class TestStoreDistillation:
             tools_used=["weather", "gmail"],
             exchange_count=6,
         )
-        rowid = store_distillation(conn, lock, 1, result)
+        rowid = store_distillation(1, result)
         assert rowid > 0
 
-        retrieved = get_distillation(conn, 1)
+        retrieved = get_distillation(1)
         assert retrieved is not None
         assert retrieved["summary"] == "User checked weather and email."
         assert retrieved["exchange_count"] == 6
         assert "weather" in retrieved["topics"]
 
-    def test_store_with_embedding(self, conn, lock):
+    def test_store_with_embedding(self, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
+        migrate_distillation_table()
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
 
         result = DistillationResult(session_id=1, summary="Test", exchange_count=5)
         embedding = [0.1, 0.2, 0.3, 0.4]
-        store_distillation(conn, lock, 1, result, embedding=embedding, embed_model="test")
+        store_distillation(1, result, embedding=embedding, embed_model="test")
 
-        row = conn.execute(
-            "SELECT embedding, embed_dim, embed_model FROM session_distillations WHERE conversation_id=1"
-        ).fetchone()
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT embedding, embed_dim, embed_model FROM session_distillations WHERE conversation_id=1"
+            ).fetchone()
         assert row["embed_dim"] == 4
         assert row["embed_model"] == "test"
         assert row["embedding"] is not None
 
-    def test_store_upsert(self, conn, lock):
+    def test_store_upsert(self, pool):
         """INSERT OR REPLACE should update existing distillation."""
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             get_distillation, DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
+        migrate_distillation_table()
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
 
         r1 = DistillationResult(session_id=1, summary="Version 1", exchange_count=5)
-        store_distillation(conn, lock, 1, r1)
+        store_distillation(1, r1)
 
         r2 = DistillationResult(session_id=1, summary="Version 2", exchange_count=7)
-        store_distillation(conn, lock, 1, r2)
+        store_distillation(1, r2)
 
-        retrieved = get_distillation(conn, 1)
+        retrieved = get_distillation(1)
         assert retrieved["summary"] == "Version 2"
         assert retrieved["exchange_count"] == 7
 
-    def test_get_nonexistent(self, conn, lock):
+    def test_get_nonexistent(self):
         from bantz.memory.distiller import migrate_distillation_table, get_distillation
-        migrate_distillation_table(conn, lock)
-        assert get_distillation(conn, 999) is None
+        migrate_distillation_table()
+        assert get_distillation(999) is None
 
 
 # ── Vector search tests ───────────────────────────────────────────────────
 
 class TestDistillationSearch:
-    def test_search_distillations(self, conn, lock):
+    def test_search_distillations(self, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             search_distillations, DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (2, '2025-01-02', '2025-01-02')"
-        )
+        migrate_distillation_table()
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (2, '2025-01-02', '2025-01-02')"
+            )
 
         # Store two distillations with known embeddings
         r1 = DistillationResult(session_id=1, summary="Weather and email session", exchange_count=5)
@@ -349,68 +353,70 @@ class TestDistillationSearch:
         vec1 = [1.0, 0.0, 0.0, 0.0]
         vec2 = [0.0, 1.0, 0.0, 0.0]
 
-        store_distillation(conn, lock, 1, r1, embedding=vec1, embed_model="test")
-        store_distillation(conn, lock, 2, r2, embedding=vec2, embed_model="test")
+        store_distillation(1, r1, embedding=vec1, embed_model="test")
+        store_distillation(2, r2, embedding=vec2, embed_model="test")
 
         # Search with a vector close to vec1
         query_vec = [0.9, 0.1, 0.0, 0.0]
-        results = search_distillations(conn, query_vec, limit=5, min_score=0.1)
+        results = search_distillations(query_vec, limit=5, min_score=0.1)
         assert len(results) >= 1
         assert results[0]["conversation_id"] == 1  # closest to query
         assert results[0]["score"] > 0.5
 
-    def test_search_empty(self, conn, lock):
+    def test_search_empty(self):
         from bantz.memory.distiller import migrate_distillation_table, search_distillations
-        migrate_distillation_table(conn, lock)
-        results = search_distillations(conn, [1.0, 0.0], limit=5)
+        migrate_distillation_table()
+        results = search_distillations([1.0, 0.0], limit=5)
         assert results == []
 
-    def test_search_min_score_filter(self, conn, lock):
+    def test_search_min_score_filter(self, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             search_distillations, DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
+        migrate_distillation_table()
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
         r = DistillationResult(session_id=1, summary="Test", exchange_count=5)
-        store_distillation(conn, lock, 1, r, embedding=[1.0, 0.0, 0.0, 0.0])
+        store_distillation(1, r, embedding=[1.0, 0.0, 0.0, 0.0])
 
         # Orthogonal query — score should be ~0
-        results = search_distillations(conn, [0.0, 1.0, 0.0, 0.0], min_score=0.5)
+        results = search_distillations([0.0, 1.0, 0.0, 0.0], min_score=0.5)
         assert len(results) == 0
 
 
 # ── Stats tests ───────────────────────────────────────────────────────────
 
 class TestDistillationStats:
-    def test_stats(self, conn, lock):
+    def test_stats(self, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, store_distillation,
             distillation_stats, DistillationResult,
         )
-        migrate_distillation_table(conn, lock)
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
-        )
-        conn.execute(
-            "INSERT INTO conversations(id, started_at, last_active) VALUES (2, '2025-01-02', '2025-01-02')"
-        )
+        migrate_distillation_table()
+        with pool.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (1, '2025-01-01', '2025-01-01')"
+            )
+            conn.execute(
+                "INSERT INTO conversations(id, started_at, last_active) VALUES (2, '2025-01-02', '2025-01-02')"
+            )
 
         r1 = DistillationResult(session_id=1, summary="Test", exchange_count=5)
-        store_distillation(conn, lock, 1, r1, embedding=[1.0, 0.0])
+        store_distillation(1, r1, embedding=[1.0, 0.0])
 
-        stats = distillation_stats(conn)
+        stats = distillation_stats()
         assert stats["total_distillations"] == 1
         assert stats["embedded_distillations"] == 1
         assert stats["total_sessions"] == 2
         assert stats["coverage_pct"] == 50.0
 
-    def test_stats_empty(self, conn, lock):
+    def test_stats_empty(self):
         from bantz.memory.distiller import migrate_distillation_table, distillation_stats
-        migrate_distillation_table(conn, lock)
-        stats = distillation_stats(conn)
+        migrate_distillation_table()
+        stats = distillation_stats()
         assert stats["total_distillations"] == 0
 
 
@@ -426,17 +432,17 @@ LLM_RESPONSE = (
 
 
 class TestDistillSession:
-    def test_distill_session_success(self, session_with_messages, lock):
+    def test_distill_session_success(self, session_with_messages):
         from bantz.memory.distiller import (
             migrate_distillation_table, distill_session, get_distillation,
         )
-        migrate_distillation_table(session_with_messages, lock)
+        migrate_distillation_table()
 
         with patch("bantz.memory.distiller._llm_summarise", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = LLM_RESPONSE
             result = asyncio.get_event_loop().run_until_complete(
                 distill_session(
-                    session_with_messages, lock, 1,
+                    1,
                     min_exchanges=5, embed=False, extract_graph=False,
                 )
             )
@@ -449,27 +455,27 @@ class TestDistillSession:
         assert len(result.people) >= 2
 
         # Check persistent storage
-        stored = get_distillation(session_with_messages, 1)
+        stored = get_distillation(1)
         assert stored is not None
         assert stored["exchange_count"] == 6
 
-    def test_distill_below_threshold(self, short_session, lock):
+    def test_distill_below_threshold(self, short_session):
         from bantz.memory.distiller import migrate_distillation_table, distill_session
-        migrate_distillation_table(short_session, lock)
+        migrate_distillation_table()
 
         result = asyncio.get_event_loop().run_until_complete(
             distill_session(
-                short_session, lock, 1,
+                1,
                 min_exchanges=5, embed=False, extract_graph=False,
             )
         )
         assert result is None
 
-    def test_distill_with_embedding(self, session_with_messages, lock):
+    def test_distill_with_embedding(self, session_with_messages, pool):
         from bantz.memory.distiller import (
             migrate_distillation_table, distill_session,
         )
-        migrate_distillation_table(session_with_messages, lock)
+        migrate_distillation_table()
 
         mock_embedder = AsyncMock()
         mock_embedder.embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -481,30 +487,31 @@ class TestDistillSession:
             mock_llm.return_value = LLM_RESPONSE
             result = asyncio.get_event_loop().run_until_complete(
                 distill_session(
-                    session_with_messages, lock, 1,
+                    1,
                     min_exchanges=5, embed=True, extract_graph=False,
                 )
             )
 
         assert result is not None
         # Check embedding was stored
-        row = session_with_messages.execute(
-            "SELECT embed_dim, embed_model FROM session_distillations WHERE conversation_id=1"
-        ).fetchone()
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT embed_dim, embed_model FROM session_distillations WHERE conversation_id=1"
+            ).fetchone()
         assert row is not None
         if row["embed_dim"]:  # embedding may or may not succeed depending on mock
             assert row["embed_dim"] == 3
 
-    def test_distill_with_graph_extraction(self, session_with_messages, lock):
+    def test_distill_with_graph_extraction(self, session_with_messages):
         from bantz.memory.distiller import migrate_distillation_table, distill_session
 
-        migrate_distillation_table(session_with_messages, lock)
+        migrate_distillation_table()
 
         with patch("bantz.memory.distiller._llm_summarise", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = LLM_RESPONSE
             result = asyncio.get_event_loop().run_until_complete(
                 distill_session(
-                    session_with_messages, lock, 1,
+                    1,
                     min_exchanges=5, embed=False, extract_graph=True,
                 )
             )
@@ -513,44 +520,44 @@ class TestDistillSession:
         # entities_extracted should be >= 0 (extract_entities is rule-based)
         assert result.entities_extracted >= 0
 
-    def test_distill_llm_failure(self, session_with_messages, lock):
+    def test_distill_llm_failure(self, session_with_messages):
         from bantz.memory.distiller import migrate_distillation_table, distill_session
-        migrate_distillation_table(session_with_messages, lock)
+        migrate_distillation_table()
 
         with patch("bantz.memory.distiller._llm_summarise", new_callable=AsyncMock) as mock_llm:
             mock_llm.side_effect = Exception("LLM unavailable")
             result = asyncio.get_event_loop().run_until_complete(
                 distill_session(
-                    session_with_messages, lock, 1,
+                    1,
                     min_exchanges=5, embed=False, extract_graph=False,
                 )
             )
 
         assert result is None
 
-    def test_distill_nonexistent_session(self, conn, lock):
+    def test_distill_nonexistent_session(self):
         from bantz.memory.distiller import migrate_distillation_table, distill_session
-        migrate_distillation_table(conn, lock)
+        migrate_distillation_table()
 
         result = asyncio.get_event_loop().run_until_complete(
             distill_session(
-                conn, lock, 999,
+                999,
                 min_exchanges=1, embed=False, extract_graph=False,
             )
         )
         assert result is None  # no messages → 0 exchanges < 1
 
-    def test_distill_tools_from_messages(self, session_with_messages, lock):
+    def test_distill_tools_from_messages(self, session_with_messages):
         """Tools used should be extracted from actual message tool_used column."""
         from bantz.memory.distiller import migrate_distillation_table, distill_session
 
-        migrate_distillation_table(session_with_messages, lock)
+        migrate_distillation_table()
 
         with patch("bantz.memory.distiller._llm_summarise", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = "SUMMARY: Test.\nTOPICS: test\nDECISIONS: none\nPEOPLE: none\nTOOLS: none"
             result = asyncio.get_event_loop().run_until_complete(
                 distill_session(
-                    session_with_messages, lock, 1,
+                    1,
                     min_exchanges=5, embed=False, extract_graph=False,
                 )
             )
@@ -619,7 +626,7 @@ class TestDistillationResult:
 class TestFetchMessages:
     def test_fetch_returns_dicts(self, session_with_messages):
         from bantz.memory.distiller import fetch_session_messages
-        msgs = fetch_session_messages(session_with_messages, 1)
+        msgs = fetch_session_messages(1)
         assert isinstance(msgs, list)
         assert len(msgs) == 12
         assert isinstance(msgs[0], dict)
@@ -628,11 +635,11 @@ class TestFetchMessages:
 
     def test_fetch_chronological_order(self, session_with_messages):
         from bantz.memory.distiller import fetch_session_messages
-        msgs = fetch_session_messages(session_with_messages, 1)
+        msgs = fetch_session_messages(1)
         timestamps = [m["created_at"] for m in msgs]
         assert timestamps == sorted(timestamps)
 
-    def test_fetch_empty_session(self, conn):
+    def test_fetch_empty_session(self):
         from bantz.memory.distiller import fetch_session_messages
-        msgs = fetch_session_messages(conn, 999)
+        msgs = fetch_session_messages(999)
         assert msgs == []
