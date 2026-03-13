@@ -509,8 +509,7 @@ class Brain:
             r"\b(big|large|size|bigger|largest|biggest|heaviest)\b", both,
         )
         _DISK_CTX = re.search(
-            r"\b(folder|directory|dir|file|disk|storage|path|home|~/)"
-            r"|\b(dosya|klasör|dizin|depolama)\b", both,
+            r"\b(folder|directory|dir|file|disk|storage|path|home|~/)\b", both,
         )
         if _SIZE_KW and _DISK_CTX:
             # Extract path if mentioned, default to home
@@ -520,290 +519,43 @@ class Brain:
                 target = "~"
             return {"tool": "shell", "args": {"command": f"du -sh {target}/*/ 2>/dev/null | sort -rh | head -10"}}
 
-        # Time
-        if any(k in both for k in ("what time", "what date", "current time")):
-            return {"tool": "shell", "args": {"command": "date '+%H:%M:%S  %A, %d %B %Y'"}}
-
-        # Weather
-        if any(k in both for k in ("weather", "temperature", "rain", "forecast", "degrees")):
-            return {"tool": "weather", "args": {"city": _extract_city(o)}}
-
-        # Location / GPS
-        if re.search(r"where\s+(?:am|was|are)\s+i|my\s+location|gps|current\s+(?:location|place)|where\s+i\s+am", both):
-            return {"tool": "_location", "args": {}}
-
-        # Named Places — save current location
-        # Strict: only explicit save/remember commands — never match casual "this is".
-        # Search o and e individually (not both) to avoid capturing duplicated text.
-        _SAVE_PLACE_RE = r"(?:save\s+(?:here|this\s+(?:location|place))\s+as|remember\s+this\s+(?:place|location)\s+as)\s+(.+)"
-        _save_place_match = (
-            re.search(_SAVE_PLACE_RE, o, re.IGNORECASE)
-            or re.search(_SAVE_PLACE_RE, e, re.IGNORECASE)
-        )
-        if _save_place_match:
-            name = _save_place_match.group(1).strip().strip('"\'')
-            return {"tool": "_save_place", "args": {"name": name}}
-
-        # Named Places — list saved places
-        if re.search(r"my\s+places|saved?\s+places|saved?\s+locations|list\s+places", both):
-            return {"tool": "_list_places", "args": {}}
-
-        # Named Places — delete a saved place
-        # Strict: "place" or "location" keyword is mandatory to avoid
-        # false positives like "delete that bug".
-        # Search o and e individually to avoid capturing duplicated text.
-        _DEL_PLACE_RE = r"(?:delete|remove)\s+(?:place|location)\s+(.+)"
-        _del_place_match = (
-            re.search(_DEL_PLACE_RE, o, re.IGNORECASE)
-            or re.search(_DEL_PLACE_RE, e, re.IGNORECASE)
-        )
-        if _del_place_match:
-            name = _del_place_match.group(1).strip().strip('"\'')
-            return {"tool": "_delete_place", "args": {"name": name}}
-
-        # News — support topic search
-        if any(k in both for k in ("news", "headlines", "hacker news", "top stories")):
-            source = "hn" if any(k in both for k in ("hacker", " hn")) else "all"
-            # Check if user is searching for a specific topic in news
-            topic_match = re.search(
-                r"(?:news|anything)\s+(?:about|on|regarding)\s+(.+?)(?:\?|$|\.)",
-                both, re.IGNORECASE,
-            )
-            if topic_match:
-                topic = topic_match.group(1).strip()
-                return {"tool": "web_search", "args": {"query": f"{topic} news today"}}
-            return {"tool": "news", "args": {"source": source, "limit": 5}}
-
-        # Schedule — user's class timetable (BEFORE calendar and mail)
-        _is_schedule = any(k in both for k in (
-            "my schedule", "class schedule", "my classes",
-            "today classes", "tomorrow classes", "next class",
-            "this week classes", "do you have my schedule",
-            "schedule", "what classes",
-        ))
-        # Bare day names like "monday?", "yeah monday?", "what about tuesday"
-        _day_match = re.search(
-            r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", both
-        )
-        if _day_match and not any(k in both for k in (
-            "add", "create", "delete", "remove", "calendar", "event", "meeting",
-            "mail", "email", "send",
-        )):
-            _is_schedule = True
-
-        if _is_schedule:
-            # don't match "schedule" if it's clearly calendar context
-            if not any(k in both for k in ("add", "create", "delete", "remove",
-                                            "calendar", "event", "meeting")):
-                if any(k in both for k in ("next", "upcoming")):
-                    return {"tool": "_schedule_next", "args": {}}
-                if any(k in both for k in ("this week", "weekly", "week")):
-                    return {"tool": "_schedule_week", "args": {}}
-                # Check for specific day name → route to that day's schedule
-                if _day_match:
-                    from bantz.core.date_parser import resolve_date as _rd
-                    target = _rd(_day_match.group(1))
-                    if target:
-                        return {"tool": "_schedule_date", "args": {"date_iso": target.isoformat()}}
-                if "tomorrow" in both:
-                    from datetime import datetime as _dt, timedelta as _td
-                    tmrw = _dt.now() + _td(days=1)
-                    return {"tool": "_schedule_date", "args": {"date_iso": tmrw.isoformat()}}
-                return {"tool": "_schedule_today", "args": {}}
-
-        # Gmail — "send that mail/draft" — resolve from last draft context
-        if re.search(r"\bsend\s+(?:that|the|this)\s+(?:mail|email|draft|message)\b", both, re.IGNORECASE):
-            return {"tool": "gmail", "args": {"action": "send"}, "_send_draft": True}
-
-        # Gmail — atomic compose-and-send: "send an email to X saying Y"
-        # Non-greedy (.+?) for multi-word recipients like "John Doe"
-        _CAS_RE = re.search(
-            r"(?:send|write|compose)\s+(?:an?\s+)?(?:e?-?mail|message)\s+"
-            r"to\s+(.+?)\s+(?:saying|about|that|with)\s+(.+)",
-            en, re.IGNORECASE,
-        )
-        if not _CAS_RE:
-            _CAS_RE = re.search(
-                r"(?:send|write|compose)\s+(?:an?\s+)?(?:e?-?mail|message)\s+"
-                r"to\s+(.+?)\s+(?:saying|about|that|with)\s+(.+)",
-                orig, re.IGNORECASE,
-            )
-        if _CAS_RE:
-            return {"tool": "gmail", "args": {
-                "action": "compose_and_send",
-                "to": _CAS_RE.group(1).strip(),
-                "intent": _CAS_RE.group(2).strip(),
-            }}
-
-        # Gmail — "read me that email" fix: resolve from context
-        # Strict: requires a mail-related keyword so "read me that story" falls through.
-        _READ_ME_PATTERN = re.search(
-            r"\bread\s+me\s+(?:that|this|the|it)", both, re.IGNORECASE
-        )
-        if _READ_ME_PATTERN and re.search(r"\b(?:mail|email|message|inbox)\b", both, re.IGNORECASE):
-            # User wants to read a specific mail — will be resolved in process()
-            return {"tool": "gmail", "args": {"action": "read"}, "_context_read": True}
-
-        # Contacts
-        _has_email = bool(re.search(r"\S+@\S+", both))
-        if any(k in both for k in ("contact", "contacts", "address book")) or (
-            _has_email and re.search(r"\bsave\b|\badd\b", both)
-        ):
-            alias, email = _extract_contact(o)
-            if alias and email:
-                return {"tool": "gmail", "args": {
-                    "action": "contacts", "alias": alias, "email": email
-                }}
-            return {"tool": "gmail", "args": {"action": "contacts"}}
-
-        # Gmail
-        if any(k in both for k in ("mail", "inbox", "unread", "email", "gmail")):
-            # Compose / send
-            if any(k in both for k in ("send", "compose", "write a mail", "write to",
-                                        "send a mail", "send mail")):
-                to = _extract_mail_recipient(o)
-                return {"tool": "gmail", "args": {
-                    "action": "compose", "to": to, "intent": orig,
-                }}
-            # Starred
-            if any(k in both for k in ("starred", "star", "flagged")):
-                return {"tool": "gmail", "args": {"action": "filter", "raw_query": "is:starred"}}
-            # Important
-            if any(k in both for k in ("important", "urgent", "action required", "critical")):
-                return {"tool": "gmail", "args": {"action": "search", "label": "important"}}
-            # Read/check/show — show unread summary
-            if any(k in both for k in ("read", "check", "show", "see", "tell me",
-                                        "last", "recent", "latest")):
-                return {"tool": "gmail", "args": {"action": "filter", "raw_query": "is:unread"}}
-            # Search by sender
-            _m_sndr = re.search(
-                r"(?:mails?|emails?)\s+from\s+([\w\s\u00C0-\u024F]{2,30}?)(?:\?|$|\.|please)",
-                both, re.IGNORECASE,
-            )
-            if _m_sndr:
-                return {"tool": "gmail", "args": {"action": "search", "from_sender": _m_sndr.group(1).strip()}}
-            # Default: unread summary
-            return {"tool": "gmail", "args": {"action": "unread"}}
-
-        # Calendar
-        # Strict: requires an explicit calendar-context keyword.
-        # The old "add X at Ypm" shortcut caused false positives like
-        # "add more humor at 3pm".  Now calendar/event/meeting is mandatory.
-        # Note: bare "schedule" is NOT included here — it conflicts with
-        # the class-schedule route above.  Use "schedule meeting" or
-        # "calendar" + "add" instead.
-        _is_calendar = any(k in both for k in (
-            "calendar", "event", "meeting", "appointment",
-        ))
-        if _is_calendar:
-            if any(k in both for k in ("add", "create", "new", "set")):
-                title, date_iso, time_hhmm = _extract_event_create(orig)
-                args: dict = {"action": "create", "title": title}
-                if date_iso:
-                    args["date"] = date_iso
-                if time_hhmm:
-                    args["time"] = time_hhmm
-                return {"tool": "calendar", "args": args}
-            if any(k in both for k in ("delete", "remove", "cancel")):
-                return {"tool": "calendar", "args": {
-                    "action": "delete", "title": _extract_event_title(orig)
-                }}
-            if any(k in both for k in ("update", "move", "change", "reschedule")):
-                old_title, new_title = _extract_event_update(orig)
-                return {"tool": "calendar", "args": {
-                    "action": "update",
-                    "title": old_title,
-                    "new_title": new_title,
-                }}
-            if any(k in both for k in ("this week", "weekly")):
-                return {"tool": "calendar", "args": {"action": "week"}}
-            # "anything to do" / "do we have anything" in calendar
-            if re.search(r"anything\s+to\s+do|do we have anything|what.*calendar", both):
-                return {"tool": "calendar", "args": {"action": "today"}}
-            return {"tool": "calendar", "args": {"action": "today"}}
-
-        # Classroom
-        if any(k in both for k in ("assignment", "homework", "classroom", "deadline",
-                                    "announcement", "due")):
-            if any(k in both for k in ("today", "upcoming")):
-                return {"tool": "classroom", "args": {"action": "due_today"}}
-            return {"tool": "classroom", "args": {"action": "assignments"}}
-
-        # Document — summarize/read PDF, TXT, MD, DOCX
-        _DOC_KEYWORDS = ("summarize", "summary", "read pdf", "read document",
-                         "read the file", "open pdf", "open document",
-                         "what's in this", "explain this", ".pdf", ".docx",
-                         "analyze document", "review this file", "review my")
-        if any(k in both for k in _DOC_KEYWORDS):
-            path_match = re.search(r'([~/][\w.\-/]+\.(?:pdf|docx|txt|md|csv|json|yaml|yml|log))', both)
-            path = path_match.group(1) if path_match else ""
-            if "ask" in both or "question" in both or "what" in both:
-                return {"tool": "document", "args": {"path": path, "action": "ask", "question": orig}}
-            if any(k in both for k in ("read", "open", "show")):
-                return {"tool": "document", "args": {"path": path, "action": "read"}}
-            return {"tool": "document", "args": {"path": path, "action": "summarize"}}
-
-        # Reminders
-        _is_reminder = any(k in both for k in (
-            "remind me", "set a reminder", "set reminder",
-            "reminder", "set a timer", "set timer",
-            "alarm",
-        ))
-        if _is_reminder:
-            if any(k in both for k in ("list", "show", "my reminder", "upcoming", "what reminder")):
-                return {"tool": "reminder", "args": {"action": "list"}}
-            if any(k in both for k in ("cancel", "delete", "remove", "stop")):
-                title_m = re.search(
-                    r"(?:cancel|delete|remove|stop)\s+(?:reminder\s+)?(?:#?(\d+)|(.+?))"
-                    r"(?:\s*$|\s*(?:please))",
-                    both, re.IGNORECASE,
-                )
-                if title_m:
-                    if title_m.group(1):
-                        return {"tool": "reminder", "args": {"action": "cancel", "id": title_m.group(1)}}
-                    return {"tool": "reminder", "args": {"action": "cancel", "title": title_m.group(2).strip()}}
-                return {"tool": "reminder", "args": {"action": "cancel"}}
-            if any(k in both for k in ("snooze",)):
-                return {"tool": "reminder", "args": {"action": "snooze"}}
-            return {"tool": "reminder", "args": {"action": "add", "intent": orig}}
-
-        # TTS stop (#131) — "shut up" / "sessiz ol" / "stop talking"
+        # TTS stop (#131) — "shut up" / "stop talking"
         if re.search(
-            r"shut\s*up|be\s+quiet|stop\s+talk|sessiz\s+ol|sus\s+bantz|kapat\s+sesi",
+            r"shut\s*up|be\s+quiet|stop\s+talk(?:ing)?",
             both,
         ):
             return {"tool": "_tts_stop", "args": {}}
 
-        # Wake word control (#165) — "stop listening" / "start listening"
+        # Wake word control (#165)
         if re.search(
-            r"start\s+listen|resume\s+listen|wake\s*word\s+on|"
-            r"enable\s+wake|listen\s+for\s+me|dinlemeye\s+başla",
+            r"start\s+listen(?:ing)?|resume\s+listen(?:ing)?|wake\s*word\s+on|"
+            r"enable\s+wake|listen\s+for\s+me",
             both,
         ):
             return {"tool": "_wake_word_on", "args": {}}
         if re.search(
-            r"stop\s+listen|pause\s+(?:wake|listen)|wake\s*word\s+off|"
-            r"disable\s+wake|don'?t\s+listen|dinlemeyi\s+durdur",
+            r"stop\s+listen(?:ing)?|pause\s+(?:wake|listen)|wake\s*word\s+off|"
+            r"disable\s+wake|don'?t\s+listen",
             both,
         ):
             return {"tool": "_wake_word_off", "args": {}}
 
         # Audio Ducking control (#171)
         if re.search(
-            r"enable\s+duck|duck(?:ing)?\s+on|turn\s+on\s+duck|ses\s+kıs(?:ma)?\s+aç",
+            r"enable\s+duck|duck(?:ing)?\s+on|turn\s+on\s+duck",
             both,
         ):
             return {"tool": "_audio_duck_on", "args": {}}
         if re.search(
-            r"disable\s+duck|duck(?:ing)?\s+off|turn\s+off\s+duck|no\s+duck|ses\s+kıs(?:ma)?\s+kapat",
+            r"disable\s+duck|duck(?:ing)?\s+off|turn\s+off\s+duck|no\s+duck",
             both,
         ):
             return {"tool": "_audio_duck_off", "args": {}}
 
         # Ambient status (#166)
         if re.search(
-            r"ambient\s+(?:noise|sound|status|level|info)|ortam\s+sesi|environment\s+noise|"
-            r"how(?:'s|\s+is)\s+(?:the\s+)?(?:noise|environment|ambient)|ne\s+kadar\s+gürültü",
+            r"ambient\s+(?:noise|sound|status|level|info)|environment\s+noise|"
+            r"how(?:'s|\s+is)\s+(?:the\s+)?(?:noise|environment|ambient)",
             both,
         ):
             return {"tool": "_ambient_status", "args": {}}
@@ -811,7 +563,7 @@ class Brain:
         # Proactive engagement status (#167)
         if re.search(
             r"proactive\s+(?:status|info|count|stats)|"
-            r"how\s+many\s+proactive|proaktif\s+durum|"
+            r"how\s+many\s+proactive|"
             r"engagement\s+status|check.?in\s+(?:status|count)",
             both,
         ):
@@ -821,7 +573,7 @@ class Brain:
         if re.search(
             r"health\s+(?:status|info|stats|check)|"
             r"break\s+(?:status|timer|count)|"
-            r"sa[ğg]l[ıi]k\s+durum|session\s+(?:time|timer|hours)",
+            r"session\s+(?:time|timer|hours)",
             both,
         ):
             return {"tool": "_health_status", "args": {}}
@@ -833,275 +585,30 @@ class Brain:
 
         # Maintenance (#129) — manual trigger
         if re.search(
-            r"run\s+maintenance|sistemi?\s+temizle|system\s+cleanup|"
-            r"clean\s+(?:up\s+)?(?:the\s+)?system|bakım\s+yap|maintenance\s+run",
+            r"run\s+maintenance|system\s+cleanup|"
+            r"clean\s+(?:up\s+)?(?:the\s+)?system|maintenance\s+run",
             both,
         ):
             return {"tool": "_maintenance", "args": {"dry_run": "dry" in both}}
 
-        # Reflection (#130) — run reflection now (MUST come before list)
+        # Reflection (#130) — run reflection now
         if re.search(
-            r"run\s+reflect|yansıma\s+yap|generate\s+reflect|"
-            r"reflect\s+(?:on\s+)?today|bugünü\s+özetle",
+            r"run\s+reflect|generate\s+reflect|"
+            r"reflect\s+(?:on\s+)?today",
             both,
         ):
             return {"tool": "_run_reflection", "args": {"dry_run": "dry" in both}}
 
         # Reflection (#130) — show past reflections
         if re.search(
-            r"show\s+reflect|list\s+reflect|past\s+reflect|"
-            r"dünkü\s+özet|geçmiş\s+özetler|son\s+yansımalar",
+            r"show\s+reflect|list\s+reflect|past\s+reflect",
             both,
         ):
             return {"tool": "_list_reflections", "args": {}}
-
-        # GUI Action — unified navigate + act pipeline (#123)
-        # Must come BEFORE web_search since "search bar" contains "search".
-        # Order: specific (type, double_click, right_click) before general click.
-        _gui_type_m = re.search(
-            r"type\s+[\"'](.+?)[\"']\s+(?:into|in|on)\s+(?:the\s+)?(.+?)\s+(?:in|on|of)\s+(.+?)(?:\s*$|\s*please)",
-            both, re.IGNORECASE,
-        )
-        if _gui_type_m:
-            return {"tool": "gui_action", "args": {
-                "action": "type", "text": _gui_type_m.group(1),
-                "label": _gui_type_m.group(2).strip(),
-                "app": _gui_type_m.group(3).strip(),
-            }}
-        _gui_dbl_m = re.search(
-            r"double[- ]?click\s+(?:the\s+|on\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
-            both, re.IGNORECASE,
-        )
-        if _gui_dbl_m:
-            return {"tool": "gui_action", "args": {
-                "action": "double_click", "label": _gui_dbl_m.group(1).strip(),
-                "app": _gui_dbl_m.group(2).strip(),
-            }}
-        _gui_rc_m = re.search(
-            r"right[- ]?click\s+(?:the\s+|on\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
-            both, re.IGNORECASE,
-        )
-        if _gui_rc_m:
-            return {"tool": "gui_action", "args": {
-                "action": "right_click", "label": _gui_rc_m.group(1).strip(),
-                "app": _gui_rc_m.group(2).strip(),
-            }}
-        _gui_m = re.search(
-            r"(?:click|press|tap)\s+(?:the\s+|on\s+)?[\"']?(.+?)[\"']?"
-            r"\s+(?:button\s+|element\s+|link\s+|tab\s+|field\s+|input\s+)?"
-            r"(?:in|on|of)\s+(.+?)(?:\s*$|\s*please)",
-            both, re.IGNORECASE,
-        )
-        if _gui_m:
-            return {"tool": "gui_action", "args": {
-                "action": "click", "label": _gui_m.group(1).strip(),
-                "app": _gui_m.group(2).strip(),
-            }}
-        _gui_find_m = re.search(
-            r"(?:find|locate|navigate to|go to)\s+(?:the\s+)?(.+?)\s+(?:in|on)\s+(.+?)(?:\s*$|\s*please)",
-            both, re.IGNORECASE,
-        )
-        if _gui_find_m and any(k in both for k in (
-            "find the button", "find element", "find ui", "locate",
-            "navigate to", "go to the",
-        )):
-            return {"tool": "gui_action", "args": {
-                "action": "navigate", "label": _gui_find_m.group(1).strip(),
-                "app": _gui_find_m.group(2).strip(),
-            }}
-
-        # Web search — natural-language intent matching.
-        # Catches both imperative commands ("search X") and conversational
-        # phrasing ("what do you know about X", "tell me about X").
-        _WS_PATTERN = (
-            r"(?:(?:search|google)\s*:?\s*(?:(?:for|about|on|the\s+(?:web|net|internet))\s+)?"
-            r"|look\s*up\s+"
-            r"|find\s+(?:information|info|out)\s+(?:about|on)\s+"
-            r"|what\s+(?:do\s+you|can\s+you)\s+(?:know|find|tell\s+me)\s+about\s+"
-            r"|who\s+is\s+|what\s+is\s+|tell\s+me\s+about\s+"
-            r"|learn\s+(?:about|more\s+about)\s+"
-            r"|araştır\s+|ara(?:t)?\s+|hakkında\s+(?:bilgi|ara)\s+)"
-            r"(.+)"
-        )
-        _ws_match = re.search(_WS_PATTERN, o, re.IGNORECASE) or \
-                    re.search(_WS_PATTERN, e, re.IGNORECASE)
-        # Stopwords: pronouns and filler words that are NOT valid search queries.
-        # "what is it" → query="it" → skip.  "who is he" → query="he" → skip.
-        _WS_STOPWORDS = {
-            "it", "this", "that", "he", "she", "they", "them", "we", "us",
-            "him", "her", "its", "you", "me", "i", "so", "there", "here",
-            "what", "who", "how", "why", "the", "a", "an", "ok", "okay",
-        }
-        if _ws_match:
-            query = _ws_match.group(1).strip().rstrip('?.!')
-            if len(query) >= 2 and query.lower() not in _WS_STOPWORDS:
-                return {"tool": "web_search", "args": {"query": query}}
-
-        # ── Filesystem auto-chain: LLM-based folder+file creation (#196-v2) ──
-        # Instead of rigid regex, detect keyword overlap and let the LLM
-        # extract actual parameters (folder name, file name, content).
-        _fs_folder_kw = any(k in both for k in (
-            "folder", "directory", "klasör", "dizin",
-        ))
-        _fs_file_kw = any(k in both for k in (
-            " file", "dosya", ".txt", ".md", ".py", ".csv", ".json",
-            ".html", ".css", ".js", ".log",
-        ))
-        _fs_create_kw = any(k in both for k in (
-            "create", "make", "write", "put", "place", "add",
-            "yap", "oluştur", "aç", "yaz", "koy", "ekle",
-        ))
-        if _fs_folder_kw and _fs_file_kw and _fs_create_kw:
-            # Guard: "create a folder and write a mail" → NOT filesystem
-            if not any(k in both for k in ("mail", "email", "calendar", "assignment")):
-                return {"tool": "_fs_autochain", "args": {}}
-
-        # Shell generation for file operations
-        if any(k in both for k in ("create file", "create folder", "create directory",
-                                    "copy file", "move file", "delete file", "rename",
-                                    "write into", "write a note")):
-            if not any(k in both for k in ("mail", "calendar", "assignment")):
-                return {"tool": "_generate", "args": {}}
-
-        # Input Control (#122) — mouse/keyboard simulation
-        _is_input = any(k in both for k in (
-            "type ", "type text", "type into", "type in",
-            "scroll down", "scroll up", "scroll left", "scroll right",
-            "drag from", "drag to",
-            "press ctrl", "press alt", "hotkey",
-            "press enter", "press escape", "press tab",
-            "double click", "right click", "right-click", "double-click",
-            "mouse position", "where is the mouse", "where's the mouse",
-            "move mouse", "move cursor",
-        ))
-        if _is_input:
-            # Type text
-            type_m = re.search(
-                r'(?:type|write|enter|input)\s+(?:text\s+)?["\'](.+?)["\']',
-                both, re.IGNORECASE,
-            )
-            if type_m:
-                return {"tool": "input_control", "args": {"action": "type_text", "text": type_m.group(1)}}
-            if re.search(r'type\s+(?:text\s+)?(?:into|in)', both):
-                return {"tool": "input_control", "args": {"action": "type_text", "text": ""}}
-            # Scroll
-            if any(k in both for k in ("scroll down", "scroll up", "scroll left", "scroll right")):
-                direction = "down"
-                for d in ("up", "down", "left", "right"):
-                    if f"scroll {d}" in both:
-                        direction = d
-                        break
-                amt_m = re.search(r'scroll\s+\w+\s+(\d+)', both)
-                amount = int(amt_m.group(1)) if amt_m else 3
-                return {"tool": "input_control", "args": {"action": "scroll", "direction": direction, "amount": amount}}
-            # Hotkey
-            hotkey_m = re.search(
-                r'(?:press|hotkey|shortcut)\s+((?:ctrl|alt|shift|super|meta|win)\s*\+\s*\w+(?:\s*\+\s*\w+)*)',
-                both, re.IGNORECASE,
-            )
-            if hotkey_m:
-                return {"tool": "input_control", "args": {"action": "hotkey", "keys": hotkey_m.group(1).strip()}}
-            if any(k in both for k in ("press enter",)):
-                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "enter"}}
-            if any(k in both for k in ("press escape", "press esc")):
-                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "escape"}}
-            if any(k in both for k in ("press tab",)):
-                return {"tool": "input_control", "args": {"action": "hotkey", "keys": "tab"}}
-            # Double click / right click
-            dbl_m = re.search(r'double[- ]?click\s+(?:at\s+)?(?:\(?(\d+)\s*,\s*(\d+)\)?)', both)
-            if dbl_m:
-                return {"tool": "input_control", "args": {"action": "double_click", "x": int(dbl_m.group(1)), "y": int(dbl_m.group(2))}}
-            rc_m = re.search(r'right[- ]?click\s+(?:at\s+)?(?:\(?(\d+)\s*,\s*(\d+)\)?)', both)
-            if rc_m:
-                return {"tool": "input_control", "args": {"action": "right_click", "x": int(rc_m.group(1)), "y": int(rc_m.group(2))}}
-            # Drag
-            drag_m = re.search(r'drag\s+(?:from\s+)?\(?(\d+)\s*,\s*(\d+)\)?\s+(?:to\s+)?\(?(\d+)\s*,\s*(\d+)\)?', both)
-            if drag_m:
-                return {"tool": "input_control", "args": {"action": "drag", "from_x": int(drag_m.group(1)), "from_y": int(drag_m.group(2)), "to_x": int(drag_m.group(3)), "to_y": int(drag_m.group(4))}}
-            # Mouse position
-            if any(k in both for k in ("mouse position", "where is the mouse", "where's the mouse")):
-                return {"tool": "input_control", "args": {"action": "get_position"}}
-            # Move mouse
-            mv_m = re.search(r'move\s+(?:mouse|cursor)\s+(?:to\s+)?\(?(\d+)\s*,\s*(\d+)\)?', both)
-            if mv_m:
-                return {"tool": "input_control", "args": {"action": "move_to", "x": int(mv_m.group(1)), "y": int(mv_m.group(2))}}
-            # Fallback: double_click / right_click without coordinates
-            if "double" in both and "click" in both:
-                return {"tool": "input_control", "args": {"action": "double_click", "x": 0, "y": 0}}
-            if "right" in both and "click" in both:
-                return {"tool": "input_control", "args": {"action": "right_click", "x": 0, "y": 0}}
-
-        # Accessibility / AT-SPI (#119)
-        _is_a11y = any(k in both for k in (
-            "click the", "click on", "press the button",
-            "find the button", "find element", "find ui",
-            "ui element", "accessibility", "at-spi", "atspi",
-            "list windows", "list apps", "open apps",
-            "focus window", "focus app", "switch to app",
-            "switch to window", "bring up app", "bring up window",
-            "activate window", "activate app",
-            "element tree", "ui tree",
-            "screenshot", "what's on my screen", "what is on my screen",
-            "what's on screen", "describe screen", "describe my screen",
-            "analyze screen", "screen analysis", "vlm",
-        ))
-        if _is_a11y:
-            # Screenshot / VLM direct analysis (#120)
-            if any(k in both for k in ("what's on my screen", "what is on my screen",
-                                        "what's on screen", "describe screen",
-                                        "describe my screen")):
-                app_m = re.search(
-                    r"(?:describe|what'?s on)\s+(?:my\s+)?(?:screen|display)\s+(?:in\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
-                    both, re.IGNORECASE,
-                )
-                app = app_m.group(1).strip() if app_m else ""
-                return {"tool": "accessibility", "args": {"action": "describe", "app": app}}
-            if any(k in both for k in ("screenshot", "analyze screen", "screen analysis", "vlm")):
-                app_m = re.search(
-                    r"(?:screenshot|analyze|vlm)\s+(?:of\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
-                    both, re.IGNORECASE,
-                )
-                app = app_m.group(1).strip() if app_m else ""
-                label_m = re.search(
-                    r"(?:find|locate)\s+(.+?)\s+(?:in|on)\s+",
-                    both, re.IGNORECASE,
-                )
-                label = label_m.group(1).strip() if label_m else ""
-                return {"tool": "accessibility", "args": {"action": "screenshot", "app": app, "label": label}}
-            # Focus window
-            # Strict: require app/window/screen context so "switch to a different topic"
-            # doesn't trigger a window focus action.
-            if any(k in both for k in ("focus window", "focus app", "switch to app",
-                                        "switch to window", "bring up window",
-                                        "bring up app", "activate window", "activate app")):
-                app_m = re.search(
-                    r"(?:focus|switch to|bring up|activate)\s+(?:(?:window|app|screen)\s+)?(.+?)(?:\s*$|\s*please)",
-                    both, re.IGNORECASE,
-                )
-                app = app_m.group(1).strip() if app_m else ""
-                return {"tool": "accessibility", "args": {"action": "focus", "app": app}}
-            # List apps
-            if any(k in both for k in ("list windows", "list apps", "open apps", "running apps")):
-                return {"tool": "accessibility", "args": {"action": "list_apps"}}
-            # Element tree
-            if any(k in both for k in ("element tree", "ui tree", "accessibility tree")):
-                app_m = re.search(
-                    r"(?:element|ui|accessibility)\s+tree\s+(?:of\s+|for\s+)?(.+?)(?:\s*$|\s*please)",
-                    both, re.IGNORECASE,
-                )
-                app = app_m.group(1).strip() if app_m else ""
-                return {"tool": "accessibility", "args": {"action": "tree", "app": app}}
-            # Find/click element (default)
-            app_m = re.search(
-                r"(?:click|press|find)\s+(?:the\s+|on\s+)?[\"']?(.+?)[\"']?\s+(?:button|element|link|tab|field|input|in|on)\s+(?:in\s+|on\s+)?(.+?)(?:\s*$|\s*please)",
-                both, re.IGNORECASE,
-            )
-            if app_m:
-                label = app_m.group(1).strip()
-                app = app_m.group(2).strip()
-                return {"tool": "accessibility", "args": {"action": "find", "app": app, "label": label}}
-            # Fallback: info
-            return {"tool": "accessibility", "args": {"action": "info"}}
+            
+        # Clear memory
+        if re.search(r"clear\s+memory", both):
+            return {"tool": "_clear_memory", "args": {}}
 
         return None
 

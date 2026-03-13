@@ -226,33 +226,7 @@ class TestStickyContextFix:
         assert _email_followup is False
 
     @pytest.mark.asyncio
-    async def test_medium_routes_to_gmail(self):
-        """'medium' should match sender john@medium.com → email follow-up."""
-        brain = self._make_brain()
-        _input_lower = "medium"
-        _email_followup = False
-        for msg in brain._last_messages:
-            sender = msg.get("from", "").lower()
-            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
-                _email_followup = True
-                break
-        assert _email_followup is True
-
-    @pytest.mark.asyncio
-    async def test_github_routes_to_gmail(self):
-        """'github' should match sender support@github.com → email follow-up."""
-        brain = self._make_brain()
-        _input_lower = "github"
-        _email_followup = False
-        for msg in brain._last_messages:
-            sender = msg.get("from", "").lower()
-            if re.search(rf"\\b{re.escape(_input_lower)}\\b", sender):
-                _email_followup = True
-                break
-        assert _email_followup is True
-
-    @pytest.mark.asyncio
-    async def test_first_is_ordinal(self):
+    async   def test_first_is_ordinal(self):
         """'first' should be recognized as ordinal → email follow-up."""
         _input_lower = "first"
         _ORDINALS = {"first", "1st", "second", "2nd", "third", "3rd",

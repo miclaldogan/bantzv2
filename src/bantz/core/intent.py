@@ -40,9 +40,12 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - web_search: {{"query": "<search terms>"}}
 - gmail: {{"action": "unread|compose|compose_and_send|read|search|filter|send|contacts", "to": "recipient", "intent": "what to say", "subject": "optional"}}
 - calendar: {{"action": "today|week|create|delete|update", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}}
+- reminder: {{"action": "add|list|cancel|snooze", "intent": "...", "id": "..."}}
 - classroom: {{"action": "assignments|due_today"}}
 - filesystem: {{"path": "<file path>", "action": "read|write|create_folder_and_file", "folder_path": "~/path/to/folder", "file_name": "file.txt", "content": "..."}}
 - document: {{"path": "<file path>", "action": "summarize|read|ask", "question": "..."}}
+- input_control: {{"action": "type_text|scroll|hotkey|double_click|right_click|drag|move_to|get_position", "text": "...", "keys": "...", "x": 0, "y": 0, "direction": "down", "amount": 3}}
+- accessibility: {{"action": "screenshot|describe|focus|list_apps|tree|find|info", "app": "...", "label": "..."}}
 - read_url: {{"url": "https://..."}} — fetch and read the full text of a webpage
 
 CHAIN OF THOUGHT — follow ALL three steps before deciding:
@@ -64,9 +67,12 @@ ROUTING RULES:
               any request for information the assistant does not already have
 - gmail:      email, inbox, compose, send, read mail
 - calendar:   events, meetings, appointments, schedule
+- reminder:   remind me, set a timer, alarm
 - classroom:  assignments, homework, deadlines, courses
 - filesystem: read/write a specific file, or create a folder+file atomically (use create_folder_and_file when user wants both)
 - document:   summarize or analyze PDF/TXT/MD/DOCX
+- input_control: type text, scroll, press keys, click mouse, move cursor
+- accessibility: click UI element, focus window, screen analysis, screenshot
 - read_url:   fetch and read full content of a specific URL
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 

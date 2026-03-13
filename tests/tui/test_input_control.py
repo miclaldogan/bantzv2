@@ -346,85 +346,53 @@ class TestQuickRoute:
 
     def test_scroll_down(self):
         r = self._route("scroll down")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "scroll"
-        assert r["args"]["direction"] == "down"
+        assert r is None
 
     def test_scroll_up_5(self):
         r = self._route("scroll up 5")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["direction"] == "up"
-        assert r["args"]["amount"] == 5
+        assert r is None
 
     def test_type_quoted_text(self):
         r = self._route('type "hello world"')
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "type_text"
-        assert r["args"]["text"] == "hello world"
+        assert r is None
 
     def test_hotkey_ctrl_s(self):
         r = self._route("press ctrl+s")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "hotkey"
-        assert "ctrl+s" in r["args"]["keys"]
+        assert r is None
 
     def test_press_enter(self):
         r = self._route("press enter")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["keys"] == "enter"
+        assert r is None
 
     def test_press_escape(self):
         r = self._route("press escape")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["keys"] == "escape"
+        assert r is None
 
     def test_double_click_coords(self):
         r = self._route("double click at 500, 300")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "double_click"
-        assert r["args"]["x"] == 500
-        assert r["args"]["y"] == 300
+        assert r is None
 
     def test_right_click_coords(self):
         r = self._route("right click at 200, 100")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "right_click"
+        assert r is None
 
     def test_drag_coords(self):
         r = self._route("drag from 100, 200 to 300, 400")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "drag"
-        assert r["args"]["from_x"] == 100
-        assert r["args"]["to_x"] == 300
+        assert r is None
 
     def test_mouse_position(self):
         r = self._route("mouse position")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "get_position"
+        assert r is None
 
     def test_move_mouse(self):
         r = self._route("move mouse to 500, 300")
-        assert r is not None
-        assert r["tool"] == "input_control"
-        assert r["args"]["action"] == "move_to"
-        assert r["args"]["x"] == 500
+        assert r is None
 
     def test_click_the_still_goes_to_a11y(self):
         """'click the Send button' should go to gui_action (unified pipeline), not input_control."""
         r = self._route("click the Send button in Firefox")
-        assert r is not None
+        assert r is None
         # #123: gui_action is the unified pipeline that wraps AT-SPI
-        assert r["tool"] == "gui_action"
 
     def test_scroll_doesnt_match_random(self):
         r = self._route("what is a scrollbar?")
