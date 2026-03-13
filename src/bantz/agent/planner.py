@@ -52,6 +52,9 @@ CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
 - If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `process_text` tool. Put your exact instructions (e.g., "Summarize the following: {{step_1_output}}") in the "instruction" param.
 - When the user wants a THOROUGH research report (not just snippets), use `web_search` first, then `read_url` to fetch the full article text from the best URL, then `process_text` to summarize.
+- NEVER use the `news` tool for specific research, reading full articles, or when you need a URL. The `news` tool provides a text-only summary of today's headlines without source links. It is ONLY for general "What's in the news today?" questions.
+- For finding specific articles, news, or topics to read, you MUST use `web_search`. `web_search` returns the raw URLs required for the `read_url` tool.
+- Do NOT invent intermediate steps like "Extract URL from results". Just pass `{{step_N_output}}` from `web_search` directly to `read_url` — the executor handles extraction automatically.
 
 TOOL USAGE BEST PRACTICES:
 - For `web_search`: Keep queries SHORT and broad (e.g., "Google quantum computer study", NOT "Search for the article titled Google Quantum Computer Makes Breakthrough in Quantum Error Correction"). The search engine works best with concise keywords.
@@ -78,9 +81,9 @@ EXAMPLES:
 
 User: "Search for articles about quantum computing, summarize the best one, and save to a file"
 [
-  {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs"}}, "description": "Search for quantum computing articles (returns a list of URLs)", "depends_on": null}},
-  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Fetch the full article text from the URL returned by web_search", "depends_on": 1}},
-  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize the following article into a concise report. Preserve any source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the full article text", "depends_on": 2}},
+  {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing breakthrough"}}, "description": "Search for quantum computing articles — returns a list of URLs", "depends_on": null}},
+  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full article from the URL returned by step 1", "depends_on": 1}},
+  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize this article in detail, preserving source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the article text from step 2", "depends_on": 2}},
   {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
 
