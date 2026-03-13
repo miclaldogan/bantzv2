@@ -1396,7 +1396,22 @@ class Brain:
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
 
+        # ── Plan-and-Solve: LLM-based multi-step decomposition (#187) ────
+        # Planner runs FIRST — it handles complex multi-tool requests via
+        # LLM heuristics.  Must be above workflow_engine to prevent the
+        # old regex-based engine from eagerly stealing autonomous commands.
+        try:
+            from bantz.agent.planner import planner_agent
+            if planner_agent.is_complex(en_input):
+                plan_result = await self._execute_plan(user_input, en_input, tc)
+                if plan_result is not None:
+                    return plan_result
+        except Exception as exc:
+            log.debug("Planner check failed: %s — falling through", exc)
+
         # ── Workflow detection: multi-tool chained commands (#34) ──
+        # Regex-based workflow engine handles simple multi-step patterns
+        # that the planner didn't claim.
         from bantz.core.workflow import workflow_engine
         steps = workflow_engine.detect(user_input, en_input)
         if steps:
@@ -1414,18 +1429,6 @@ class Brain:
             await self._graph_store(user_input, resp, "workflow")
             self._fire_embeddings()
             return BrainResult(response=resp, tool_used="workflow")
-
-        # ── Plan-and-Solve: LLM-based multi-step decomposition (#187) ────
-        # If workflow engine didn't fire (regex-based), check if the
-        # planner detects a complex multi-tool request via heuristics.
-        try:
-            from bantz.agent.planner import planner_agent
-            if planner_agent.is_complex(en_input):
-                plan_result = await self._execute_plan(user_input, en_input, tc)
-                if plan_result is not None:
-                    return plan_result
-        except Exception as exc:
-            log.debug("Planner check failed: %s — falling through", exc)
 
         quick = self._quick_route(user_input, en_input)
 
