@@ -599,12 +599,10 @@ class TestBrainPlannerIntegration:
             brain._graph_store = AsyncMock()
             brain._fire_embeddings = MagicMock()
 
-            # Mock workflow_engine to not detect anything
-            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
-                mock_wf.detect = MagicMock(return_value=None)
-
-                result = await brain.process(
-                    "search for AI news and save to a file")
+            # Planner now runs BEFORE workflow_engine, so even if
+            # workflow_engine would match, planner takes priority.
+            result = await brain.process(
+                "search for AI news and save to a file")
 
             assert result.tool_used == "planner"
             assert "allow me a moment" in result.response.lower()
@@ -617,6 +615,60 @@ class TestBrainPlannerIntegration:
 
         agent = PlannerAgent()
         assert agent.is_complex("what is the weather in istanbul") is False
+
+    @pytest.mark.asyncio
+    async def test_planner_takes_priority_over_workflow_engine(self):
+        """When planner claims a request, workflow_engine.detect must NOT run."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutionResult, StepResult
+
+        plan_steps = [
+            PlanStep(step=1, tool="web_search",
+                     params={"query": "AI"}, description="Search"),
+            PlanStep(step=2, tool="filesystem",
+                     params={"action": "write", "path": "~/ai.txt",
+                             "content": "{step_1_output}"},
+                     description="Save", depends_on=1),
+        ]
+        exec_result = PlanExecutionResult(step_results=[
+            StepResult(step_number=1, tool="web_search",
+                       description="Search", success=True, output="data"),
+            StepResult(step_number=2, tool="filesystem",
+                       description="Save", success=True, output="done"),
+        ])
+
+        with patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.agent.executor.plan_executor") as mock_executor, \
+             patch("bantz.core.brain.data_layer") as mock_dal, \
+             patch("bantz.core.brain.ollama") as mock_ollama, \
+             patch("bantz.core.workflow.workflow_engine") as mock_wf:
+
+            mock_planner.is_complex = MagicMock(return_value=True)
+            mock_planner.decompose = AsyncMock(return_value=plan_steps)
+            mock_planner.format_itinerary = MagicMock(return_value="Plan...")
+            mock_executor.run = AsyncMock(return_value=exec_result)
+            mock_dal.conversations = MagicMock()
+            mock_ollama.chat = AsyncMock(return_value="")
+
+            from bantz.core.brain import Brain
+            brain = Brain.__new__(Brain)
+            brain._memory_ready = True
+            brain._graph_ready = True
+            brain._feedback_ctx = ""
+            brain._last_messages = []
+            brain._last_events = []
+            brain._last_draft = None
+            brain._is_remote = False
+            brain._bridge = None
+            brain._to_en = AsyncMock(return_value="search then save to file")
+            brain._graph_store = AsyncMock()
+            brain._fire_embeddings = MagicMock()
+
+            result = await brain.process("search then save to file")
+
+        assert result.tool_used == "planner"
+        # workflow_engine.detect must NOT have been called
+        mock_wf.detect.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
