@@ -262,6 +262,7 @@ class TestStickyContextFix:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skip(reason="Legacy _extract_city removed")
 class TestExtractCity:
     """Test _extract_city with English and Turkish patterns."""
 
