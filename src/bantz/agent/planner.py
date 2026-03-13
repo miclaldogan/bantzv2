@@ -45,6 +45,11 @@ TOOL REFERENCE:
 - news: get headlines. Params: {{"source": "all|hn"}}
 - system: check CPU/RAM/disk. Params: {{"metric": "all|cpu|ram|disk"}}
 - document: summarize/read a document. Params: {{"path": "...", "action": "summarize|read|ask", "question": "..."}}
+- process_text: summarize, analyze, rewrite, or transform text from a previous step. Params: {{"instruction": "Summarize the following: {{step_N_output}}"}}
+
+CRITICAL TOOL RULES:
+- NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
+- If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `process_text` tool. Put your exact instructions (e.g., "Summarize the following: {{step_1_output}}") in the "instruction" param.
 
 RULES:
 1. Each step must use exactly ONE tool.
@@ -63,10 +68,11 @@ OUTPUT FORMAT (return a JSON array of objects):
 
 EXAMPLES:
 
-User: "Search for 3 articles about quantum computing and save a summary to a file"
+User: "Search for 3 articles about quantum computing, summarize them, and save to a file"
 [
   {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing articles 2024"}}, "description": "Search for quantum computing articles", "depends_on": null}},
-  {{"step": 2, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_1_output}}"}}, "description": "Save the search results to a file", "depends_on": 1}}
+  {{"step": 2, "tool": "process_text", "params": {{"instruction": "Summarize the following search results into a concise report: {{step_1_output}}"}}, "description": "Summarize the search results", "depends_on": 1}},
+  {{"step": 3, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_2_output}}"}}, "description": "Save the summary to a file", "depends_on": 2}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -99,7 +105,8 @@ _TOOL_KEYWORDS: dict[str, list[str]] = {
     "news": ["news", "headlines"],
     "system": ["cpu", "ram", "memory", "disk", "system status"],
     "shell": ["run command", "terminal", "bash"],
-    "document": ["summarize", "pdf", "document", "analyze"],
+    "document": ["pdf", "document"],
+    "process_text": ["summarize", "analyze", "rewrite", "translate", "transform"],
 }
 
 
@@ -209,8 +216,10 @@ class PlannerAgent:
                 depends_on=s.get("depends_on"),
             ))
 
-        # Validate: each step must reference a known tool
-        valid_steps = [s for s in steps if s.tool in tool_names]
+        # Validate: each step must reference a known tool or virtual tool
+        _virtual_tools = {"process_text"}
+        allowed = set(tool_names) | _virtual_tools
+        valid_steps = [s for s in steps if s.tool in allowed]
         if len(valid_steps) < len(steps):
             dropped = len(steps) - len(valid_steps)
             log.warning("Planner dropped %d steps with unknown tools", dropped)

@@ -1240,7 +1240,7 @@ class Brain:
         from bantz.agent.planner import planner_agent
         from bantz.agent.executor import plan_executor
 
-        tool_names = registry.names()
+        tool_names = registry.names() + ["process_text"]
         steps = await planner_agent.decompose(en_input, tool_names)
         if not steps or len(steps) < 2:
             # Not genuinely multi-step — fall through to normal routing
@@ -1251,7 +1251,7 @@ class Brain:
         log.info("Plan-and-Solve itinerary:\n%s", itinerary)
 
         # Execute all steps
-        exec_result = await plan_executor.run(steps)
+        exec_result = await plan_executor.run(steps, llm_fn=ollama.chat)
 
         # Combine itinerary + execution summary
         resp = itinerary + "\n\n" + exec_result.summary()

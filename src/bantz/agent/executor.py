@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from bantz.tools import registry, ToolResult
 
@@ -84,6 +84,7 @@ class PlanExecutor:
         steps: list[Any],  # list[PlanStep] from planner.py
         *,
         on_step_start: Any = None,  # optional callback(step_number, description)
+        llm_fn: Callable[..., Awaitable[str]] | None = None,
     ) -> PlanExecutionResult:
         """Execute all steps in order.
 
@@ -91,6 +92,8 @@ class PlanExecutor:
           step N+1 declares ``depends_on: N``.
         - If a step fails, execution continues with remaining steps.
         - ``on_step_start`` is an optional async callback for progress updates.
+        - ``llm_fn`` is an async callable used by the virtual ``process_text``
+          tool.  Signature: ``await llm_fn(messages) -> str``.
         """
         result = PlanExecutionResult()
         context_store: dict[int, str] = {}  # step_number → output text
@@ -113,6 +116,16 @@ class PlanExecutor:
             if depends is not None and depends in context_store:
                 prev_output = context_store[depends]
                 params = self._inject_context(params, prev_output)
+
+            # ── Virtual tool: process_text ──────────────────────────────
+            if tool_name == "process_text":
+                sr = await self._handle_process_text(
+                    step_num, params, description, llm_fn,
+                )
+                if sr.success:
+                    context_store[step_num] = sr.output[:2000]
+                result.step_results.append(sr)
+                continue
 
             # Look up tool
             tool = registry.get(tool_name)
@@ -161,6 +174,60 @@ class PlanExecutor:
             result.step_results.append(sr)
 
         return result
+
+    # ── Virtual tool: process_text ───────────────────────────────────────
+
+    @staticmethod
+    async def _handle_process_text(
+        step_num: int,
+        params: dict,
+        description: str,
+        llm_fn: Callable[..., Awaitable[str]] | None,
+    ) -> StepResult:
+        """Route *process_text* to the LLM instead of the tool registry."""
+        instruction = params.get("instruction", "")
+        if not instruction:
+            return StepResult(
+                step_number=step_num,
+                tool="process_text",
+                description=description,
+                success=False,
+                output="",
+                error="process_text requires an 'instruction' param.",
+            )
+        if llm_fn is None:
+            return StepResult(
+                step_number=step_num,
+                tool="process_text",
+                description=description,
+                success=False,
+                output="",
+                error="No LLM function provided for process_text.",
+            )
+        try:
+            messages = [
+                {"role": "system", "content": "You are a helpful text-processing assistant. Follow the user's instruction precisely."},
+                {"role": "user", "content": instruction},
+            ]
+            llm_output = await llm_fn(messages)
+            log.info("Plan step %d [process_text]: success", step_num)
+            return StepResult(
+                step_number=step_num,
+                tool="process_text",
+                description=description,
+                success=True,
+                output=llm_output,
+            )
+        except Exception as exc:
+            log.warning("Plan step %d [process_text]: exception — %s", step_num, exc)
+            return StepResult(
+                step_number=step_num,
+                tool="process_text",
+                description=description,
+                success=False,
+                output="",
+                error=str(exc),
+            )
 
     @staticmethod
     def _inject_context(params: dict, prev_output: str) -> dict:
