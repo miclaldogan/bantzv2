@@ -833,6 +833,48 @@ class TestPlannerPrompt:
         # read_url description should mention it gets URL from a previous step
         assert "URL returned" in block or "url returned" in block.lower()
 
+    def test_news_tool_forbidden_for_research(self):
+        """CRITICAL TOOL RULES must forbid news tool for specific research."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        rules_start = PLANNER_SYSTEM.index("CRITICAL TOOL RULES")
+        rules_end = PLANNER_SYSTEM.index("\nTOOL USAGE BEST PRACTICES", rules_start)
+        rules_block = PLANNER_SYSTEM[rules_start:rules_end]
+        assert "news" in rules_block
+        assert "text-only" in rules_block.lower() or "without source links" in rules_block.lower()
+
+    def test_web_search_required_for_articles(self):
+        """CRITICAL TOOL RULES must mandate web_search for article finding."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        rules_start = PLANNER_SYSTEM.index("CRITICAL TOOL RULES")
+        rules_end = PLANNER_SYSTEM.index("\nTOOL USAGE BEST PRACTICES", rules_start)
+        rules_block = PLANNER_SYSTEM[rules_start:rules_end]
+        assert "web_search" in rules_block
+        assert "raw URLs" in rules_block or "URLs required" in rules_block
+
+    def test_no_invented_intermediate_steps(self):
+        """CRITICAL TOOL RULES must forbid inventing 'Extract URL' steps."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        rules_start = PLANNER_SYSTEM.index("CRITICAL TOOL RULES")
+        rules_end = PLANNER_SYSTEM.index("\nTOOL USAGE BEST PRACTICES", rules_start)
+        rules_block = PLANNER_SYSTEM[rules_start:rules_end]
+        assert "Extract URL" in rules_block or "intermediate steps" in rules_block.lower()
+
+    def test_example_step1_uses_web_search(self):
+        """Example step 1 must use web_search with a concise query."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("EXAMPLES:")
+        block = PLANNER_SYSTEM[idx:]
+        assert '"tool": "web_search"' in block
+        assert "quantum computing breakthrough" in block.lower()
+
+    def test_example_step3_uses_process_text(self):
+        """Example step 3 must use process_text referencing step_2_output."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("EXAMPLES:")
+        block = PLANNER_SYSTEM[idx:]
+        assert '"tool": "process_text"' in block
+        assert "step_2_output" in block
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 9. PlanStep parsing edge cases
