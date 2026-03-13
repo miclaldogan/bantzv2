@@ -60,6 +60,7 @@ RULES:
 4. Keep it minimal — don't add unnecessary steps.
 5. For file writing, default to ~/Desktop/ if no path is specified.
 6. Return ONLY a valid JSON array. No markdown fences. No explanation.
+7. CRITICAL: When referencing output from a previous step, you MUST use the EXACT format `{{step_N_output}}` (e.g. `{{step_1_output}}`, `{{step_2_output}}`). Do NOT invent custom variable names like `{{step_1_url}}`, `{{step_1_best_article_url}}`, or `{{step_1_summary}}`. The ONLY valid placeholder is `{{step_N_output}}`.
 
 OUTPUT FORMAT (return a JSON array of objects):
 [
@@ -73,7 +74,7 @@ EXAMPLES:
 User: "Search for 3 articles about quantum computing, summarize them, and save to a file"
 [
   {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing articles 2024"}}, "description": "Search for quantum computing articles", "depends_on": null}},
-  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_best_url}}"}}, "description": "Read the full text from the best search result", "depends_on": 1}},
+  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full text from the best search result", "depends_on": 1}},
   {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize the following article into a concise report. Preserve any source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the full article text", "depends_on": 2}},
   {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
