@@ -120,6 +120,7 @@ class BantzApp(App):
         self._wire_brain_toast_hook()
         self._subscribe_event_bus()
         self._start_wake_word_listener()
+        self._start_ghost_loop()
         self.query_one("#chat-input", Input).focus()
 
     async def action_quit(self) -> None:
@@ -138,6 +139,12 @@ class BantzApp(App):
         try:
             from bantz.agent.wake_word import wake_listener
             wake_listener.stop()
+        except Exception:
+            pass
+        # Stop Ghost Loop (#36)
+        try:
+            from bantz.agent.ghost_loop import ghost_loop
+            ghost_loop.stop()
         except Exception:
             pass
         # Tear down EventBus subscriptions (#220)
@@ -1003,8 +1010,12 @@ class BantzApp(App):
         bus.on("wake_word_detected", self._bus_relay)
         bus.on("ambient_change", self._bus_relay)
         bus.on("health_alert", self._bus_relay)
+        bus.on("voice_input", self._bus_relay)
+        bus.on("ghost_loop_listening", self._bus_relay)
+        bus.on("ghost_loop_transcribing", self._bus_relay)
+        bus.on("ghost_loop_idle", self._bus_relay)
 
-        log.debug("EventBus → TUI bridge active (3 subscriptions)")
+        log.debug("EventBus → TUI bridge active (7 subscriptions)")
 
     def _relay_bus_event(self, event: Event) -> None:
         """Relay a single bus Event into the Textual message loop.
@@ -1026,6 +1037,10 @@ class BantzApp(App):
             bus.off("wake_word_detected", relay)
             bus.off("ambient_change", relay)
             bus.off("health_alert", relay)
+            bus.off("voice_input", relay)
+            bus.off("ghost_loop_listening", relay)
+            bus.off("ghost_loop_transcribing", relay)
+            bus.off("ghost_loop_idle", relay)
 
     def on_bantz_event_message(self, msg: BantzEventMessage) -> None:
         """Dispatch bus events to the appropriate TUI handler.
@@ -1041,6 +1056,14 @@ class BantzApp(App):
                 self._on_bus_ambient_change(event)
             elif name == "health_alert":
                 self._on_bus_health_alert(event)
+            elif name == "voice_input":
+                self._on_bus_voice_input(event)
+            elif name == "ghost_loop_listening":
+                self._on_bus_ghost_listening(event)
+            elif name == "ghost_loop_transcribing":
+                self._on_bus_ghost_transcribing(event)
+            elif name == "ghost_loop_idle":
+                self._on_bus_ghost_idle(event)
         except Exception:
             log.debug("on_bantz_event_message(%s) error", name, exc_info=True)
 
@@ -1070,6 +1093,58 @@ class BantzApp(App):
         title = event.data.get("title", "Health Alert")
         reason = event.data.get("reason", "")
         self.push_toast(title, reason, "warning")
+
+    # ── Ghost Loop handlers (#36) ─────────────────────────────────────
+
+    def _on_bus_voice_input(self, event: Event) -> None:
+        """Voice transcription arrived → display in chat + process."""
+        text = event.data.get("text", "").strip()
+        if not text:
+            return
+
+        chat = self.query_one("#chat-log", ChatLog)
+        chat.add_user(f"🎤 {text}")
+        chat.scroll_end()
+
+        # Process through brain (same path as typed input)
+        self._start_processing(text, chat)
+
+    def _on_bus_ghost_listening(self, event: Event) -> None:
+        """Ghost Loop is recording → show indicator."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system("🎙️ Listening...")
+            chat.scroll_end()
+        except Exception:
+            pass
+
+    def _on_bus_ghost_transcribing(self, event: Event) -> None:
+        """Ghost Loop is running STT → show indicator."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system("⏳ Transcribing...")
+            chat.scroll_end()
+        except Exception:
+            pass
+
+    def _on_bus_ghost_idle(self, event: Event) -> None:
+        """Ghost Loop returned to idle — no visual action needed."""
+        pass
+
+    def _start_ghost_loop(self) -> None:
+        """Start the Ghost Loop if enabled (#36)."""
+        try:
+            from bantz.config import config as _cfg
+            if not _cfg.ghost_loop_enabled or not _cfg.stt_enabled:
+                return
+
+            from bantz.agent.ghost_loop import ghost_loop
+            ok = ghost_loop.start()
+            if ok:
+                chat = self.query_one("#chat-log", ChatLog)
+                chat.add_system("Ghost Loop: hands-free voice active 👻")
+        except Exception as exc:
+            log.debug("Ghost Loop start failed: %s", exc)
 
     # ── Wake Word Listener (#165) ─────────────────────────────────────
 

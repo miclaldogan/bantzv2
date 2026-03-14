@@ -925,6 +925,29 @@ async def _doctor() -> None:
     else:
         print(f"⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
 
+    # Ghost Loop / STT (#36)
+    if config.ghost_loop_enabled and config.stt_enabled:
+        try:
+            from bantz.agent.ghost_loop import ghost_loop as _gl
+            diag = _gl.diagnose()
+            stt_ok = diag["stt"].get("faster_whisper_available", False)
+            vad_ok = diag["voice_capture"].get("webrtcvad_available", False)
+            if stt_ok and vad_ok:
+                print(f"✅ Ghost Loop: ready (model={config.stt_model}, lang={config.stt_language}, vad_silence={config.vad_silence_ms}ms)")
+            else:
+                missing = []
+                if not stt_ok:
+                    missing.append("faster-whisper")
+                if not vad_ok:
+                    missing.append("webrtcvad")
+                print(f"❌ Ghost Loop: missing deps → pip install {' '.join(missing)}")
+        except Exception as exc:
+            print(f"❌ Ghost Loop: init failed — {exc}")
+    elif config.ghost_loop_enabled:
+        print(f"❌ Ghost Loop: enabled but BANTZ_STT_ENABLED=false")
+    else:
+        print(f"⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
+
     # Ambient Sound Analysis (#166)
     if config.ambient_enabled:
         if not config.wake_word_enabled:

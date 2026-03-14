@@ -158,6 +158,7 @@ class TTSEngine:
         self._aplay_path: str | None = None
         self._sox_path: str | None = None
         self._model_path: str | None = None
+        self._sample_rate: int = 22050  # read from model .onnx.json
         self._speaker: int = 0
         self._rate: float = 1.0
         self._playing: asyncio.subprocess.Process | None = None
@@ -246,6 +247,22 @@ class TTSEngine:
         self._model_path = model
         self._speaker = config.tts_speaker
         self._rate = config.tts_rate
+
+        # Read sample rate from model config (.onnx.json)
+        import json as _json
+        model_json = Path(model).with_suffix(".onnx.json")
+        if not model_json.exists():
+            model_json = Path(str(model) + ".json")
+        if model_json.exists():
+            try:
+                meta = _json.loads(model_json.read_text())
+                sr = meta.get("audio", {}).get("sample_rate", 22050)
+                self._sample_rate = int(sr)
+                log.info("TTS: model sample_rate=%d", self._sample_rate)
+            except Exception as exc:
+                log.warning("TTS: could not read model config — %s", exc)
+        else:
+            log.debug("TTS: no .onnx.json found, assuming 22050 Hz")
 
         # Discover sox for animatronic filter (#248)
         sox = shutil.which("sox")
@@ -433,7 +450,7 @@ class TTSEngine:
                 # Pipeline: stdin → sox (effects) → aplay
                 sox_proc = await asyncio.create_subprocess_exec(
                     self._sox_path,
-                    "-t", "raw", "-r", "22050", "-e", "signed",
+                    "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
                     "-b", "16", "-c", "1", "-",   # input spec
                     "-t", "raw", "-",               # output spec
                     "pitch", "-300",
@@ -446,7 +463,7 @@ class TTSEngine:
                 )
                 aplay_proc = await asyncio.create_subprocess_exec(
                     self._aplay_path,
-                    "-r", "22050",
+                    "-r", str(self._sample_rate),
                     "-f", "S16_LE",
                     "-t", "raw",
                     "-c", "1",
@@ -472,7 +489,7 @@ class TTSEngine:
                 # Direct: stdin → aplay
                 proc = await asyncio.create_subprocess_exec(
                     self._aplay_path,
-                    "-r", "22050",
+                    "-r", str(self._sample_rate),
                     "-f", "S16_LE",
                     "-t", "raw",
                     "-c", "1",
