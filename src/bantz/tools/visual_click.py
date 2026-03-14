@@ -31,10 +31,15 @@ _ACTION_MAP = {
 class VisualClickTool(BaseTool):
     name = "visual_click"
     description = (
-        "Locate a UI element on the screen by description and perform a "
-        "mouse action (click, double_click, right_click, hover). "
-        "Uses spatial cache, AT-SPI accessibility tree, and VLM vision "
-        "in order of speed. Works on any visible application."
+        "Click, double-click, right-click, or hover over ANY visible UI "
+        "element on the user's screen.  Call this tool whenever the user "
+        "asks you to interact with a graphical interface — buttons, menus, "
+        "icons, links, tabs, text fields, or anything else they can see.  "
+        "You only need to describe the element in plain language (e.g. "
+        "'the Send button', 'File menu', 'Terminal tab'); the tool will "
+        "find it automatically via accessibility tree and screen vision.  "
+        "Optionally pass an 'app' hint (e.g. 'firefox') to narrow the "
+        "search.  Works on any visible application window."
     )
     risk_level = "moderate"
 
@@ -74,12 +79,23 @@ class VisualClickTool(BaseTool):
             )
 
         # ── Navigate (Cache -> AT-SPI -> VLM) ────────────────────────
-        from bantz.vision.navigator import navigator
+        try:
+            from bantz.vision.navigator import navigator
 
-        nav_result = await navigator.navigate_to(
-            app_name=app,
-            element_label=target,
-        )
+            nav_result = await navigator.navigate_to(
+                app_name=app,
+                element_label=target,
+            )
+        except Exception as exc:
+            log.error("visual_click navigate_to failed: %s", exc, exc_info=True)
+            return ToolResult(
+                success=False,
+                output=(
+                    f"I attempted to scan the screen for '{target}' but the "
+                    f"vision system reported an error, ma'am: {exc}"
+                ),
+                error=f"Navigation pipeline error: {exc}",
+            )
 
         if not nav_result.found:
             return ToolResult(
