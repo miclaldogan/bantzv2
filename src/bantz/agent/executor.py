@@ -4,8 +4,8 @@ Bantz v3 — Plan-and-Solve Executor (#187)
 "The Butler Carries Out His Itinerary"
 
 Executes a list of PlanSteps sequentially, passing context from one step
-to the next.  If a step fails, the executor notes it and continues with
-remaining steps (graceful degradation).
+to the next.  If a step fails, the executor **short-circuits**: remaining
+steps are marked as aborted (circuit breaker, #255).
 
 Usage:
     from bantz.agent.executor import plan_executor
@@ -79,6 +79,25 @@ class PlanExecutionResult:
 class PlanExecutor:
     """Runs plan steps sequentially, threading context between them."""
 
+    _FAILURE_MARKERS = re.compile(
+        r"(?i)^(Error:|Failed:|HTTP [45]\d\d\b|Traceback \(most recent)",
+    )
+
+    @staticmethod
+    def _is_step_failure(sr: StepResult) -> bool:
+        """Determine whether a StepResult represents a real failure.
+
+        A step is failed if:
+        - ``sr.success`` is False (tool reported failure), OR
+        - The output text starts with well-known error markers even when
+          the tool incorrectly claimed success (e.g. web_search #256).
+        """
+        if not sr.success:
+            return True
+        if sr.output and PlanExecutor._FAILURE_MARKERS.search(sr.output):
+            return True
+        return False
+
     async def run(
         self,
         steps: list[Any],  # list[PlanStep] from planner.py
@@ -90,7 +109,8 @@ class PlanExecutor:
 
         - Output from step N is stored and injected into step N+1 when
           step N+1 declares ``depends_on: N``.
-        - If a step fails, execution continues with remaining steps.
+        - **Circuit breaker (#255):** If a step fails, execution stops
+          immediately.  All remaining steps are marked as aborted.
         - ``on_step_start`` is an optional async callback for progress updates.
         - ``llm_fn`` is an async callable used by the virtual ``process_text``
           tool.  Signature: ``await llm_fn(messages) -> str``.
@@ -99,7 +119,7 @@ class PlanExecutor:
         # Rich context store: step_number → {"params": {...}, "output": "..."}
         context_store: dict[int, dict[str, Any]] = {}
 
-        for plan_step in steps:
+        for step_idx, plan_step in enumerate(steps):
             step_num = plan_step.step
             tool_name = plan_step.tool
             params = dict(plan_step.params)  # shallow copy
@@ -126,6 +146,18 @@ class PlanExecutor:
                     "output": sr.output[:2000] if sr.success else "",
                 }
                 result.step_results.append(sr)
+                # ── Circuit breaker: abort remaining steps on failure ──
+                if self._is_step_failure(sr):
+                    log.warning(
+                        "Circuit breaker tripped at step %d [%s] — "
+                        "aborting %d remaining step(s)",
+                        step_num, tool_name, len(steps) - step_idx - 1,
+                    )
+                    self._abort_remaining(
+                        steps[step_idx + 1:], step_num, result, context_store,
+                    )
+                    result.aborted = True
+                    break
                 continue
 
             # Look up tool
@@ -144,8 +176,16 @@ class PlanExecutor:
                     "output": "",
                 }
                 result.step_results.append(sr)
-                log.warning("Plan step %d: tool '%s' not found", step_num, tool_name)
-                continue
+                log.warning(
+                    "Circuit breaker tripped at step %d: tool '%s' not found "
+                    "— aborting %d remaining step(s)",
+                    step_num, tool_name, len(steps) - step_idx - 1,
+                )
+                self._abort_remaining(
+                    steps[step_idx + 1:], step_num, result, context_store,
+                )
+                result.aborted = True
+                break
 
             # Execute
             try:
@@ -173,7 +213,7 @@ class PlanExecutor:
                     tool=tool_name,
                     description=description,
                     success=False,
-                    output="",
+                    output=f"Error: {exc}",
                     error=str(exc),
                 )
                 context_store[step_num] = {
@@ -185,7 +225,49 @@ class PlanExecutor:
 
             result.step_results.append(sr)
 
+            # ── Circuit breaker: abort remaining steps on failure ──
+            if self._is_step_failure(sr):
+                log.warning(
+                    "Circuit breaker tripped at step %d [%s] — "
+                    "aborting %d remaining step(s)",
+                    step_num, tool_name, len(steps) - step_idx - 1,
+                )
+                self._abort_remaining(
+                    steps[step_idx + 1:], step_num, result, context_store,
+                )
+                result.aborted = True
+                break
+
         return result
+
+    @staticmethod
+    def _abort_remaining(
+        remaining_steps: list[Any],
+        failed_step_num: int,
+        result: PlanExecutionResult,
+        context_store: dict[int, dict[str, Any]],
+    ) -> None:
+        """Mark all *remaining_steps* as aborted due to upstream failure."""
+        abort_msg = (
+            f"[ABORTED DUE TO UPSTREAM FAILURE: Step {failed_step_num} failed]"
+        )
+        for ps in remaining_steps:
+            sr = StepResult(
+                step_number=ps.step,
+                tool=ps.tool,
+                description=ps.description,
+                success=False,
+                output=abort_msg,
+                error=abort_msg,
+            )
+            context_store[ps.step] = {
+                "params": dict(ps.params),
+                "output": "",
+            }
+            result.step_results.append(sr)
+            log.info(
+                "Plan step %d [%s]: %s", ps.step, ps.tool, abort_msg,
+            )
 
     # ── Virtual tool: process_text ───────────────────────────────────────
 

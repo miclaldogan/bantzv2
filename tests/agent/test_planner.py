@@ -342,7 +342,7 @@ class TestPlanExecutor:
 
     @pytest.mark.asyncio
     async def test_handles_step_failure_gracefully(self):
-        """One step fails → execution continues, summary shows partial."""
+        """One step fails → circuit breaker aborts remaining steps (#255)."""
         from bantz.agent.planner import PlanStep
         from bantz.agent.executor import PlanExecutor
 
@@ -370,10 +370,13 @@ class TestPlanExecutor:
 
             result = await executor.run(steps)
 
-        assert result.succeeded == 1
+        # Circuit breaker: step 1 failed → step 2 aborted, never executed
+        assert result.succeeded == 0
         assert result.total == 2
+        assert result.aborted is True
         assert result.all_success is False
-        assert "1 of 2" in result.summary()
+        mock_weather.assert_not_called()
+        assert "[ABORTED" in result.step_results[1].output
 
     @pytest.mark.asyncio
     async def test_unknown_tool_doesnt_crash(self):
