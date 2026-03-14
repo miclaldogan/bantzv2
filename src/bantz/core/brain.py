@@ -7,10 +7,8 @@ location_handler.  See each module’s docstring for details.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import AsyncIterator
-
 import logging
+from typing import AsyncIterator
 
 from bantz.config import config
 from bantz.core.time_context import time_ctx
@@ -26,6 +24,7 @@ from bantz.core.finalizer import (
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 from bantz.core.context import BantzContext  # noqa: F401  — re-export for compat
+from bantz.core.types import BrainResult  # noqa: F401  — canonical def in types.py
 from bantz.core.routing_engine import (
     quick_route as _quick_route_fn,
     dispatch_internal as _dispatch_internal,
@@ -75,18 +74,6 @@ def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> Non
     """Compat shim → ``notification_manager.notify_toast``."""
     _notif_mod.toast_callback = _toast_callback
     _notif_mod.notify_toast(title, reason, toast_type)
-
-
-@dataclass
-class BrainResult:
-    response: str
-    tool_used: str | None
-    tool_result: ToolResult | None = None
-    needs_confirm: bool = False
-    pending_command: str = ""
-    pending_tool: str = ""
-    pending_args: dict = field(default_factory=dict)
-    stream: AsyncIterator[str] | None = None
 
 
 class Brain:
@@ -273,8 +260,11 @@ class Brain:
         try:
             from bantz.agent.planner import planner_agent
             if planner_agent.is_complex(en_input):
-                plan_result = await _execute_plan_fn(self, user_input, en_input, tc)
+                plan_result = await _execute_plan_fn(user_input, en_input, tc)
                 if plan_result is not None:
+                    # Orchestrator owns persistence (hotfix #228)
+                    await self._graph_store(user_input, plan_result.response, "planner")
+                    self._fire_embeddings()
                     return plan_result
         except Exception as exc:
             log.debug("Planner check failed: %s — falling through", exc)
@@ -284,7 +274,9 @@ class Brain:
 
         if quick:
             internal = await _dispatch_internal(
-                quick["tool"], quick["args"], self, user_input, en_input, tc,
+                quick["tool"], quick["args"],
+                user_input, en_input, tc,
+                is_remote=is_remote,
             )
             if internal is not None:
                 return internal

@@ -16,7 +16,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Input, Static
 from textual import work
 
-from bantz.core.brain import brain, BrainResult
+from bantz.core.brain import brain
+from bantz.core.types import BrainResult
 from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
 from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel

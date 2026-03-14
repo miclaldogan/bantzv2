@@ -214,7 +214,7 @@ class TestBrainDelegation:
             dl.conversations = MagicMock()
             mock.return_value = "saved"
             result = await dispatch_internal(
-                "_save_place", {"name": "Park"}, MagicMock(), "", "", {},
+                "_save_place", {"name": "Park"}, "", "", {},
             )
         mock.assert_called_once_with("Park")
         assert result is not None
@@ -229,7 +229,7 @@ class TestBrainDelegation:
             dl.conversations = MagicMock()
             mock.return_value = "places list"
             result = await dispatch_internal(
-                "_list_places", {}, MagicMock(), "", "", {},
+                "_list_places", {}, "", "", {},
             )
         assert result is not None
         assert "places list" in result.response
@@ -243,7 +243,7 @@ class TestBrainDelegation:
             dl.conversations = MagicMock()
             mock.return_value = "deleted"
             result = await dispatch_internal(
-                "_delete_place", {"name": "Gym"}, MagicMock(), "", "", {},
+                "_delete_place", {"name": "Gym"}, "", "", {},
             )
         mock.assert_called_once_with("Gym")
         assert result is not None
