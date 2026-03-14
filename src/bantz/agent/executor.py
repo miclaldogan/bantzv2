@@ -96,14 +96,14 @@ class PlanExecutor:
           tool.  Signature: ``await llm_fn(messages) -> str``.
         """
         result = PlanExecutionResult()
-        context_store: dict[int, str] = {}  # step_number → output text
+        # Rich context store: step_number → {"params": {...}, "output": "..."}
+        context_store: dict[int, dict[str, Any]] = {}
 
         for plan_step in steps:
             step_num = plan_step.step
             tool_name = plan_step.tool
             params = dict(plan_step.params)  # shallow copy
             description = plan_step.description
-            depends = plan_step.depends_on
 
             # Progress callback
             if on_step_start is not None:
@@ -112,18 +112,19 @@ class PlanExecutor:
                 except Exception:
                     pass
 
-            # Inject dependency context
-            if depends is not None and depends in context_store:
-                prev_output = context_store[depends]
-                params = self._inject_context(params, prev_output, tool_name)
+            # Always inject context — _inject_context is a no-op when
+            # the params contain no {step_N_*} placeholders.
+            params = self._inject_context(params, context_store, tool_name)
 
             # ── Virtual tool: process_text ──────────────────────────────
             if tool_name == "process_text":
                 sr = await self._handle_process_text(
                     step_num, params, description, llm_fn,
                 )
-                if sr.success:
-                    context_store[step_num] = sr.output[:2000]
+                context_store[step_num] = {
+                    "params": dict(plan_step.params),
+                    "output": sr.output[:2000] if sr.success else "",
+                }
                 result.step_results.append(sr)
                 continue
 
@@ -138,6 +139,10 @@ class PlanExecutor:
                     output="",
                     error=f"Tool '{tool_name}' not found in registry.",
                 )
+                context_store[step_num] = {
+                    "params": dict(plan_step.params),
+                    "output": "",
+                }
                 result.step_results.append(sr)
                 log.warning("Plan step %d: tool '%s' not found", step_num, tool_name)
                 continue
@@ -153,8 +158,11 @@ class PlanExecutor:
                     output=tool_result.output,
                     error=tool_result.error,
                 )
+                context_store[step_num] = {
+                    "params": dict(plan_step.params),
+                    "output": tool_result.output[:2000] if tool_result.success else "",
+                }
                 if tool_result.success:
-                    context_store[step_num] = tool_result.output[:2000]
                     log.info("Plan step %d [%s]: success", step_num, tool_name)
                 else:
                     log.warning("Plan step %d [%s]: failed — %s",
@@ -168,6 +176,10 @@ class PlanExecutor:
                     output="",
                     error=str(exc),
                 )
+                context_store[step_num] = {
+                    "params": dict(plan_step.params),
+                    "output": "",
+                }
                 log.warning("Plan step %d [%s]: exception — %s",
                             step_num, tool_name, exc)
 
@@ -226,8 +238,9 @@ class PlanExecutor:
             ]
             llm_output = await llm_fn(messages)
             
-            # Strip the <thinking> block before returning or saving
-            llm_output = re.sub(r"<thinking>.*?</thinking>\s*", "", llm_output, flags=re.DOTALL).strip()
+            # Strip the <thinking> block before returning or saving (#214)
+            from bantz.core.intent import strip_thinking
+            llm_output = strip_thinking(llm_output).strip()
             
             log.info("Plan step %d [process_text]: success", step_num)
             return StepResult(
@@ -249,37 +262,82 @@ class PlanExecutor:
             )
 
     @staticmethod
-    def _inject_context(params: dict, prev_output: str, tool_name: str = "") -> dict:
-        """Replace {step_N_*} placeholders and add context key.
+    def _inject_context(
+        params: dict,
+        context_store: dict[int, dict[str, Any]],
+        tool_name: str = "",
+    ) -> dict:
+        """Recursively replace ``{step_N_*}`` placeholders in *params*.
 
-        Accepts both the canonical ``{step_N_output}`` AND any
-        hallucinated variants the LLM may invent (e.g.
-        ``{step_1_best_url}``, ``{step_2_summary}``).
+        Supported placeholder syntax (#215):
+          - ``{step_N_output}``       → output text of step N
+          - ``{step_N_params_KEY}``   → params[KEY] of step N
+          - ``{step_N_ANYTHING}``     → fallback to output (LLM hallucination)
+
+        The function recursively walks nested dicts and lists so deeply
+        nested tool arguments are also resolved.
+
+        For the ``read_url`` tool the resolved output is further refined
+        to extract the first HTTP URL (web_search returns prose text).
         """
-        # If the target tool is read_url, it STRICTLY requires an HTTP URL.
-        # But the previous output (e.g. from web_search) usually contains text snippets.
-        # We must extract the first valid URL from it.
-        if tool_name == "read_url" and isinstance(prev_output, str):
-            url_match = re.search(r"https?://[^\s\"'>]+", prev_output)
+        # Build a flat replacement map from the rich context_store
+        replacements: dict[str, str] = {}
+        for step_num, state in context_store.items():
+            output = state.get("output", "")
+            step_params = state.get("params", {})
+            # Canonical: {step_N_output}
+            replacements[f"step_{step_num}_output"] = output
+            # Param access: {step_N_params_KEY}
+            for pk, pv in step_params.items():
+                replacements[f"step_{step_num}_params_{pk}"] = str(pv)
+
+        def _resolve(val: Any) -> Any:
+            """Recursively resolve placeholders in a value."""
+            if isinstance(val, str):
+                return _replace_placeholders(val, replacements, context_store, tool_name)
+            if isinstance(val, dict):
+                return {k: _resolve(v) for k, v in val.items()}
+            if isinstance(val, list):
+                return [_resolve(item) for item in val]
+            return val
+
+        return _resolve(params)
+
+
+def _replace_placeholders(
+    text: str,
+    replacements: dict[str, str],
+    context_store: dict[int, dict[str, Any]],
+    tool_name: str,
+) -> str:
+    """Replace all ``{step_N_*}`` placeholders in *text*.
+
+    Falls back to the step's output when the specific key is not found
+    (handles LLM-hallucinated placeholder names gracefully).
+    """
+    _PH = re.compile(r"\{(step_(\d+)_([a-zA-Z_]+))\}")
+
+    def _sub(m: re.Match) -> str:
+        full_key = m.group(1)   # e.g. "step_1_output"
+        step_num = int(m.group(2))
+        # Exact match first
+        if full_key in replacements:
+            replacement = replacements[full_key]
+        elif step_num in context_store:
+            # Fallback: use output of that step (LLM hallucinated a key)
+            replacement = context_store[step_num].get("output", "")
+        else:
+            return m.group(0)  # leave unresolved
+
+        # Special handling for read_url: extract first HTTP URL from prose
+        if tool_name == "read_url" and replacement and not replacement.startswith("http"):
+            url_match = re.search(r"https?://[^\s\"'>]+", replacement)
             if url_match:
-                extracted_url = url_match.group(0).rstrip(".:;")
-                log.debug("Executor extracted URL for read_url: %s", extracted_url)
-                prev_output = extracted_url
+                replacement = url_match.group(0).rstrip(".:;")
 
-        # Replace any placeholder that references a step number
-        _PLACEHOLDER_RE = re.compile(r"\{step_\d+_[a-zA-Z_]+\}")
-        for key, val in params.items():
-            if isinstance(val, str) and _PLACEHOLDER_RE.search(val):
-                params[key] = _PLACEHOLDER_RE.sub(prev_output[:1500], val)
+        return replacement[:2000]
 
-        # Also provide as explicit "content" for filesystem writes
-        # if content is a placeholder or empty and we have prior output
-        if "content" in params:
-            c = params["content"]
-            if not c or (isinstance(c, str) and "{step_" in c):
-                params[key] = prev_output[:2000]
-
-        return params
+    return _PH.sub(_sub, text)
 
 
 # ── Singleton ────────────────────────────────────────────────────────────────

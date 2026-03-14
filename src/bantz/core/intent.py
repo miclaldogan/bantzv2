@@ -112,6 +112,19 @@ For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.DOTALL)
+
+
+def strip_thinking(text: str) -> str:
+    """Aggressively remove ``<thinking>…</thinking>`` internal monologues.
+
+    Applied at the **earliest** point where raw LLM output is received so
+    that downstream JSON parsers never choke on leaked reasoning tags.
+    Handles nested/multiline blocks and trailing whitespace (#214).
+    """
+    return _THINKING_RE.sub("", text)
+
+
 _REFUSAL_PATTERNS = (
     "sorry", "can't assist", "cannot assist", "i'm unable",
     "i cannot", "not able to", "inappropriate",
@@ -125,8 +138,7 @@ def _is_refusal(text: str) -> bool:
 
 def _extract_json(text: str) -> dict:
     """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks."""
-    # Remove thinking block before extracting JSON
-    text = re.sub(r"<thinking>.*?</thinking>\s*", "", text, flags=re.DOTALL)
+    text = strip_thinking(text)
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text)
     m = re.search(r"\{.*\}", text, re.DOTALL)
