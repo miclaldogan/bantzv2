@@ -1,5 +1,4 @@
-"""
-Tests for Issue #124 — Background stderr observer.
+"""Tests for #124 / #220 Sprint 3 Part 5 — Event-driven stderr observer.
 
 Covers:
   - Severity enum ordering
@@ -8,7 +7,10 @@ Covers:
   - ErrorBuffer: batching, dedup, flush
   - StderrReader: push/pop
   - Observer: full pipeline, stats, lifecycle, threshold gate, dedup
-  - Config: new observer fields
+  - EventBus integration (subscribe/emit)
+  - Config: observer fields
+  - LLM analysis (mocked, no aiohttp required)
+  - Source audit (no polling patterns)
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from bantz.agent.observer import (
     Observer,
     Severity,
     StderrReader,
+    observer,
 )
 
 
@@ -259,7 +262,6 @@ class TestStderrReader:
 
     def test_thread_safety(self):
         r = StderrReader()
-        results = []
 
         def _push_many():
             for i in range(100):
@@ -275,7 +277,7 @@ class TestStderrReader:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Observer — full pipeline
+# Observer — full pipeline (event-driven, no polling)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -283,7 +285,7 @@ class TestObserver:
     def _make(self, **kwargs):
         return Observer(
             severity_threshold="warning",
-            batch_seconds=0.1,
+            batch_seconds=0.0,  # flush immediately for test determinism
             dedup_window=60.0,
             enable_llm_analysis=False,
             **kwargs,
@@ -302,8 +304,6 @@ class TestObserver:
         obs.start()
         try:
             obs.feed("Traceback (most recent call last):\nZeroDivisionError: ...")
-            # Wait for processing
-            time.sleep(0.5)
         finally:
             obs.stop()
         assert len(events) >= 1
@@ -315,14 +315,13 @@ class TestObserver:
         obs = Observer(
             on_error=events.append,
             severity_threshold="critical",
-            batch_seconds=0.1,
+            batch_seconds=0.0,
             dedup_window=60.0,
             enable_llm_analysis=False,
         )
         obs.start()
         try:
             obs.feed("warning: unused variable 'x'")
-            time.sleep(0.5)
         finally:
             obs.stop()
         assert len(events) == 0
@@ -334,9 +333,7 @@ class TestObserver:
         obs.start()
         try:
             obs.feed("npm ERR! code E404")
-            time.sleep(0.5)
             obs.feed("npm ERR! code E404")
-            time.sleep(0.5)
         finally:
             obs.stop()
         # Should have exactly 1 event (second is dedup)
@@ -348,7 +345,6 @@ class TestObserver:
         obs.start()
         try:
             obs.feed("Everything is fine!")
-            time.sleep(0.5)
         finally:
             obs.stop()
         assert len(events) == 0
@@ -358,7 +354,6 @@ class TestObserver:
         obs.start()
         try:
             obs.feed("Segmentation fault (core dumped)")
-            time.sleep(0.5)
         finally:
             obs.stop()
         s = obs.stats()
@@ -391,7 +386,7 @@ class TestObserver:
         obs.feed("Permission denied")  # feed before start
         obs.start()
         try:
-            time.sleep(0.5)
+            pass
         finally:
             obs.stop()
         assert len(events) >= 1
@@ -403,11 +398,74 @@ class TestObserver:
         obs.start()
         try:
             obs.feed("Traceback (most recent call last):\nValueError: bad\nError: also bad")
-            time.sleep(0.5)
         finally:
             obs.stop()
         assert len(events) >= 1
         assert events[0].severity == Severity.CRITICAL
+
+    def test_no_thread_created(self):
+        """Event-driven observer must NOT create a background thread."""
+        obs = self._make()
+        threads_before = threading.active_count()
+        obs.start()
+        threads_after = threading.active_count()
+        obs.stop()
+        assert threads_after == threads_before
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EventBus integration (#220 Part 5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestObserverEventBus:
+    """Verify Observer subscribes to and emits on EventBus."""
+
+    def test_subscribes_on_start(self):
+        obs = Observer(batch_seconds=0.0, enable_llm_analysis=False)
+        with patch("bantz.agent.observer.bus") as mock_bus:
+            obs.start()
+            mock_bus.on.assert_called_once_with("stderr_line", obs._on_stderr_event)
+            obs.stop()
+
+    def test_unsubscribes_on_stop(self):
+        obs = Observer(batch_seconds=0.0, enable_llm_analysis=False)
+        with patch("bantz.agent.observer.bus") as mock_bus:
+            obs.start()
+            obs.stop()
+            mock_bus.off.assert_called_once_with("stderr_line", obs._on_stderr_event)
+
+    def test_emits_observer_error_on_detection(self):
+        obs = Observer(
+            batch_seconds=0.0, dedup_window=60.0, enable_llm_analysis=False,
+        )
+        with patch("bantz.agent.observer.bus") as mock_bus:
+            # Don't actually subscribe — just test processing
+            obs._running = True
+            obs.feed("Segmentation fault (core dumped)")
+            mock_bus.emit_threadsafe.assert_called_once()
+            args, kwargs = mock_bus.emit_threadsafe.call_args
+            assert args[0] == "observer_error"
+            assert kwargs["severity"] == "critical"
+            assert "Segmentation fault" in kwargs["raw_text"]
+
+    def test_on_stderr_event_handler(self):
+        """EventBus stderr_line event should trigger processing."""
+        events = []
+        obs = Observer(
+            on_error=events.append, batch_seconds=0.0,
+            dedup_window=60.0, enable_llm_analysis=False,
+        )
+        obs._running = True
+        # Simulate an EventBus Event object
+        mock_event = MagicMock()
+        mock_event.data = {"line": "Permission denied"}
+        obs._on_stderr_event(mock_event)
+        # Force flush since batch_seconds=0.0
+        text = obs.buffer.flush()
+        if text:
+            obs._process_batch(text)
+        assert len(events) >= 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -469,7 +527,7 @@ class TestObserverConfig:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LLM Analysis (mocked)
+# LLM Analysis (mocked — aiohttp lazy-imported, never required)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -490,7 +548,11 @@ class TestClassifierLLMAnalysis:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("bantz.agent.observer.aiohttp.ClientSession", return_value=mock_session):
+        mock_aiohttp = MagicMock()
+        mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
+        mock_aiohttp.ClientTimeout = MagicMock(return_value=MagicMock())
+
+        with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}):
             result = await clf.analyze(event)
         assert "Division by zero" in result
 
@@ -506,6 +568,55 @@ class TestClassifierLLMAnalysis:
         clf = ErrorClassifier(enable_llm=True)
         event = ErrorEvent(severity=Severity.CRITICAL, raw_text="Traceback ...")
 
-        with patch("bantz.agent.observer.aiohttp.ClientSession", side_effect=Exception("conn err")):
+        mock_aiohttp = MagicMock()
+        mock_aiohttp.ClientSession = MagicMock(side_effect=Exception("conn err"))
+
+        with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}):
             result = await clf.analyze(event)
         assert result == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Source audit (#220 Part 5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestObserverSourceAudit:
+    """Verify no polling patterns remain in the observer module."""
+
+    def test_no_time_sleep_in_observer_class(self):
+        import inspect
+        src = inspect.getsource(Observer)
+        assert "time.sleep(" not in src, "Observer must not use time.sleep"
+
+    def test_no_while_true_in_observer(self):
+        import inspect
+        src = inspect.getsource(Observer)
+        assert "while True" not in src
+        assert "while not" not in src
+
+    def test_no_threading_thread_in_observer(self):
+        """Event-driven observer should not spawn its own thread."""
+        import inspect
+        src = inspect.getsource(Observer)
+        assert "threading.Thread" not in src
+
+    def test_no_top_level_aiohttp_import(self):
+        """aiohttp must be lazy-imported, never at module level."""
+        from bantz.agent import observer as mod
+        import inspect
+        src = inspect.getsource(mod)
+        # Check that 'import aiohttp' only appears inside functions
+        lines = src.splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if "import aiohttp" in stripped and not stripped.startswith("#"):
+                # Must be indented (inside a function)
+                assert line[0] == " ", f"Line {i}: aiohttp import at module level"
+
+    def test_bus_import_exists(self):
+        from bantz.agent import observer as mod
+        assert hasattr(mod, "bus")
+
+    def test_singleton_is_observer(self):
+        assert isinstance(observer, Observer)
