@@ -9,15 +9,17 @@ given user utterance:
    controls, ambient/proactive/health status, briefing, maintenance,
    reflections, schedule, location, and clear-memory.
 
-2. **dispatch_internal(tool, args, brain, user_input, en_input, tc)**
+2. **dispatch_internal(tool, args, user_input, en_input, tc, *, is_remote)**
    Handles every "internal" tool (``_tts_stop``, ``_briefing``, …) that
    ``quick_route`` may return.  Returns ``BrainResult | None``.
+   Completely decoupled from Brain — uses ``is_remote`` kwarg instead.
 
 3. **generate_command(orig, en)**
    LLM-based bash-command generation via ``COMMAND_SYSTEM``.
 
-4. **execute_plan(brain, user_input, en_input, tc)**
-   Plan-and-Solve multi-step execution (#187).
+4. **execute_plan(user_input, en_input, tc)**
+   Plan-and-Solve multi-step execution (#187).  Returns the result
+   to the caller — does NOT persist to graph/embeddings itself.
 
 5. **handle_maintenance / handle_list_reflections / handle_run_reflection**
    Thin wrappers around workflow modules.
@@ -29,17 +31,14 @@ from __future__ import annotations
 import asyncio
 import re
 import logging
-from typing import TYPE_CHECKING
 
+from bantz.core.types import BrainResult
 from bantz.config import config
 from bantz.core.date_parser import resolve_date
 from bantz.core.prompt_builder import COMMAND_SYSTEM
 from bantz.data import data_layer
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
-
-if TYPE_CHECKING:
-    from bantz.core.brain import Brain, BrainResult
 
 log = logging.getLogger("bantz.routing_engine")
 
@@ -178,18 +177,17 @@ def quick_route(orig: str, en: str) -> dict | None:
 async def dispatch_internal(
     tool: str,
     args: dict,
-    brain: "Brain",
     user_input: str,
     en_input: str,
     tc: dict,
-) -> "BrainResult | None":
+    *,
+    is_remote: bool = False,
+) -> BrainResult | None:
     """Execute an internal tool returned by ``quick_route``.
 
     Returns a ``BrainResult`` for internal tools (``_tts_stop``, etc.)
     or ``None`` if ``tool`` is not an internal dispatch target.
     """
-    from bantz.core.brain import BrainResult
-
     text: str | None = None
     tool_label: str = tool.lstrip("_") or tool
 
@@ -314,7 +312,7 @@ async def dispatch_internal(
         text = await _briefing.generate()
         tool_label = "briefing"
         # Speak via TTS if available — suppress for remote (#178)
-        if not getattr(brain, '_is_remote', False):
+        if not is_remote:
             try:
                 from bantz.agent.tts import tts_engine
                 if tts_engine.available():
@@ -402,17 +400,18 @@ async def generate_command(orig: str, en: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def execute_plan(
-    brain: "Brain",
     user_input: str,
     en_input: str,
     tc: dict,
-) -> "BrainResult | None":
+) -> BrainResult | None:
     """Decompose a complex request into steps, then execute them.
 
     Returns ``BrainResult`` on success, or ``None`` if decomposition
     fails (so the caller can fall through to normal routing).
+
+    Note: the caller (brain.py) is responsible for persisting the
+    response via ``_graph_store`` / ``_fire_embeddings``.
     """
-    from bantz.core.brain import BrainResult
     from bantz.agent.planner import planner_agent
     from bantz.agent.executor import plan_executor
 
@@ -428,8 +427,6 @@ async def execute_plan(
     resp = itinerary + "\n\n" + exec_result.summary()
 
     data_layer.conversations.add("assistant", resp, tool_used="planner")
-    await brain._graph_store(user_input, resp, "planner")
-    brain._fire_embeddings()
 
     return BrainResult(response=resp, tool_used="planner")
 

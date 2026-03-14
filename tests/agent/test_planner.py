@@ -1213,12 +1213,8 @@ class TestBrainProcessTextIntegration:
             mock_ollama.chat = AsyncMock(return_value="llm output")
 
             from bantz.core.routing_engine import execute_plan
-            brain = MagicMock()
-            brain._graph_store = AsyncMock()
-            brain._fire_embeddings = MagicMock()
 
             result = await execute_plan(
-                brain,
                 "search AI and summarize",
                 "search AI and summarize",
                 {},
@@ -1254,11 +1250,8 @@ class TestBrainProcessTextIntegration:
             mock_ollama.chat = AsyncMock()
 
             from bantz.core.routing_engine import execute_plan
-            brain = MagicMock()
-            brain._graph_store = AsyncMock()
-            brain._fire_embeddings = MagicMock()
 
-            await execute_plan(brain, "test", "test", {})
+            await execute_plan("test", "test", {})
 
         # decompose must receive process_text in tool_names
         call_args = mock_planner.decompose.call_args[0]

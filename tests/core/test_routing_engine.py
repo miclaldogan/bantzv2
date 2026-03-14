@@ -157,18 +157,13 @@ class TestDispatchInternal:
         from bantz.core.routing_engine import dispatch_internal
         self.dispatch = dispatch_internal
 
-    def _brain_stub(self):
-        b = MagicMock()
-        b._is_remote = False
-        return b
-
     def test_tts_stop_speaking(self):
         with patch("bantz.core.routing_engine.data_layer") as dl:
             dl.conversations = MagicMock()
             with patch("bantz.agent.tts.tts_engine") as tts:
                 tts.is_speaking = True
                 result = _run(self.dispatch(
-                    "_tts_stop", {}, self._brain_stub(), "stop", "stop", {},
+                    "_tts_stop", {}, "stop", "stop", {},
                 ))
         assert result is not None
         assert result.tool_used == "tts"
@@ -181,7 +176,7 @@ class TestDispatchInternal:
             with patch("bantz.agent.tts.tts_engine") as tts:
                 tts.is_speaking = False
                 result = _run(self.dispatch(
-                    "_tts_stop", {}, self._brain_stub(), "stop", "stop", {},
+                    "_tts_stop", {}, "stop", "stop", {},
                 ))
         assert "not speaking" in result.response
 
@@ -193,7 +188,7 @@ class TestDispatchInternal:
             dl.conversations = MagicMock()
             result = _run(self.dispatch(
                 "_maintenance", {"dry_run": False},
-                self._brain_stub(), "run maintenance", "run maintenance", {},
+                "run maintenance", "run maintenance", {},
             ))
         assert result is not None
         assert result.tool_used == "maintenance"
@@ -202,7 +197,7 @@ class TestDispatchInternal:
     def test_unknown_tool_returns_none(self):
         with patch("bantz.core.routing_engine.data_layer"):
             result = _run(self.dispatch(
-                "some_external_tool", {}, self._brain_stub(), "", "", {},
+                "some_external_tool", {}, "", "", {},
             ))
         assert result is None
 
@@ -213,7 +208,7 @@ class TestDispatchInternal:
             dl.conversations = MagicMock()
             result = _run(self.dispatch(
                 "_list_reflections", {},
-                self._brain_stub(), "show reflections", "show reflections", {},
+                "show reflections", "show reflections", {},
             ))
         assert result is not None
         assert "reflections" in result.response.lower()
@@ -250,8 +245,7 @@ class TestExecutePlan:
             mock_reg.names.return_value = ["shell", "weather"]
             mock_planner.decompose = AsyncMock(return_value=[])  # no steps
             from bantz.core.routing_engine import execute_plan
-            brain = MagicMock()
-            result = _run(execute_plan(brain, "hello", "hello", {}))
+            result = _run(execute_plan("hello", "hello", {}))
         assert result is None
 
     def test_returns_brain_result_for_complex(self):
@@ -274,12 +268,8 @@ class TestExecutePlan:
             dl.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="ok")
 
-            brain = MagicMock()
-            brain._graph_store = AsyncMock()
-            brain._fire_embeddings = MagicMock()
-
             from bantz.core.routing_engine import execute_plan
-            result = _run(execute_plan(brain, "complex task", "complex task", {}))
+            result = _run(execute_plan("complex task", "complex task", {}))
 
         assert result is not None
         assert result.tool_used == "planner"
