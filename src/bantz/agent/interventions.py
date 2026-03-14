@@ -502,7 +502,8 @@ ACTION_LABELS: dict[str, tuple[str, str]] = {
 
 # Source labels for explainability
 SOURCE_LABELS: dict[str, str] = {
-    "rl_engine":  "RL",
+    "affinity":   "Affinity",
+    "rl_engine":  "RL",  # backward compat for logged interventions
     "observer":   "Observer",
     "scheduler":  "Scheduler",
     "system":     "System",
@@ -515,14 +516,14 @@ def intervention_from_rl(
     reason: str = "",
     ttl: float = 0,
 ) -> Intervention:
-    """Create a ROUTINE intervention from an RL engine suggestion."""
+    """Create a ROUTINE intervention from a proactive suggestion."""
     emoji, label = ACTION_LABELS.get(action_value, ("💡", f"Suggestion: {action_value}"))
     return Intervention(
         type=InterventionType.ROUTINE,
         priority=Priority.MEDIUM,
         title=f"{emoji} {label}",
         reason=reason or "Learned routine pattern",
-        source="rl_engine",
+        source="affinity",
         action=action_value,
         state_key=state_key,
         ttl=ttl,  # 0 → queue will apply default

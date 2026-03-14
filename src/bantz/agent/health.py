@@ -607,7 +607,6 @@ class HealthRuleEvaluator:
                 intervention_queue, Intervention,
                 InterventionType, Priority,
             )
-            from bantz.agent.rl_engine import Action
 
             iv = Intervention(
                 type=InterventionType.HEALTH,
@@ -615,7 +614,7 @@ class HealthRuleEvaluator:
                 title=result.title,
                 reason=result.reason,
                 source="health",
-                action=Action.HEALTH_BREAK.value,
+                action="health_break",
                 ttl=30.0,
             )
             return intervention_queue.push(iv)

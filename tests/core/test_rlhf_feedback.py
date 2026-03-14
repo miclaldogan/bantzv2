@@ -38,7 +38,6 @@ from bantz.core.brain import (
     POSITIVE_FEEDBACK_KWS,
     NEGATIVE_FEEDBACK_KWS,
 )
-from bantz.agent.rl_engine import Action, Reward, RLEngine, encode_state
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -210,36 +209,34 @@ class TestKeywordSetsSanity:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestFeedbackChatAction:
-    """Action.FEEDBACK_CHAT exists and works with the RL engine."""
+    """Feedback chat action label exists in the intervention system."""
 
-    def test_action_exists(self):
-        assert hasattr(Action, "FEEDBACK_CHAT")
-        assert Action.FEEDBACK_CHAT.value == "feedback_chat"
+    def test_action_label_exists(self):
+        from bantz.agent.interventions import ACTION_LABELS
+        assert "feedback_chat" in ACTION_LABELS
 
-    def test_action_in_all_actions(self):
-        from bantz.agent.rl_engine import ALL_ACTIONS
-        assert Action.FEEDBACK_CHAT in ALL_ACTIONS
+    def test_affinity_engine_add_reward(self, tmp_db):
+        """AffinityEngine.add_reward() adds cumulative score."""
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
+        ae.add_reward(2.0)
+        assert ae.get_score() == 2.0
+        ae.close()
+        SQLitePool.reset()
 
-    def test_force_reward_with_feedback_chat(self, tmp_db):
-        """force_reward() works with FEEDBACK_CHAT action."""
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state(time_segment="morning", day="monday")
-        engine.force_reward(state, Action.FEEDBACK_CHAT, 2.0)
-        assert engine.episodes.total_episodes() == 1
-        recent = engine.episodes.recent(1)
-        assert recent[0]["action"] == "feedback_chat"
-        assert recent[0]["reward"] == 2.0
-        engine.close()
-
-    def test_negative_force_reward(self, tmp_db):
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state(time_segment="afternoon", day="wednesday")
-        engine.force_reward(state, Action.FEEDBACK_CHAT, -2.0)
-        recent = engine.episodes.recent(1)
-        assert recent[0]["reward"] == -2.0
-        engine.close()
+    def test_negative_affinity_reward(self, tmp_db):
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
+        ae.add_reward(-2.0)
+        assert ae.get_score() == -2.0
+        ae.close()
+        SQLitePool.reset()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -275,14 +272,14 @@ class TestSentimentInterceptProcess:
         with patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=None), \
              patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
-             patch("bantz.agent.rl_engine.rl_engine") as mock_rl:
+             patch("bantz.agent.affinity_engine.affinity_engine") as mock_ae:
             mock_tc.snapshot.return_value = {
                 "prompt_hint": "", "time_segment": "morning",
                 "day_name": "monday", "location": "home",
             }
             mock_dl.conversations.add = MagicMock()
             mock_dl.conversations.context = MagicMock(return_value=[])
-            mock_rl.initialized = True
+            mock_ae.initialized = True
 
             # Mock the chat to avoid LLM calls
             b._chat_stream = MagicMock(return_value=AsyncMock())
@@ -386,61 +383,64 @@ class TestTranslationParadox:
         assert _detect_feedback(en_translation) == "positive"
 
 
-class TestRLRewardLogging:
-    """RL engine episode logging from feedback."""
+class TestAffinityRewardLogging:
+    """Affinity engine reward accumulation from feedback (#221)."""
 
     def test_positive_feedback_logs_plus_two(self, tmp_db):
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state(time_segment="morning", day="monday",
-                             recent_tool="feedback_chat")
-        engine.force_reward(state, Action.FEEDBACK_CHAT, 2.0)
-
-        recent = engine.episodes.recent(1)
-        assert len(recent) == 1
-        assert recent[0]["reward"] == 2.0
-        assert recent[0]["action"] == "feedback_chat"
-        engine.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
+        ae.add_reward(2.0)
+        assert ae.get_score() == 2.0
+        ae.close()
+        SQLitePool.reset()
 
     def test_negative_feedback_logs_minus_two(self, tmp_db):
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state(time_segment="evening", day="friday",
-                             recent_tool="feedback_chat")
-        engine.force_reward(state, Action.FEEDBACK_CHAT, -2.0)
-
-        recent = engine.episodes.recent(1)
-        assert recent[0]["reward"] == -2.0
-        engine.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
+        ae.add_reward(-2.0)
+        assert ae.get_score() == -2.0
+        ae.close()
+        SQLitePool.reset()
 
     def test_cumulative_reward_changes(self, tmp_db):
         """Bonding meter is affected — cumulative_reward reflects feedback."""
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
 
         # Log several positive feedbacks
         for _ in range(5):
-            engine.force_reward(state, Action.FEEDBACK_CHAT, 2.0)
+            ae.add_reward(2.0)
 
         # Log one negative
-        engine.force_reward(state, Action.FEEDBACK_CHAT, -2.0)
+        ae.add_reward(-2.0)
 
-        total = engine.cumulative_reward()
+        total = ae.get_score()
         assert total == pytest.approx(8.0, abs=0.01)  # 5*2 + 1*(-2) = 8
-        engine.close()
+        ae.close()
+        SQLitePool.reset()
 
     def test_avg_reward_reflects_feedback(self, tmp_db):
-        engine = RLEngine()
-        engine.init(tmp_db)
-        state = encode_state()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        ae.init(tmp_db)
 
-        engine.force_reward(state, Action.FEEDBACK_CHAT, 2.0)
-        engine.force_reward(state, Action.FEEDBACK_CHAT, -2.0)
+        ae.add_reward(2.0)
+        ae.add_reward(-2.0)
 
-        avg = engine.episodes.avg_reward(7)
-        assert avg == pytest.approx(0.0, abs=0.01)
-        engine.close()
+        assert ae.get_score() == pytest.approx(0.0, abs=0.01)
+        ae.close()
+        SQLitePool.reset()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

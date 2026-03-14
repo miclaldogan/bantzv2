@@ -159,11 +159,11 @@ class PersonaStateBuilder:
         except Exception:
             pass
 
-        # RL engine — 7-day average reward
+        # Affinity engine — cumulative score (#221)
         try:
-            from bantz.agent.rl_engine import rl_engine
-            if rl_engine.initialized:
-                ctx["rl_avg_reward"] = rl_engine.episodes.avg_reward(7)
+            from bantz.agent.affinity_engine import affinity_engine
+            if affinity_engine.initialized:
+                ctx["affinity_score"] = affinity_engine.get_score()
         except Exception:
             pass
 

@@ -250,29 +250,29 @@ class TestFormalityHint:
 class TestGetFormalityHint:
     def test_with_rl_engine(self):
         m, _ = _make_meter()
-        mock_rl = MagicMock()
-        mock_rl.initialized = True
-        mock_rl.cumulative_reward.return_value = 50.0
+        mock_ae = MagicMock()
+        mock_ae.initialized = True
+        mock_ae.get_score.return_value = 50.0
         with patch("bantz.personality.bonding.config") as cfg:
             cfg.bonding_sigmoid_rate = 0.04
             cfg.bonding_sigmoid_midpoint = 25.0
             cfg.bonding_enabled = True
-            with patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+            with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
                 hint = m.get_formality_hint()
         assert isinstance(hint, str)
         assert len(hint) > 10
 
     def test_rl_not_initialized_returns_default(self):
         m, _ = _make_meter()
-        mock_rl = MagicMock()
-        mock_rl.initialized = False
-        with patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+        mock_ae = MagicMock()
+        mock_ae.initialized = False
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             hint = m.get_formality_hint()
         assert hint == DEFAULT_TIER[3]
 
     def test_import_error_returns_default(self):
         m, _ = _make_meter()
-        with patch.dict("sys.modules", {"bantz.agent.rl_engine": None}):
+        with patch.dict("sys.modules", {"bantz.agent.affinity_engine": None}):
             hint = m.get_formality_hint()
         assert hint == DEFAULT_TIER[3]
 

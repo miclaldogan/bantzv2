@@ -453,23 +453,15 @@ async def _step_report(report: MaintenanceReport) -> StepResult:
     except Exception:
         pass
 
-    # ── RL reward: self-congratulate if freed significant space ───────
+    # ── Affinity reward: self-congratulate if freed significant space ───
     if not report.dry_run and report.total_freed_mb >= _RL_REWARD_THRESHOLD_MB:
         try:
-            from bantz.agent.rl_engine import rl_engine, State, Action
-            if rl_engine._initialized:
-                state = State(
-                    time_segment="late_night",
-                    day=datetime.now().strftime("%A").lower(),
-                    location="home",
-                    recent_tool="maintenance",
-                )
-                rl_engine.force_reward(
-                    state, Action.RUN_MAINTENANCE, _RL_REWARD_VALUE,
-                )
+            from bantz.agent.affinity_engine import affinity_engine
+            if affinity_engine.initialized:
+                affinity_engine.add_reward(_RL_REWARD_VALUE)
                 report.rl_reward_given = True
                 log.info(
-                    "🎖 RL self-reward: +%.1f for freeing %.0f MB",
+                    "🎖 Affinity self-reward: +%.1f for freeing %.0f MB",
                     _RL_REWARD_VALUE, report.total_freed_mb,
                 )
         except Exception as exc:

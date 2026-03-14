@@ -491,7 +491,7 @@ class TestAutoDismiss:
             priority=Priority.MEDIUM,
             title="Test",
             reason="Test",
-            source="rl_engine",
+            source="affinity",
             action="launch_docker",
             state_key="morning|monday|home|shell",
             ttl=0.5,  # Short but not already expired
@@ -531,13 +531,18 @@ class TestAutoDismiss:
 
 class TestExplainability:
     def test_action_labels_complete(self):
-        """All 8 RL actions should have labels."""
-        from bantz.agent.rl_engine import Action
-        for action in Action:
-            assert action.value in ACTION_LABELS, f"Missing label for {action.value}"
+        """All action labels should be present."""
+        expected_actions = [
+            "launch_docker", "open_workspace", "open_browser",
+            "focus_music", "run_maintenance", "prepare_briefing",
+            "suggest_break", "daily_review", "proactive_chat",
+            "health_break", "feedback_chat",
+        ]
+        for action in expected_actions:
+            assert action in ACTION_LABELS, f"Missing label for {action}"
 
     def test_source_labels_complete(self):
-        expected = {"rl_engine", "observer", "scheduler", "system"}
+        expected = {"affinity", "rl_engine", "observer", "scheduler", "system"}
         assert set(SOURCE_LABELS.keys()) == expected
 
     def test_action_label_format(self):
@@ -576,7 +581,7 @@ class TestFocusMode:
             priority=Priority.MEDIUM,
             title="Medium",
             reason="test",
-            source="rl_engine",
+            source="affinity",
         ))
 
     def test_focus_allows_high_critical(self):

@@ -266,17 +266,17 @@ async def dispatch_internal(
             from bantz.agent.proactive import (
                 proactive_engine, _get_daily_count, _compute_adaptive_max,
             )
-            from bantz.agent.rl_engine import rl_engine
+            from bantz.agent.affinity_engine import affinity_engine
             kv = data_layer.kv
             if kv:
                 count, date = _get_daily_count(kv)
-                avg_r = rl_engine.episodes.avg_reward(7) if rl_engine.initialized else 0.0
+                avg_r = affinity_engine.get_score() if affinity_engine.initialized else 0.0
                 max_d = _compute_adaptive_max(config.proactive_max_daily, avg_r)
                 text = (
                     f"💬 Proactive Engagement Status\n"
                     f"  Enabled: {'✅' if config.proactive_enabled else '❌'}\n"
                     f"  Today: {count}/{max_d} messages\n"
-                    f"  RL avg reward (7d): {avg_r:.2f}\n"
+                    f"  Affinity score: {avg_r:.1f}\n"
                     f"  Interval: {config.proactive_interval_hours}h ±{config.proactive_jitter_minutes}m"
                 )
             else:

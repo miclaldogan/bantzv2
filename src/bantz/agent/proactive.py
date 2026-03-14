@@ -239,17 +239,17 @@ class ProactiveEngine:
         if not self._initialized:
             return ProactiveResult(reason="engine not initialized")
 
-        # ── Guard: daily limit (RL-adaptive) ──────────────────────────
+        # ── Guard: daily limit (affinity-adaptive) ────────────────────
         from bantz.data import data_layer
-        from bantz.agent.rl_engine import rl_engine
+        from bantz.agent.affinity_engine import affinity_engine
 
         kv = data_layer.kv
         if kv is None:
             return ProactiveResult(reason="KV store not available")
 
         avg_reward = 0.0
-        if rl_engine.initialized:
-            avg_reward = rl_engine.episodes.avg_reward(days=7)
+        if affinity_engine.initialized:
+            avg_reward = affinity_engine.get_score()
 
         max_daily = _compute_adaptive_max(config.proactive_max_daily, avg_reward)
         daily_count, _ = _get_daily_count(kv)

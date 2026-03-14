@@ -168,10 +168,10 @@ class BondingMeter:
         Safe to call even if RL engine is not initialised (returns default).
         """
         try:
-            from bantz.agent.rl_engine import rl_engine
-            if not rl_engine.initialized:
+            from bantz.agent.affinity_engine import affinity_engine
+            if not affinity_engine.initialized:
                 return DEFAULT_TIER[3]
-            reward = rl_engine.cumulative_reward()
+            reward = affinity_engine.get_score()
             return self.formality_hint(reward)
         except Exception:
             return DEFAULT_TIER[3]

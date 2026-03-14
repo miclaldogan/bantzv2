@@ -1,13 +1,13 @@
-"""Tests for bantz.core.rl_hooks (#226).
+"""Tests for bantz.core.rl_hooks (#226, updated for #221 Affinity Engine).
 
 Covers:
   - rl_reward_hook: positive/negative/uninitialized/error paths
-  - rl_feedback_reward: positive/negative sentiment + offloading
-  - AsyncDBExecutor integration (run_in_db is called with write=True)
+  - rl_feedback_reward: positive/negative sentiment
+  - Uses affinity_engine.add_reward instead of old RL engine
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,83 +20,55 @@ from bantz.core.rl_hooks import rl_reward_hook, rl_feedback_reward
 
 
 class TestRLRewardHook:
-    """rl_reward_hook offloads RL engine via run_in_db."""
+    """rl_reward_hook sends reward to affinity engine."""
 
     @pytest.mark.asyncio
     async def test_positive_reward_on_success(self):
         from bantz.tools import ToolResult
         result = ToolResult(success=True, output="ok")
 
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock(key="morning|monday|home|weather"))
+        mock_ae = MagicMock()
+        mock_ae.initialized = True
 
-        mock_run_in_db = AsyncMock()
-
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode), \
-             patch("bantz.core.time_context.time_ctx") as mock_tc, \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
-            mock_tc.snapshot.return_value = {
-                "time_segment": "morning",
-                "day_name": "monday",
-                "location": "home",
-            }
-            # Need to re-import to get patched version
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             from bantz.core import rl_hooks
             await rl_hooks.rl_reward_hook("weather", result)
 
-        mock_run_in_db.assert_called_once()
-        call_kwargs = mock_run_in_db.call_args
-        assert call_kwargs[1]["write"] is True
+        mock_ae.add_reward.assert_called_once_with(1.0)
 
     @pytest.mark.asyncio
     async def test_negative_reward_on_failure(self):
         from bantz.tools import ToolResult
         result = ToolResult(success=False, output="", error="fail")
 
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock(key="morning|monday|home|shell"))
+        mock_ae = MagicMock()
+        mock_ae.initialized = True
 
-        mock_run_in_db = AsyncMock()
-
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode), \
-             patch("bantz.core.time_context.time_ctx") as mock_tc, \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
-            mock_tc.snapshot.return_value = {
-                "time_segment": "morning",
-                "day_name": "monday",
-                "location": "home",
-            }
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             from bantz.core import rl_hooks
             await rl_hooks.rl_reward_hook("shell", result)
 
-        mock_run_in_db.assert_called_once()
+        mock_ae.add_reward.assert_called_once_with(-0.5)
 
     @pytest.mark.asyncio
     async def test_noop_when_uninitialized(self):
         from bantz.tools import ToolResult
         result = ToolResult(success=True, output="ok")
 
-        mock_engine = MagicMock()
-        mock_engine.initialized = False
+        mock_ae = MagicMock()
+        mock_ae.initialized = False
 
-        mock_run_in_db = AsyncMock()
-
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             await rl_reward_hook("shell", result)
 
-        mock_run_in_db.assert_not_called()
+        mock_ae.add_reward.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_crash_on_import_error(self):
         from bantz.tools import ToolResult
         result = ToolResult(success=True, output="ok")
 
-        with patch.dict("sys.modules", {"bantz.agent.rl_engine": None}):
+        with patch.dict("sys.modules", {"bantz.agent.affinity_engine": None}):
             # Should not raise
             await rl_reward_hook("weather", result)
 
@@ -107,63 +79,45 @@ class TestRLRewardHook:
 
 
 class TestRLFeedbackReward:
-    """rl_feedback_reward offloads sentiment RL signal via run_in_db."""
+    """rl_feedback_reward sends sentiment signal to affinity engine."""
 
     @pytest.mark.asyncio
     async def test_positive_feedback(self):
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock())
-        mock_action = MagicMock()
-
-        mock_run_in_db = AsyncMock()
+        mock_ae = MagicMock()
+        mock_ae.initialized = True
 
         tc = {"time_segment": "morning", "day_name": "monday", "location": "home"}
 
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode), \
-             patch("bantz.agent.rl_engine.Action", mock_action), \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             await rl_feedback_reward("positive", tc)
 
-        mock_run_in_db.assert_called_once()
-        assert mock_run_in_db.call_args[1]["write"] is True
+        mock_ae.add_reward.assert_called_once_with(2.0)
 
     @pytest.mark.asyncio
     async def test_negative_feedback(self):
-        mock_engine = MagicMock()
-        mock_engine.initialized = True
-        mock_encode = MagicMock(return_value=MagicMock())
-        mock_action = MagicMock()
-
-        mock_run_in_db = AsyncMock()
+        mock_ae = MagicMock()
+        mock_ae.initialized = True
 
         tc = {"time_segment": "evening", "day_name": "friday", "location": "office"}
 
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.agent.rl_engine.encode_state", mock_encode), \
-             patch("bantz.agent.rl_engine.Action", mock_action), \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             await rl_feedback_reward("negative", tc)
 
-        mock_run_in_db.assert_called_once()
+        mock_ae.add_reward.assert_called_once_with(-2.0)
 
     @pytest.mark.asyncio
     async def test_noop_when_uninitialized(self):
-        mock_engine = MagicMock()
-        mock_engine.initialized = False
-
-        mock_run_in_db = AsyncMock()
+        mock_ae = MagicMock()
+        mock_ae.initialized = False
 
         tc = {"time_segment": "morning", "day_name": "monday", "location": "home"}
 
-        with patch("bantz.agent.rl_engine.rl_engine", mock_engine), \
-             patch("bantz.data.async_executor.run_in_db", mock_run_in_db):
+        with patch("bantz.agent.affinity_engine.affinity_engine", mock_ae):
             await rl_feedback_reward("positive", tc)
 
-        mock_run_in_db.assert_not_called()
+        mock_ae.add_reward.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_crash_on_import_error(self):
-        with patch.dict("sys.modules", {"bantz.agent.rl_engine": None}):
+        with patch.dict("sys.modules", {"bantz.agent.affinity_engine": None}):
             await rl_feedback_reward("positive", {})
