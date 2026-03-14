@@ -123,15 +123,17 @@ class TestComposeAndSend:
     # ── 6. Contact alias resolved ────────────────────────────────────────
 
     def test_contact_alias_resolved(self):
-        """Alias 'alice' → 'alice@example.com' via contacts.resolve."""
+        """Alias 'alice' → 'alice@example.com' via UnifiedContactResolver."""
         tool = _make_tool()
         creds = _fake_creds()
-        with patch("bantz.tools.gmail.contacts") as mock_contacts:
-            mock_contacts.resolve.return_value = "alice@example.com"
+        with patch("bantz.tools.gmail.contact_resolver") as mock_resolver:
+            mock_resolver.resolve_addresses = AsyncMock(
+                return_value=("alice@example.com", None)
+            )
             result = _run(tool._compose_and_send(
                 creds, to="alice", subject="Hi", body="Hello!", intent="",
             ))
-            mock_contacts.resolve.assert_called_once_with("alice")
+            mock_resolver.resolve_addresses.assert_called_once_with("alice")
             assert result.success is True
             assert result.data["to"] == "alice@example.com"
 

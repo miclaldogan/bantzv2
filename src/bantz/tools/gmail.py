@@ -41,6 +41,7 @@ from typing import Any, Optional
 
 from bantz.auth.token_store import token_store, TokenNotFoundError
 from bantz.tools import BaseTool, ToolResult, registry
+from bantz.tools.contact_resolver import contact_resolver
 
 MAX_EMAILS = 10
 CONTACTS_PATH = Path.home() / ".local" / "share" / "bantz" / "contacts.json"
@@ -66,54 +67,6 @@ End with a polite closing if appropriate.\
 """
 
 
-# ── Contacts ──────────────────────────────────────────────────────────────────
-
-class Contacts:
-    """
-    Simple alias → email resolver.
-    ~/.local/share/bantz/contacts.json:
-    {
-      "hocam": "professor@university.edu",
-      "github": "noreply@github.com",
-      "annem": "mom@gmail.com"
-    }
-    """
-    def __init__(self) -> None:
-        self._data: dict[str, str] = {}
-        self._loaded = False
-
-    def _load(self) -> None:
-        if self._loaded:
-            return
-        if CONTACTS_PATH.exists():
-            try:
-                self._data = json.loads(CONTACTS_PATH.read_text(encoding="utf-8"))
-            except Exception:
-                self._data = {}
-        self._loaded = True
-
-    def resolve(self, name_or_email: str) -> str:
-        """Return email for alias, or input if already an email."""
-        self._load()
-        key = name_or_email.lower().strip()
-        return self._data.get(key, name_or_email)
-
-    def add(self, alias: str, email: str) -> None:
-        self._load()
-        CONTACTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self._data[alias.lower()] = email
-        CONTACTS_PATH.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-    def all(self) -> dict[str, str]:
-        self._load()
-        return dict(self._data)
-
-
-contacts = Contacts()
-
-
 # ── Query builder ─────────────────────────────────────────────────────────────
 
 def build_query(
@@ -129,7 +82,7 @@ def build_query(
     if unread_only:
         parts.append("label:unread")
     if from_sender:
-        resolved = contacts.resolve(from_sender)
+        resolved = contact_resolver.resolve_alias(from_sender)
         parts.append(f"from:{resolved}")
     if subject_filter:
         parts.append(f"subject:{subject_filter}")
@@ -335,7 +288,7 @@ class GmailTool(BaseTool):
 
         filter_parts = []
         if from_sender:
-            filter_parts.append(f"from: {contacts.resolve(from_sender)}")
+            filter_parts.append(f"from: {contact_resolver.resolve_alias(from_sender)}")
         if days_ago:
             filter_parts.append(f"last {days_ago} days")
         if starred:
@@ -415,7 +368,7 @@ class GmailTool(BaseTool):
             m = re.search(r"from\s+(\S+?)(?:\s+emails?|\s+mails?|$)", text, re.IGNORECASE)
         if m:
             sender = m.group(1)
-            email = contacts.resolve(sender)
+            email = contact_resolver.resolve_alias(sender)
             q_parts.append(f"from:{email}")
 
         # Stars / importance / attachment / unread
@@ -474,7 +427,9 @@ class GmailTool(BaseTool):
                 success=False, output="",
                 error="To send: to, subject and body are required."
             )
-        to_resolved = contacts.resolve(to)
+        to_resolved, resolve_err = await contact_resolver.resolve_addresses(to)
+        if resolve_err:
+            return ToolResult(success=False, output="", error=resolve_err)
         ok = await asyncio.get_event_loop().run_in_executor(
             None, self._send_sync, creds, to_resolved, subject, body, None
         )
@@ -492,7 +447,9 @@ class GmailTool(BaseTool):
         if not to:
             return ToolResult(success=False, output="", error="Recipient not specified.")
 
-        to_resolved = contacts.resolve(to)
+        to_resolved, resolve_err = await contact_resolver.resolve_addresses(to)
+        if resolve_err:
+            return ToolResult(success=False, output="", error=resolve_err)
 
         # LLM generates body from user intent
         body = await self._llm_compose(to_resolved, subject, intent)
@@ -540,7 +497,9 @@ class GmailTool(BaseTool):
                 error="Recipient not specified.",
             )
 
-        to_resolved = contacts.resolve(to)
+        to_resolved, resolve_err = await contact_resolver.resolve_addresses(to)
+        if resolve_err:
+            return ToolResult(success=False, output="", error=resolve_err)
 
         # Generate body via LLM if only intent provided
         if not body and intent:
@@ -639,13 +598,13 @@ class GmailTool(BaseTool):
 
     def _manage_contacts(self, alias: str, email: str) -> ToolResult:
         if alias and email:
-            contacts.add(alias, email)
+            contact_resolver.add_alias(alias, email)
             return ToolResult(
                 success=True,
                 output=f"Contact added: '{alias}' → {email} ✓",
             )
         # List contacts
-        all_contacts = contacts.all()
+        all_contacts = contact_resolver.all_aliases()
         if not all_contacts:
             return ToolResult(
                 success=True,
@@ -740,7 +699,9 @@ class GmailTool(BaseTool):
                 success=False, output="", error="Could not read email."
             )
 
-        to_resolved = contacts.resolve(to)
+        to_resolved, resolve_err = await contact_resolver.resolve_addresses(to)
+        if resolve_err:
+            return ToolResult(success=False, output="", error=resolve_err)
         fwd_subject = f"Fwd: {content['subject']}"
 
         quoted = (

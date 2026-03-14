@@ -40,6 +40,110 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Fonetik Diksiyon Sözlüğü — Phonetic Lexicon (#262)
+# ═══════════════════════════════════════════════════════════════════════════
+# Piper TTS uses punctuation to decide intonation.  Apostrophes inside
+# words (e.g. "ma'm") trick the engine into a rising, questioning tone.
+# This dictionary maps regex patterns → phonetically safe replacements
+# that are applied *before* text is sent to Piper.
+#
+# Rules:
+#   - Keys are raw regex patterns (case-insensitive \b-bounded).
+#   - Values are plain-text replacements Piper will read naturally.
+#   - Add new entries as pronunciation issues are discovered.
+
+PHONETIC_REPLACEMENTS: dict[str, str] = {
+    # Apostrophe-broken words → remove apostrophe, keep pronunciation
+    r"(?i)\bma'a?m\b":    "mam",        # ma'm, ma'am → mam (apostrof kaldır)
+    r"(?i)\bsir'?s\b":    "sirs",       # sir's (possessive read as plural)
+    r"(?i)\bo'clock\b":   "oh clock",   # o'clock → natural reading
+    # Abbreviations that Piper spells out
+    r"(?i)\bdr\.\s":      "doctor ",    # Dr. → doctor
+    r"(?i)\bmr\.\s":      "mister ",    # Mr. → mister
+    r"(?i)\bmrs\.\s":     "missus ",    # Mrs. → missus
+    r"(?i)\bms\.\s":      "miz ",       # Ms. → miz
+    r"(?i)\bst\.\s":      "saint ",     # St. → saint
+    # Tech jargon Piper mangles
+    r"(?i)\bapi\b":       "A P I",
+    r"(?i)\burls?\b":     "U R L",
+    r"(?i)\bjson\b":      "jason",
+    r"(?i)\bsql\b":       "sequel",
+}
+
+# Pre-compile all patterns once at import time.
+_PHONETIC_COMPILED: list[tuple[re.Pattern, str]] = [
+    (re.compile(pat), repl)
+    for pat, repl in PHONETIC_REPLACEMENTS.items()
+]
+
+
+def apply_phonetic_fixes(text: str) -> str:
+    """Replace words that break Piper's intonation with safe equivalents.
+
+    Iterates through the compiled phonetic lexicon and applies each
+    regex substitution.  Runs **after** markdown stripping and **before**
+    the text is sent to Piper for synthesis.
+    """
+    if not text:
+        return ""
+    for pattern, replacement in _PHONETIC_COMPILED:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prosody normalizer — natural pauses (#262)
+# ═══════════════════════════════════════════════════════════════════════════
+# Piper decides pause length and intonation *entirely* from punctuation.
+# Heavy punctuation ("...", "!!", "?!") creates jarring robotic stops.
+# This normalizer softens punctuation so speech flows more naturally:
+#   - Ellipsis (…/...) → single comma (gentle pause, not a dead stop)
+#   - Multiple punctuation (!! ?? ?! ..) → single mark
+#   - Semicolons/colons mid-sentence → comma (Piper pauses too hard)
+#   - Dash-separated clauses → comma
+#   - Strip orphan punctuation that creates micro-pauses
+
+_PROSODY_RULES: list[tuple[re.Pattern, str]] = [
+    # Ellipsis → space (no pause, just flow through)
+    (re.compile(r"[\u2026]+"), " "),               # Unicode …
+    (re.compile(r"\.{2,}"), " "),                   # ASCII ...
+    # Repeated punctuation → single ("!!!" → "!", "???" → "?")
+    (re.compile(r"([!?])[!?]+"), r"\1"),
+    # Mixed ?! or !? → single ?
+    (re.compile(r"[?!]{2,}"), "?"),
+    # Semicolons and colons mid-sentence → space (no pause)
+    (re.compile(r"\s*;\s*"), " "),
+    (re.compile(r"\s*:\s*(?=[a-z])"), " "),         # only before lowercase
+    # Em-dash / en-dash → space
+    (re.compile(r"\s*[\u2013\u2014\u2014\u2013-]{2,}\s*"), " "),
+    (re.compile(r"\s*[\u2013\u2014]\s*"), " "),    # single em/en-dash
+    # Parenthetical asides → space
+    (re.compile(r"\s*\(\s*"), " "),
+    (re.compile(r"\s*\)\s*"), " "),
+    # Strip stray quotes/brackets that create micro-pauses
+    (re.compile(r'["\[\]{}]'), ""),
+    # Remove ALL commas — Piper pauses too long on them
+    (re.compile(r"\s*,\s*"), " "),
+]
+
+
+def normalize_prosody(text: str) -> str:
+    """Soften punctuation so Piper produces more natural, human-like pauses.
+
+    Heavy or unusual punctuation makes Piper's speech sound choppy and
+    robotic.  This function normalizes punctuation to the small set that
+    Piper handles well: period, comma, question mark, exclamation mark.
+    """
+    if not text:
+        return ""
+    for pattern, replacement in _PROSODY_RULES:
+        text = pattern.sub(replacement, text)
+    # Final whitespace cleanup
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Sentence splitter
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -142,6 +246,8 @@ def strip_markdown_for_tts(text: str) -> str:
     text = _URL_RE.sub("", text)              # 5
     text = _MD_SYMBOLS_RE.sub("", text)       # 6
     text = re.sub(r"\s{2,}", " ", text)       # 7 — collapse whitespace
+    text = apply_phonetic_fixes(text)             # 8 — phonetic lexicon
+    text = normalize_prosody(text)                # 9 — natural pauses
     return text.strip()
 
 
@@ -456,20 +562,37 @@ class TTSEngine:
                     "-b", "16", "-c", "1", "-",   # input spec
                     "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
                     "-b", "16", "-c", "1", "-",   # output spec (explicit)
-                    "pitch", "-300",
-                    "reverb", "50",
-                    "overdrive", "10",
+                    # ── Bozuk Robot (sesi bozan efektler) ──
+                    # ── Upbeat & Loud Retro Robot ──
+                    "tempo", "0.80",               # Uykulu hali gitti, daha enerjik ve normal konuşma hızına yakın.
+                    "pitch", "-200",                # Kalınlık bitti! Ses biraz yukarı çekildi, daha pozitif ve aydınlık bir tını.
+                    "highpass", "300",             # Alt frekanslar kesik (radyo hissi devam).
+                    "lowpass", "3500",             
+                    "phaser", "0.8", "0.7", "2", "0.2", "1", "-t", 
+                    # THE JOY: Phaser hızı 2'den 3'e çıktı. Robotun sesi daha "kıpır kıpır" ve dalgalı çıkacak (neşeli bilimkurgu hissi).
+                    "echo", "0.8", "0.8", "8", "0.6", 
+                    # Eko 10'dan 8'e düştü: Teneke kutu hissi biraz daha inceldi, daha tatlı bir tını oldu.
+                    "tremolo", "12", "20",         # Arıza/Titreme efekti biraz yumuşatıldı (hala bozuk ama daha az can çekişiyor).
+                    "overdrive", "8",              # Analog radyo sıcaklığı biraz artırıldı.
+                    "gain", "+5",                  # BOOM! SES SEVİYESİ CİDDİ ŞEKİLDE ARTIRILDI (Eski -2'yi sildik, +5 verdik).
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                  
                     env=env,
                 )
                 self._sox_proc = sox_proc
-                processed, _ = await asyncio.wait_for(
+                processed, sox_err = await asyncio.wait_for(
                     sox_proc.communicate(input=wav_data),
                     timeout=30.0,
                 )
                 self._sox_proc = None
+
+                log.info(
+                    "TTS-SOX: rc=%s in=%d out=%d stderr=%s",
+                    sox_proc.returncode, len(wav_data), len(processed) if processed else 0,
+                    (sox_err or b"").decode(errors="replace")[:300],
+                )
 
                 if not processed:
                     log.warning("TTS: sox produced no output")
@@ -484,11 +607,16 @@ class TTSEngine:
                     "-c", "1",
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                     env=env,
                 )
                 self._playing = proc
-                await proc.communicate(input=processed)
+                _, aplay_err = await proc.communicate(input=processed)
+                log.info(
+                    "TTS-APLAY(sox): rc=%s stderr=%s",
+                    proc.returncode,
+                    (aplay_err or b"").decode(errors="replace")[:300],
+                )
                 self._playing = None
             else:
                 # Direct: stdin → aplay
