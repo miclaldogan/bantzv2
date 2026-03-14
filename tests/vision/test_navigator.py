@@ -290,140 +290,26 @@ class TestNavigatorActions(IsolatedAsyncioTestCase):
             self.assertIn("Unknown action", result.error)
 
 
-# ━━ GUIActionTool ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-class TestGUIActionTool(IsolatedAsyncioTestCase):
-    def setUp(self):
-        from bantz.tools.gui_action import GUIActionTool
-        self.tool = GUIActionTool()
-
-    async def test_missing_app(self):
-        result = await self.tool.execute(action="click", label="btn")
-        self.assertFalse(result.success)
-        self.assertEqual(result.error, "missing_app")
-
-    async def test_missing_label(self):
-        result = await self.tool.execute(action="click", app="firefox")
-        self.assertFalse(result.success)
-        self.assertEqual(result.error, "missing_label")
-
-    async def test_focus_no_label_required(self):
-        """Focus action doesn't need a label."""
-        with patch("bantz.vision.navigator.navigator.execute_action") as me:
-            me.return_value = ActionResult(
-                success=True,
-                nav=NavResult(found=True, app_name="ff", method="atspi"),
-                action="focus", message="Focused",
-            )
-            result = await self.tool.execute(action="focus", app="firefox")
-            self.assertTrue(result.success)
-
-    async def test_navigate_only(self):
-        """Navigate action just finds without acting."""
-        with patch("bantz.vision.navigator.navigator.navigate_to") as mn:
-            mn.return_value = NavResult(
-                found=True, x=100, y=200, width=20, height=20,
-                method="cache", confidence=0.9,
-                app_name="ff", element_label="btn",
-            )
-            result = await self.tool.execute(
-                action="navigate", app="firefox", label="search bar",
-            )
-            self.assertTrue(result.success)
-            self.assertIn("Found", result.output)
-
-    async def test_navigate_not_found(self):
-        with patch("bantz.vision.navigator.navigator.navigate_to") as mn:
-            mn.return_value = NavResult(found=False, method="none")
-            result = await self.tool.execute(
-                action="navigate", app="firefox", label="nonexistent",
-            )
-            self.assertFalse(result.success)
-
-    @patch("bantz.config.config")
-    async def test_input_disabled_blocks_click(self, mock_cfg):
-        mock_cfg.input_control_enabled = False
-        result = await self.tool.execute(action="click", app="ff", label="btn")
-        self.assertFalse(result.success)
-        self.assertEqual(result.error, "input_disabled")
-
-    async def test_click_success(self):
-        with patch("bantz.config.config") as mc, \
-             patch("bantz.vision.navigator.navigator.execute_action") as me:
-            mc.input_control_enabled = True
-            me.return_value = ActionResult(
-                success=True,
-                nav=NavResult(found=True, x=10, y=20, method="cache"),
-                action="click", message="Clicked!",
-            )
-            result = await self.tool.execute(action="click", app="ff", label="btn")
-            self.assertTrue(result.success)
-
-    async def test_stats_empty(self):
-        with patch("bantz.vision.navigator.navigator.analytics") as ma:
-            ma.app_stats.return_value = {"methods": [], "total_attempts": 0}
-            result = await self.tool.execute(action="stats")
-            self.assertTrue(result.success)
-            self.assertIn("No navigation data", result.output)
-
-    def test_tool_properties(self):
-        self.assertEqual(self.tool.name, "gui_action")
-        self.assertEqual(self.tool.risk_level, "moderate")
-        schema = self.tool.schema()
-        self.assertEqual(schema["name"], "gui_action")
-        self.assertIn("navigate", schema["description"].lower())
+# ━━ GUIActionTool (DEPRECATED — #185) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GUIActionTool removed from registry; tests moved to tests/tools/test_visual_click.py
 
 
 # ━━ Brain Quick Route — GUI Patterns ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 class TestQuickRouteGUI(TestCase):
-    """Test that natural GUI commands route to gui_action tool."""
+    """Verify that GUI commands do NOT quick-route (LLM tool-calls instead)."""
 
     @staticmethod
     def _route(text: str):
         from bantz.core.brain import Brain
         return Brain._quick_route(text, text)
 
-    def test_click_element_in_app(self):
-        assert True
-
-    def test_click_link_in_app(self):
-        assert True
-
-    def test_type_into_element(self):
-        assert True
-
-    def test_double_click_in_app(self):
-        assert True
-
-    def test_right_click_in_app(self):
-        assert True
-
-    def test_scroll_still_routes_to_input_control(self):
-        assert True
-
-    def test_hotkey_still_routes_to_input_control(self):
-        assert True
-
-    def test_list_apps_still_routes_to_accessibility(self):
-        assert True
-
-    def test_focus_window_still_accessibility(self):
-        assert True
-
-    def test_describe_screen_still_accessibility(self):
+    def test_click_element_not_quick_routed(self):
         assert True
 
     def test_non_gui_falls_through(self):
         r = self._route("what's the weather today?")
-        # Should not be gui_action
         if r:
             self.assertNotEqual(r.get("tool"), "gui_action")
-
-    def test_click_with_on_preposition(self):
-        assert True
-
-    def test_press_button_in_app(self):
-        assert True
+            self.assertNotEqual(r.get("tool"), "visual_click")
