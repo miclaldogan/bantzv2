@@ -403,6 +403,8 @@ async def execute_plan(
     user_input: str,
     en_input: str,
     tc: dict,
+    *,
+    recent_history: list[dict] | None = None,
 ) -> BrainResult | None:
     """Decompose a complex request into steps, then execute them.
 
@@ -416,7 +418,9 @@ async def execute_plan(
     from bantz.agent.executor import plan_executor
 
     tool_names = registry.names() + ["process_text"]
-    steps = await planner_agent.decompose(en_input, tool_names)
+    steps = await planner_agent.decompose(
+        en_input, tool_names, recent_history=recent_history,
+    )
     if not steps or len(steps) < 2:
         return None
 

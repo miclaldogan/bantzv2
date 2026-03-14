@@ -143,10 +143,23 @@ def _log_thinking(raw: str, tag: str = "") -> None:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def _format_recent_history(recent_history: list[dict]) -> str:
+    """Format recent conversation turns for context injection."""
+    if not recent_history:
+        return ""
+    lines = []
+    for msg in recent_history[-6:]:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")[:200]
+        lines.append(f"  {role}: {content}")
+    return "\n".join(lines)
+
+
 async def cot_route(
     en_input: str,
     tool_schemas: list[dict],
     *,
+    recent_history: list[dict] | None = None,
     confidence_threshold: float = 0.4,
 ) -> dict | None:
     """
@@ -158,14 +171,27 @@ async def cot_route(
 
     Returns *None* when routing fails (model refusal, parse error, or very
     low confidence) — the caller should fall back to chat.
+
+    Args:
+        recent_history: Last few conversation turns (user/assistant dicts)
+            so the classifier can resolve pronouns like "him", "it", etc.
     """
     schema_str = "\n".join(
         f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
         for t in tool_schemas
     )
 
+    # Build optional history block for coreference resolution
+    history_block = ""
+    if recent_history:
+        formatted = _format_recent_history(recent_history)
+        history_block = (
+            f"\n\nRECENT CONVERSATION (use to resolve pronouns like "
+            f"'him', 'it', 'that file', 'yesterday\'s report'):\n{formatted}"
+        )
+
     messages: list[dict] = [
-        {"role": "system", "content": COT_SYSTEM.format(tool_schemas=schema_str)},
+        {"role": "system", "content": COT_SYSTEM.format(tool_schemas=schema_str) + history_block},
         {"role": "user", "content": en_input},
     ]
 

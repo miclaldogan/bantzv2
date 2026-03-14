@@ -257,10 +257,16 @@ class Brain:
         # Planner runs FIRST — it handles complex multi-tool requests via
         # LLM heuristics.  Must be above workflow_engine to prevent the
         # old regex-based engine from eagerly stealing autonomous commands.
+        #
+        # recent_history feeds coreference resolution (#212) so the
+        # planner can resolve pronouns like "him", "it", "that file".
+        recent_history = data_layer.conversations.context(n=6)
         try:
             from bantz.agent.planner import planner_agent
-            if planner_agent.is_complex(en_input):
-                plan_result = await _execute_plan_fn(user_input, en_input, tc)
+            if planner_agent.is_complex(en_input, recent_history=recent_history):
+                plan_result = await _execute_plan_fn(
+                    user_input, en_input, tc, recent_history=recent_history,
+                )
                 if plan_result is not None:
                     # Orchestrator owns persistence (hotfix #228)
                     await self._graph_store(user_input, plan_result.response, "planner")
@@ -290,7 +296,10 @@ class Brain:
                 plan = {"route": "tool", "tool_name": quick["tool"],
                         "tool_args": quick["args"], "risk_level": "safe"}
         else:
-            plan = await cot_route(en_input, registry.all_schemas())
+            plan = await cot_route(
+                en_input, registry.all_schemas(),
+                recent_history=recent_history,
+            )
             if plan is None:
                 stream = self._chat_stream(en_input, tc)
                 return BrainResult(
