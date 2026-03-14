@@ -260,3 +260,203 @@ class TestReplacePlaceholders:
             "{step_99_output}", {}, {}, tool_name=""
         )
         assert result == "{step_99_output}"
+
+
+# ── Circuit breaker / short-circuit tests (#255) ─────────────────────────────
+
+
+class TestCircuitBreaker:
+    """Verify that executor short-circuits on step failure."""
+
+    @staticmethod
+    def _make_step(step: int, tool: str, description: str = "", **params):
+        """Create a lightweight PlanStep-like object."""
+        from dataclasses import dataclass, field as dc_field
+        from typing import Any as _Any
+
+        @dataclass
+        class _FakeStep:
+            step: int
+            tool: str
+            params: dict[str, _Any] = dc_field(default_factory=dict)
+            description: str = ""
+            depends_on: int | None = None
+
+        return _FakeStep(step=step, tool=tool, params=params, description=description)
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_on_step_failure(self):
+        """Step 1 succeeds, Step 2 fails → Step 3 is NEVER called and aborted."""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from bantz.tools import ToolResult
+
+        # Build 3-step plan
+        steps = [
+            self._make_step(1, "web_search", "Search the web", query="test"),
+            self._make_step(2, "read_url", "Read the page", url="{step_1_output}"),
+            self._make_step(3, "send_email", "Email results", body="{step_2_output}"),
+        ]
+
+        # Mock tools
+        mock_web_search = MagicMock()
+        mock_web_search.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="https://example.com")
+        )
+        mock_read_url = MagicMock()
+        mock_read_url.execute = AsyncMock(
+            return_value=ToolResult(success=False, output="", error="HTTP 403 Forbidden")
+        )
+        mock_send_email = MagicMock()
+        mock_send_email.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="Sent!")
+        )
+
+        tool_map = {
+            "web_search": mock_web_search,
+            "read_url": mock_read_url,
+            "send_email": mock_send_email,
+        }
+
+        with patch("bantz.agent.executor.registry") as mock_registry:
+            mock_registry.get = lambda name: tool_map.get(name)
+            executor = PlanExecutor()
+            result = await executor.run(steps)
+
+        # Step 1 executed and succeeded
+        assert result.step_results[0].success is True
+        assert result.step_results[0].tool == "web_search"
+
+        # Step 2 executed and failed
+        assert result.step_results[1].success is False
+        assert result.step_results[1].tool == "read_url"
+
+        # Step 3 was NEVER called
+        mock_send_email.execute.assert_not_called()
+
+        # Step 3 output is the abort message
+        assert result.step_results[2].success is False
+        assert result.step_results[2].output == (
+            "[ABORTED DUE TO UPSTREAM FAILURE: Step 2 failed]"
+        )
+
+        # Overall result
+        assert result.aborted is True
+        assert result.total == 3
+        assert result.succeeded == 1
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_on_exception(self):
+        """Step that raises an exception triggers circuit breaker."""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from bantz.tools import ToolResult
+
+        steps = [
+            self._make_step(1, "web_search", "Search", query="q"),
+            self._make_step(2, "save_file", "Save", path="f.txt"),
+        ]
+
+        mock_web_search = MagicMock()
+        mock_web_search.execute = AsyncMock(
+            side_effect=ConnectionError("Ollama is down")
+        )
+        mock_save_file = MagicMock()
+        mock_save_file.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="Saved")
+        )
+
+        tool_map = {"web_search": mock_web_search, "save_file": mock_save_file}
+
+        with patch("bantz.agent.executor.registry") as mock_registry:
+            mock_registry.get = lambda name: tool_map.get(name)
+            result = await PlanExecutor().run(steps)
+
+        assert result.step_results[0].success is False
+        assert "Ollama is down" in result.step_results[0].error
+        mock_save_file.execute.assert_not_called()
+        assert "[ABORTED" in result.step_results[1].output
+        assert result.aborted is True
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_on_error_marker_in_output(self):
+        """Tool claims success=True but output starts with 'Error:' → tripped."""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from bantz.tools import ToolResult
+
+        steps = [
+            self._make_step(1, "web_search", "Search", query="q"),
+            self._make_step(2, "read_url", "Read", url="x"),
+        ]
+
+        mock_web_search = MagicMock()
+        mock_web_search.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True,
+                output="Error: No results found for query",
+            )
+        )
+        mock_read_url = MagicMock()
+        mock_read_url.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="page content")
+        )
+
+        tool_map = {"web_search": mock_web_search, "read_url": mock_read_url}
+
+        with patch("bantz.agent.executor.registry") as mock_registry:
+            mock_registry.get = lambda name: tool_map.get(name)
+            result = await PlanExecutor().run(steps)
+
+        # web_search "succeeded" per tool but output has Error: marker
+        assert result.step_results[0].output.startswith("Error:")
+        mock_read_url.execute.assert_not_called()
+        assert "[ABORTED" in result.step_results[1].output
+        assert result.aborted is True
+
+    @pytest.mark.asyncio
+    async def test_all_steps_succeed_no_abort(self):
+        """When all steps succeed, no short-circuit occurs."""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from bantz.tools import ToolResult
+
+        steps = [
+            self._make_step(1, "web_search", "Search", query="q"),
+            self._make_step(2, "read_url", "Read", url="u"),
+        ]
+
+        mock_web_search = MagicMock()
+        mock_web_search.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="https://example.com")
+        )
+        mock_read_url = MagicMock()
+        mock_read_url.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="Page content here")
+        )
+
+        tool_map = {"web_search": mock_web_search, "read_url": mock_read_url}
+
+        with patch("bantz.agent.executor.registry") as mock_registry:
+            mock_registry.get = lambda name: tool_map.get(name)
+            result = await PlanExecutor().run(steps)
+
+        assert result.aborted is False
+        assert result.all_success is True
+        assert result.total == 2
+        mock_web_search.execute.assert_called_once()
+        mock_read_url.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_tool_not_found_triggers_circuit_breaker(self):
+        """Missing tool in registry triggers circuit breaker."""
+        steps = [
+            self._make_step(1, "nonexistent_tool", "Do something"),
+            self._make_step(2, "web_search", "Search", query="q"),
+        ]
+
+        from unittest.mock import patch
+        with patch("bantz.agent.executor.registry") as mock_registry:
+            mock_registry.get = lambda name: None
+            result = await PlanExecutor().run(steps)
+
+        assert result.step_results[0].success is False
+        assert "not found" in result.step_results[0].error
+        assert "[ABORTED" in result.step_results[1].output
+        assert result.aborted is True
