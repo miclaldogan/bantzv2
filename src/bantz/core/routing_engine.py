@@ -167,6 +167,30 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
 
+    # ── Visual click / hover (#185) ───────────────────────────────────
+    # Matches: click/tap/double-click/right-click/hover + UI element name.
+    # Does NOT match: "press <key>" (keyboard), "click at X,Y" (coordinates).
+    if config.input_control_enabled:
+        m = re.search(
+            r"(?:click|tap|double[- ]?click|right[- ]?click|hover)\s+"
+            r"(?:the\s+|on\s+)?(.+?)(?:\s+button|\s+icon)?\s*$",
+            e,
+        )
+        if m:
+            target = m.group(1).strip()
+            # Reject coordinate patterns (handled by input_control tool)
+            if re.match(r"at\s+\d", target):
+                pass
+            else:
+                action = "click"
+                if re.match(r"double", e):
+                    action = "double_click"
+                elif re.match(r"right", e):
+                    action = "right_click"
+                elif re.match(r"hover", e):
+                    action = "hover"
+                return {"tool": "visual_click", "args": {"target": target, "action": action}}
+
     return None
 
 

@@ -101,6 +101,10 @@ class Brain:
             import bantz.tools.gui_action  # noqa: F401  (#123)
         except (ImportError, ModuleNotFoundError):
             pass
+        try:
+            import bantz.tools.visual_click  # noqa: F401  (#185)
+        except (ImportError, ModuleNotFoundError):
+            pass
         self._memory_ready = False
         self._graph_ready = False
         # Session state: stores last tool results for contextual follow-ups
