@@ -154,6 +154,7 @@ class Config(BaseSettings):
     tts_speaker: int = Field(0, alias="BANTZ_TTS_SPEAKER")
     tts_rate: float = Field(1.0, alias="BANTZ_TTS_RATE")
     tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
+    tts_speak_all_responses: bool = Field(False, alias="BANTZ_TTS_SPEAK_ALL_RESPONSES")
 
     # ── Audio Ducking (#171) ──────────────────────────────────────────────
     audio_duck_enabled: bool = Field(False, alias="BANTZ_AUDIO_DUCK_ENABLED")

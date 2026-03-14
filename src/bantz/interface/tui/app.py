@@ -726,6 +726,19 @@ class BantzApp(App):
             except Exception:
                 pass
 
+            # TTS: speak completed streaming response (#247)
+            try:
+                from bantz.config import config as _cfg
+                if _cfg.tts_speak_all_responses:
+                    from bantz.agent.tts import tts_engine, strip_markdown_for_tts
+                    if tts_engine.available():
+                        tts_engine.stop()
+                        tts_text = strip_markdown_for_tts(full_text)
+                        if tts_text:
+                            asyncio.create_task(tts_engine.speak_background(tts_text))
+            except Exception:
+                pass
+
             self._update_header_counts()
             return
 
@@ -740,6 +753,20 @@ class BantzApp(App):
             if result.tool_used:
                 chat.add_tool(result.tool_used)
             chat.add_bantz(result.response)
+
+            # TTS: speak completed non-streaming response (#247)
+            try:
+                from bantz.config import config as _cfg
+                if _cfg.tts_speak_all_responses:
+                    from bantz.agent.tts import tts_engine, strip_markdown_for_tts
+                    if tts_engine.available():
+                        tts_engine.stop()
+                        tts_text = strip_markdown_for_tts(result.response)
+                        if tts_text:
+                            asyncio.create_task(tts_engine.speak_background(tts_text))
+            except Exception:
+                pass
+
         self._update_header_counts()
 
     async def _handle_confirm(self, text: str, chat: ChatLog) -> None:
