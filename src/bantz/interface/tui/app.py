@@ -18,6 +18,7 @@ from textual import work
 
 from bantz.core.brain import brain
 from bantz.core.types import BrainResult
+from bantz.core.event_bus import bus, Event
 from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
 from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel
@@ -45,6 +46,19 @@ _STYLES_PATH = Path(__file__).parent / "styles.tcss"
 
 class WakeWordDetected(Message):
     """Fired (from the audio thread via call_from_thread) when the user says the wake word."""
+
+
+class BantzEventMessage(Message):
+    """Bridges EventBus → Textual main thread (#220, Sprint 3 Part 3).
+
+    Bus subscribers call ``app.call_from_thread(app.post_message,
+    BantzEventMessage(event))`` so the Textual event loop picks it up
+    safely — no ThreadError.
+    """
+
+    def __init__(self, event: Event) -> None:
+        super().__init__()
+        self.event = event
 
 
 class BantzApp(App):
@@ -104,6 +118,7 @@ class BantzApp(App):
         self._start_observer()
         self._start_intervention_processor()
         self._wire_brain_toast_hook()
+        self._subscribe_event_bus()
         self._start_wake_word_listener()
         self.query_one("#chat-input", Input).focus()
 
@@ -123,6 +138,12 @@ class BantzApp(App):
         try:
             from bantz.agent.wake_word import wake_listener
             wake_listener.stop()
+        except Exception:
+            pass
+        # Tear down EventBus subscriptions (#220)
+        self._unsubscribe_event_bus()
+        try:
+            await bus.shutdown()
         except Exception:
             pass
         self.exit()
@@ -953,10 +974,108 @@ class BantzApp(App):
         except Exception:
             pass
 
+    # ── EventBus → TUI Bridge (#220, Sprint 3 Part 3) ──────────────────
+
+    def _subscribe_event_bus(self) -> None:
+        """Subscribe to relevant EventBus events and relay to the TUI.
+
+        The bus dispatcher runs as a separate asyncio task.  We must
+        NOT touch Textual widgets directly from a bus callback — that
+        would trigger ``ThreadError``.  Instead each callback uses
+        ``call_from_thread(post_message, BantzEventMessage(...))`` to
+        safely enqueue a Textual ``Message`` processed on the main
+        thread by ``on_bantz_event_message()``.
+
+        Events subscribed:
+          - ``wake_word_detected``  → focus input + "Yes boss? 🎤"
+          - ``ambient_change``      → update system status ambient label
+          - ``health_alert``        → push warning toast
+        """
+        bus.bind_loop()  # idempotent — ensures dispatcher task exists
+
+        # Keep refs so we can bus.off() on quit
+        self._bus_relay = self._relay_bus_event  # prevent GC
+
+        bus.on("wake_word_detected", self._bus_relay)
+        bus.on("ambient_change", self._bus_relay)
+        bus.on("health_alert", self._bus_relay)
+
+        log.debug("EventBus → TUI bridge active (3 subscriptions)")
+
+    def _relay_bus_event(self, event: Event) -> None:
+        """Relay a single bus Event into the Textual message loop.
+
+        Called by the EventBus dispatcher task — NOT the main thread.
+        ``call_from_thread`` schedules ``post_message`` on Textual's
+        own event loop so we never hit a ``ThreadError``.
+        """
+        try:
+            self.call_from_thread(self.post_message, BantzEventMessage(event))
+        except Exception:
+            # App shutting down or not yet mounted — silently discard
+            pass
+
+    def _unsubscribe_event_bus(self) -> None:
+        """Remove all bus subscriptions (called on quit)."""
+        relay = getattr(self, "_bus_relay", None)
+        if relay is not None:
+            bus.off("wake_word_detected", relay)
+            bus.off("ambient_change", relay)
+            bus.off("health_alert", relay)
+
+    def on_bantz_event_message(self, msg: BantzEventMessage) -> None:
+        """Dispatch bus events to the appropriate TUI handler.
+
+        Runs on the Textual main thread — safe to touch any widget.
+        """
+        event = msg.event
+        name = event.name
+        try:
+            if name == "wake_word_detected":
+                self._on_bus_wake_word(event)
+            elif name == "ambient_change":
+                self._on_bus_ambient_change(event)
+            elif name == "health_alert":
+                self._on_bus_health_alert(event)
+        except Exception:
+            log.debug("on_bantz_event_message(%s) error", name, exc_info=True)
+
+    # ── per-event handlers (main thread safe) ─────────────────────────
+
+    def _on_bus_wake_word(self, event: Event) -> None:
+        """Wake word detected via bus → focus input + greet."""
+        chat = self.query_one("#chat-log", ChatLog)
+        chat.add_bantz("Yes boss? 🎤")
+        chat.scroll_end()
+        self.query_one("#chat-input", Input).focus()
+
+    def _on_bus_ambient_change(self, event: Event) -> None:
+        """Ambient noise classification changed → update system status."""
+        label = event.data.get("label", "")
+        rms = event.data.get("rms")
+        try:
+            panel = self.query_one(SystemStatus)
+            # SystemStatus can optionally display ambient info
+            if hasattr(panel, "update_ambient"):
+                panel.update_ambient(label, rms)
+        except Exception:
+            pass
+
+    def _on_bus_health_alert(self, event: Event) -> None:
+        """Health rule fired → push a warning toast."""
+        title = event.data.get("title", "Health Alert")
+        reason = event.data.get("reason", "")
+        self.push_toast(title, reason, "warning")
+
     # ── Wake Word Listener (#165) ─────────────────────────────────────
 
     def _start_wake_word_listener(self) -> None:
-        """Start the always-on wake word listener in a dedicated thread."""
+        """Start the always-on wake word listener in a daemon thread.
+
+        The legacy ``_on_wake`` closure is no longer needed — the sensor
+        now emits ``wake_word_detected`` on the EventBus and the TUI
+        bridge picks it up via ``_subscribe_event_bus()`` (#220 Part 3).
+        """
         if not config.wake_word_enabled:
             return
         if not config.picovoice_access_key:
@@ -966,14 +1085,7 @@ class BantzApp(App):
         try:
             from bantz.agent.wake_word import wake_listener
 
-            def _on_wake() -> None:
-                """Called from the audio thread — relay to Textual main thread."""
-                try:
-                    self.call_from_thread(self.post_message, WakeWordDetected())
-                except Exception:
-                    pass
-
-            ok = wake_listener.start(on_wake=_on_wake)
+            ok = wake_listener.start()  # no on_wake callback — bus handles it
             if ok:
                 chat = self.query_one("#chat-log", ChatLog)
                 chat.add_system("Wake Word: listening for \"Hey Bantz\"")
@@ -981,15 +1093,17 @@ class BantzApp(App):
             log.debug("Wake word start failed: %s", exc)
 
     def on_wake_word_detected(self, _msg: WakeWordDetected) -> None:
-        """Handle wake word detection — focus input + notify user."""
+        """Handle wake word detection — focus input + notify user.
+
+        .. deprecated:: Sprint 3 Part 3
+           Kept for backward compat.  Primary path is now
+           ``on_bantz_event_message`` → ``_on_bus_wake_word``.
+        """
         try:
             chat = self.query_one("#chat-log", ChatLog)
             chat.add_bantz("Yes boss? 🎤")
             chat.scroll_end()
-
-            # Focus the input so user can type immediately
-            inp = self.query_one("#chat-input", Input)
-            inp.focus()
+            self.query_one("#chat-input", Input).focus()
         except Exception as exc:
             log.debug("Wake word handler error: %s", exc)
 
