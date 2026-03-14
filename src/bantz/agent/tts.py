@@ -156,10 +156,12 @@ class TTSEngine:
     def __init__(self) -> None:
         self._piper_path: str | None = None
         self._aplay_path: str | None = None
+        self._sox_path: str | None = None
         self._model_path: str | None = None
         self._speaker: int = 0
         self._rate: float = 1.0
         self._playing: asyncio.subprocess.Process | None = None
+        self._sox_proc: asyncio.subprocess.Process | None = None
         self._speaking: bool = False
         self._stop_requested: bool = False
         self._speak_task: asyncio.Task | None = None
@@ -244,6 +246,16 @@ class TTSEngine:
         self._model_path = model
         self._speaker = config.tts_speaker
         self._rate = config.tts_rate
+
+        # Discover sox for animatronic filter (#248)
+        sox = shutil.which("sox")
+        if sox:
+            self._sox_path = sox
+            log.info("TTS: sox found at %s (animatronic filter available)", sox)
+        else:
+            self._sox_path = ""
+            log.debug("TTS: sox not found — animatronic filter unavailable")
+
         log.info("TTS: ready — piper=%s model=%s", piper, model)
         return True
 
@@ -391,7 +403,12 @@ class TTSEngine:
     # ── Internal: Playback ──────────────────────────────────────────────
 
     async def _play(self, wav_data: bytes) -> None:
-        """Play raw WAV data via aplay (16-bit, 22050 Hz mono for Piper).
+        """Play raw WAV data via aplay, optionally through SoX (#248).
+
+        When ``config.tts_animatronic_filter`` is enabled **and** ``sox`` is
+        available, the pipeline becomes:
+            stdin → sox (pitch/reverb/overdrive) → aplay
+        Otherwise falls back to direct aplay playback.
 
         Sets PULSE_PROP so PulseAudio/PipeWire labels this stream as
         'BantzTTS' — the audio ducker uses this to skip Bantz's own audio.
@@ -403,37 +420,88 @@ class TTSEngine:
         env = os.environ.copy()
         env["PULSE_PROP"] = "application.name='BantzTTS'"
 
+        # Determine if animatronic SoX filter should be active
+        use_sox = False
         try:
-            proc = await asyncio.create_subprocess_exec(
-                self._aplay_path,
-                "-r", "22050",
-                "-f", "S16_LE",
-                "-t", "raw",
-                "-c", "1",
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-                env=env,
-            )
-            self._playing = proc
-            await proc.communicate(input=wav_data)
-            self._playing = None
+            from bantz.config import config
+            use_sox = config.tts_animatronic_filter and bool(self._sox_path)
+        except Exception:
+            pass
+
+        try:
+            if use_sox:
+                # Pipeline: stdin → sox (effects) → aplay
+                sox_proc = await asyncio.create_subprocess_exec(
+                    self._sox_path,
+                    "-t", "raw", "-r", "22050", "-e", "signed",
+                    "-b", "16", "-c", "1", "-",   # input spec
+                    "-t", "raw", "-",               # output spec
+                    "pitch", "-300",
+                    "reverb", "50",
+                    "overdrive", "10",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=env,
+                )
+                aplay_proc = await asyncio.create_subprocess_exec(
+                    self._aplay_path,
+                    "-r", "22050",
+                    "-f", "S16_LE",
+                    "-t", "raw",
+                    "-c", "1",
+                    stdin=sox_proc.stdout,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=env,
+                )
+                self._sox_proc = sox_proc
+                self._playing = aplay_proc
+
+                # Feed wav data to sox and close its stdin
+                sox_proc.stdin.write(wav_data)
+                await sox_proc.stdin.drain()
+                sox_proc.stdin.close()
+
+                # Wait for both processes to finish
+                await aplay_proc.wait()
+                await sox_proc.wait()
+                self._playing = None
+                self._sox_proc = None
+            else:
+                # Direct: stdin → aplay
+                proc = await asyncio.create_subprocess_exec(
+                    self._aplay_path,
+                    "-r", "22050",
+                    "-f", "S16_LE",
+                    "-t", "raw",
+                    "-c", "1",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=env,
+                )
+                self._playing = proc
+                await proc.communicate(input=wav_data)
+                self._playing = None
         except asyncio.CancelledError:
             self._kill_playback()
             raise
         except Exception as exc:
             log.warning("TTS: playback error — %s", exc)
             self._playing = None
+            self._sox_proc = None
 
     def _kill_playback(self) -> None:
-        """Send SIGTERM to the active aplay process."""
-        proc = self._playing
-        if proc and proc.returncode is None:
-            try:
-                proc.send_signal(signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-            self._playing = None
+        """Send SIGTERM to active playback processes (aplay + sox)."""
+        for proc in (self._playing, self._sox_proc):
+            if proc and proc.returncode is None:
+                try:
+                    proc.send_signal(signal.SIGTERM)
+                except (ProcessLookupError, OSError):
+                    pass
+        self._playing = None
+        self._sox_proc = None
 
     # ── Diagnostics ─────────────────────────────────────────────────────
 
@@ -443,6 +511,7 @@ class TTSEngine:
             "speaking": self._speaking,
             "piper": self._piper_path or "not found",
             "aplay": self._aplay_path or "not found",
+            "sox": self._sox_path or "not found",
             "model": self._model_path or "not found",
         }
 

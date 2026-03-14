@@ -149,12 +149,13 @@ class Config(BaseSettings):
 
     # ── TTS / Audio Briefing (#131) ──────────────────────────────────────
     tts_enabled: bool = Field(False, alias="BANTZ_TTS_ENABLED")
-    tts_model: str = Field("en_US-lessac-medium", alias="BANTZ_TTS_MODEL")
+    tts_model: str = Field("en_US-danny-low", alias="BANTZ_TTS_MODEL")
     tts_model_path: str = Field("", alias="BANTZ_TTS_MODEL_PATH")
     tts_speaker: int = Field(0, alias="BANTZ_TTS_SPEAKER")
     tts_rate: float = Field(1.0, alias="BANTZ_TTS_RATE")
     tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
     tts_speak_all_responses: bool = Field(False, alias="BANTZ_TTS_SPEAK_ALL_RESPONSES")
+    tts_animatronic_filter: bool = Field(False, alias="BANTZ_TTS_ANIMATRONIC_FILTER")
 
     # ── Audio Ducking (#171) ──────────────────────────────────────────────
     audio_duck_enabled: bool = Field(False, alias="BANTZ_AUDIO_DUCK_ENABLED")

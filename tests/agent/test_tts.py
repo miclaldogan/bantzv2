@@ -764,7 +764,7 @@ class TestTTSConfig:
         from bantz.config import Config
         cfg = Config(_env_file=None)
         assert cfg.tts_enabled is False
-        assert cfg.tts_model == "en_US-lessac-medium"
+        assert cfg.tts_model == "en_US-danny-low"
         assert cfg.tts_model_path == ""
         assert cfg.tts_speaker == 0
         assert cfg.tts_rate == 1.0
@@ -1017,3 +1017,252 @@ class TestGlobalTTSConfig:
         field = Config.model_fields["tts_speak_all_responses"]
         alias = field.alias
         assert alias == "BANTZ_TTS_SPEAK_ALL_RESPONSES"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. Animatronic voice filter config & SoX discovery (#248)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAnimatronicConfig:
+    """Verify the tts_animatronic_filter config field."""
+
+    def test_field_exists(self):
+        from bantz.config import Config
+        cfg = Config()
+        assert hasattr(cfg, "tts_animatronic_filter")
+
+    def test_default_is_false(self):
+        from bantz.config import Config
+        cfg = Config()
+        assert cfg.tts_animatronic_filter is False
+
+    def test_env_alias(self):
+        from bantz.config import Config
+        field = Config.model_fields["tts_animatronic_filter"]
+        assert field.alias == "BANTZ_TTS_ANIMATRONIC_FILTER"
+
+    def test_default_model_is_danny(self):
+        """Default TTS model should be en_US-danny-low (#248)."""
+        from bantz.config import Config
+        # Check the Field default directly (immune to .env overrides)
+        field = Config.model_fields["tts_model"]
+        assert field.default == "en_US-danny-low"
+
+
+class TestSoxDiscovery:
+    """Verify _ensure_init discovers sox binary."""
+
+    def test_sox_found_when_present(self):
+        """When sox is on PATH, _sox_path is set."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        model_path = "/tmp/test_model.onnx"
+
+        mock_cfg = MagicMock()
+        mock_cfg.tts_enabled = True
+        mock_cfg.tts_model_path = model_path
+        mock_cfg.tts_model = "en_US-danny-low"
+        mock_cfg.tts_speaker = 0
+        mock_cfg.tts_rate = 1.0
+
+        with patch("bantz.agent.tts.shutil.which") as mock_which, \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("bantz.config.config", mock_cfg):
+            mock_which.side_effect = lambda name: {
+                "piper": "/usr/bin/piper",
+                "aplay": "/usr/bin/aplay",
+                "sox": "/usr/bin/sox",
+            }.get(name)
+
+            result = eng._ensure_init()
+
+        assert result is True
+        assert eng._sox_path == "/usr/bin/sox"
+
+    def test_sox_not_found(self):
+        """When sox is not on PATH, _sox_path is empty string."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        model_path = "/tmp/test_model.onnx"
+
+        mock_cfg = MagicMock()
+        mock_cfg.tts_enabled = True
+        mock_cfg.tts_model_path = model_path
+        mock_cfg.tts_model = "en_US-danny-low"
+        mock_cfg.tts_speaker = 0
+        mock_cfg.tts_rate = 1.0
+
+        with patch("bantz.agent.tts.shutil.which") as mock_which, \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("bantz.config.config", mock_cfg):
+            mock_which.side_effect = lambda name: {
+                "piper": "/usr/bin/piper",
+                "aplay": "/usr/bin/aplay",
+                "sox": None,
+            }.get(name)
+
+            result = eng._ensure_init()
+
+        assert result is True
+        assert eng._sox_path == ""
+
+
+class TestPlayPipeline:
+    """Verify _play uses SoX when animatronic filter is active."""
+
+    @pytest.mark.asyncio
+    async def test_clean_play_no_sox(self):
+        """When filter disabled, only aplay is spawned (no sox)."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        eng._aplay_path = "/usr/bin/aplay"
+        eng._sox_path = "/usr/bin/sox"
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock()
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec, \
+             patch("bantz.config.config") as mock_cfg:
+            mock_cfg.tts_animatronic_filter = False
+
+            await eng._play(b"\x00" * 100)
+
+        # Should be called exactly once — aplay only
+        assert mock_exec.call_count == 1
+        cmd = mock_exec.call_args[0]
+        assert cmd[0] == "/usr/bin/aplay"
+
+    @pytest.mark.asyncio
+    async def test_animatronic_play_uses_sox(self):
+        """When filter enabled and sox available, two subprocesses are created."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        eng._aplay_path = "/usr/bin/aplay"
+        eng._sox_path = "/usr/bin/sox"
+
+        # Mock sox process with stdin/stdout pipes
+        mock_sox = MagicMock()
+        mock_sox.stdout = MagicMock()
+        mock_sox.stdin = MagicMock()
+        mock_sox.stdin.write = MagicMock()
+        mock_sox.stdin.drain = AsyncMock()
+        mock_sox.stdin.close = MagicMock()
+        mock_sox.wait = AsyncMock(return_value=0)
+        mock_sox.returncode = 0
+
+        # Mock aplay process
+        mock_aplay = MagicMock()
+        mock_aplay.wait = AsyncMock(return_value=0)
+        mock_aplay.returncode = 0
+
+        call_count = {"n": 0}
+
+        async def mock_exec(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return mock_sox
+            return mock_aplay
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_exec) as mock_exec_fn, \
+             patch("bantz.config.config") as mock_cfg:
+            mock_cfg.tts_animatronic_filter = True
+
+            await eng._play(b"\x00" * 100)
+
+        # Two subprocesses: sox + aplay
+        assert mock_exec_fn.call_count == 2
+        sox_cmd = mock_exec_fn.call_args_list[0][0]
+        aplay_cmd = mock_exec_fn.call_args_list[1][0]
+        assert sox_cmd[0] == "/usr/bin/sox"
+        assert "pitch" in sox_cmd
+        assert "-300" in sox_cmd
+        assert "reverb" in sox_cmd
+        assert "overdrive" in sox_cmd
+        assert aplay_cmd[0] == "/usr/bin/aplay"
+
+    @pytest.mark.asyncio
+    async def test_animatronic_fallback_when_sox_missing(self):
+        """When filter enabled but sox not found, falls back to clean play."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        eng._aplay_path = "/usr/bin/aplay"
+        eng._sox_path = ""  # sox not installed
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock()
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec, \
+             patch("bantz.config.config") as mock_cfg:
+            mock_cfg.tts_animatronic_filter = True  # enabled but no sox
+
+            await eng._play(b"\x00" * 100)
+
+        # Falls back to single aplay
+        assert mock_exec.call_count == 1
+        cmd = mock_exec.call_args[0]
+        assert cmd[0] == "/usr/bin/aplay"
+
+    @pytest.mark.asyncio
+    async def test_play_empty_data_noop(self):
+        """Empty wav_data does nothing."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        eng._aplay_path = "/usr/bin/aplay"
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            await eng._play(b"")
+
+        mock_exec.assert_not_called()
+
+
+class TestKillPlaybackSox:
+    """Verify _kill_playback terminates both sox and aplay."""
+
+    def test_kill_both_processes(self):
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+
+        mock_aplay = MagicMock()
+        mock_aplay.returncode = None
+        mock_aplay.send_signal = MagicMock()
+
+        mock_sox = MagicMock()
+        mock_sox.returncode = None
+        mock_sox.send_signal = MagicMock()
+
+        eng._playing = mock_aplay
+        eng._sox_proc = mock_sox
+
+        eng._kill_playback()
+
+        mock_aplay.send_signal.assert_called_once_with(signal.SIGTERM)
+        mock_sox.send_signal.assert_called_once_with(signal.SIGTERM)
+        assert eng._playing is None
+        assert eng._sox_proc is None
+
+    def test_kill_only_aplay_when_no_sox(self):
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+
+        mock_aplay = MagicMock()
+        mock_aplay.returncode = None
+        mock_aplay.send_signal = MagicMock()
+
+        eng._playing = mock_aplay
+        eng._sox_proc = None
+
+        eng._kill_playback()
+
+        mock_aplay.send_signal.assert_called_once()
+        assert eng._playing is None
