@@ -512,9 +512,8 @@ class TestIntegration:
         assert InterventionType.HEALTH == "health"
 
     def test_action_health_break(self):
-        from bantz.agent.rl_engine import Action, ALL_ACTIONS
-        assert Action.HEALTH_BREAK.value == "health_break"
-        assert Action.HEALTH_BREAK in ALL_ACTIONS
+        from bantz.agent.interventions import ACTION_LABELS
+        assert "health_break" in ACTION_LABELS
 
     def test_action_labels_has_health_break(self):
         from bantz.agent.interventions import ACTION_LABELS

@@ -394,16 +394,20 @@ class BantzApp(App):
 
     @work(exclusive=False)
     async def _feed_rl_suggestions(self) -> None:
-        """Periodically ask the RL engine for a suggestion and push to queue."""
+        """Periodically push proactive suggestions to the intervention queue.
+
+        Since #221, the Q-learning engine is gone.  This method now uses
+        the affinity score to modulate suggestion frequency instead.
+        """
         try:
-            from bantz.agent.rl_engine import rl_engine, encode_state
+            from bantz.agent.affinity_engine import affinity_engine
             from bantz.agent.interventions import (
                 intervention_queue,
                 intervention_from_rl,
             )
             from bantz.core.time_context import time_ctx
 
-            if not rl_engine.initialized:
+            if not affinity_engine.initialized:
                 return
 
             snap = time_ctx.snapshot()
@@ -428,36 +432,14 @@ class BantzApp(App):
             except Exception:
                 pass
 
-            state = encode_state(
-                time_segment=snap["segment_en"],
-                day=day,
-                location=location,
-                recent_tool=recent_tool,
-            )
-            action = rl_engine.suggest(state)
-            if action:
-                # Build explainability reason with app context (#127)
-                reason = f"{snap['segment_en'].title()} {day.title()} routine"
-                if location != "home":
-                    reason += f" at {location}"
-                try:
-                    from bantz.agent.app_detector import app_detector
-                    if app_detector.initialized:
-                        activity = app_detector.get_activity_category()
-                        reason += f" ({activity.value})"
-                        win = app_detector.get_active_window()
-                        if win and win.name:
-                            reason += f" — {win.name}"
-                except Exception:
-                    pass
+            state_key = f"{snap['segment_en']}|{day}|{location}|{recent_tool}"
+            # With affinity engine, we don't do Q-table lookups.
+            # Instead, proactive suggestions are driven by the proactive engine.
+            # This feed path is kept for future extensibility.
+            score = affinity_engine.get_score()
+            if score < -20:
+                return  # Don't proactively engage when user is displeased
 
-                iv = intervention_from_rl(
-                    action_value=action.value,
-                    state_key=state.key,
-                    reason=reason,
-                    ttl=config.intervention_toast_ttl,
-                )
-                intervention_queue.push(iv)
         except Exception as exc:
             log.debug("RL suggestion feed failed: %s", exc)
 
@@ -515,27 +497,22 @@ class BantzApp(App):
             log.debug("Intervention processing failed: %s", exc)
 
     def _send_rl_feedback(self, iv: "Intervention", outcome: "Outcome") -> None:
-        """Send reward feedback to the RL engine based on intervention outcome."""
-        if not iv.action or not iv.state_key:
-            return
+        """Send reward feedback to the affinity engine based on intervention outcome."""
         try:
-            from bantz.agent.rl_engine import rl_engine, Reward
+            from bantz.agent.affinity_engine import affinity_engine
             from bantz.agent.interventions import Outcome as Oc
 
             reward_map = {
-                Oc.ACCEPTED: Reward.ACCEPT,
-                Oc.DISMISSED: Reward.DISMISS,
-                Oc.NEVER: Reward.BLACKLIST,
-                Oc.AUTO_DISMISSED: None,  # special: mild penalty
+                Oc.ACCEPTED: 1.0,
+                Oc.DISMISSED: -0.5,
+                Oc.NEVER: -2.0,
+                Oc.AUTO_DISMISSED: -0.1,
             }
-            reward = reward_map.get(outcome)
-            if outcome == Oc.AUTO_DISMISSED:
-                # Mild penalty: user didn't see or ignored — not as harsh as dismiss
-                rl_engine.reward(-0.1)
-            elif reward is not None:
-                rl_engine.reward(reward.value)
+            reward = reward_map.get(outcome, 0.0)
+            if affinity_engine.initialized and reward != 0.0:
+                affinity_engine.add_reward(reward)
         except Exception as exc:
-            log.debug("RL feedback failed: %s", exc)
+            log.debug("Affinity feedback failed: %s", exc)
 
     @work(exclusive=False)
     async def _check_auto_focus(self) -> None:

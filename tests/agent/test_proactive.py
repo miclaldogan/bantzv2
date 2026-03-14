@@ -202,7 +202,7 @@ class TestProactiveGuards:
 
         mock_rl = MagicMock()
         mock_rl.initialized = True
-        mock_rl.episodes.avg_reward.return_value = 0.0
+        mock_rl.get_score.return_value = 0.0
 
         mock_app = MagicMock()
         mock_app.initialized = True
@@ -213,7 +213,7 @@ class TestProactiveGuards:
 
         with patch("bantz.agent.proactive.config") as cfg, \
              patch("bantz.data.data_layer", mock_dl), \
-             patch("bantz.agent.rl_engine.rl_engine", mock_rl), \
+             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl), \
              patch("bantz.agent.app_detector.app_detector", mock_app):
             cfg.proactive_enabled = True
             cfg.proactive_max_daily = 1
@@ -234,7 +234,7 @@ class TestProactiveGuards:
 
         mock_rl = MagicMock()
         mock_rl.initialized = True
-        mock_rl.episodes.avg_reward.return_value = 0.0
+        mock_rl.get_score.return_value = 0.0
 
         mock_queue = MagicMock()
         mock_queue.initialized = True
@@ -245,7 +245,7 @@ class TestProactiveGuards:
 
         with patch("bantz.agent.proactive.config") as cfg, \
              patch("bantz.data.data_layer", mock_dl), \
-             patch("bantz.agent.rl_engine.rl_engine", mock_rl), \
+             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl), \
              patch("bantz.agent.app_detector.app_detector", MagicMock(initialized=False)), \
              patch("bantz.agent.interventions.intervention_queue", mock_queue):
             cfg.proactive_enabled = True
@@ -268,14 +268,14 @@ class TestProactiveGuards:
 
         mock_rl = MagicMock()
         mock_rl.initialized = True
-        mock_rl.episodes.avg_reward.return_value = 0.0  # max stays at 1
+        mock_rl.get_score.return_value = 0.0  # max stays at 1
 
         mock_dl = MagicMock()
         mock_dl.kv = mock_kv
 
         with patch("bantz.agent.proactive.config") as cfg, \
              patch("bantz.data.data_layer", mock_dl), \
-             patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
             cfg.proactive_enabled = True
             cfg.proactive_max_daily = 1
             result = _run(engine.run())
@@ -302,13 +302,9 @@ class TestInterventionTypeProactive:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestProactiveChatAction:
-    def test_action_exists(self):
-        from bantz.agent.rl_engine import Action
-        assert Action.PROACTIVE_CHAT.value == "proactive_chat"
-
-    def test_action_in_all_actions(self):
-        from bantz.agent.rl_engine import ALL_ACTIONS, Action
-        assert Action.PROACTIVE_CHAT in ALL_ACTIONS
+    def test_action_label_exists(self):
+        from bantz.agent.interventions import ACTION_LABELS
+        assert "proactive_chat" in ACTION_LABELS
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -460,7 +456,7 @@ class TestProactiveBrainHandler:
 
         mock_rl = MagicMock()
         mock_rl.initialized = True
-        mock_rl.episodes.avg_reward.return_value = 0.35
+        mock_rl.get_score.return_value = 0.35
 
         mock_dl = MagicMock()
         mock_dl.kv = mock_kv
@@ -469,7 +465,7 @@ class TestProactiveBrainHandler:
              patch("bantz.core.routing_engine.data_layer", mock_dl), \
              patch("bantz.core.brain.config") as cfg, \
              patch("bantz.core.routing_engine.config") as cfg_re, \
-             patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
             cfg.proactive_enabled = True
             cfg.proactive_max_daily = 1
             cfg.proactive_interval_hours = 3.0

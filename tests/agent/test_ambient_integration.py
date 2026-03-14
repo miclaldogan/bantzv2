@@ -138,50 +138,18 @@ class TestWakeWordAmbientPiggybacking:
 # RL Engine — State extension with ambient
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestRLStateAmbient:
-    """Verify RL State now includes ambient bucket."""
+# ═══════════════════════════════════════════════════════════════════════════
+# Affinity Engine — no state encoding needed (#221)
+# ═══════════════════════════════════════════════════════════════════════════
 
-    def test_state_key_includes_ambient(self):
-        from bantz.agent.rl_engine import State
-        s = State(time_segment="morning", day="monday", location="home",
-                  recent_tool="shell", ambient="noisy")
-        assert s.key == "morning|monday|home|shell|noisy"
+class TestAffinityEngineAmbient:
+    """Verify affinity engine initialises cleanly (ambient context N/A)."""
 
-    def test_state_from_key_with_ambient(self):
-        from bantz.agent.rl_engine import State
-        s = State.from_key("afternoon|friday|work|web_search|speech")
-        assert s.ambient == "speech"
-        assert s.location == "work"
-
-    def test_state_from_key_without_ambient_defaults(self):
-        """Old 4-part keys still parse (backward compat)."""
-        from bantz.agent.rl_engine import State
-        s = State.from_key("morning|monday|home|shell")
-        assert s.ambient == "unknown"
-
-    def test_encode_state_with_ambient(self):
-        from bantz.agent.rl_engine import encode_state
-        s = encode_state(
-            time_segment="morning", day="monday", location="home",
-            recent_tool="", ambient="silence",
-        )
-        assert s.ambient == "silence"
-
-    def test_encode_state_normalises_unknown_ambient(self):
-        from bantz.agent.rl_engine import encode_state
-        s = encode_state(ambient="nonexistent_label")
-        assert s.ambient == "unknown"
-
-    def test_encode_state_default_ambient(self):
-        from bantz.agent.rl_engine import encode_state
-        s = encode_state()
-        assert s.ambient == "unknown"
-
-    def test_state_to_dict_includes_ambient(self):
-        from bantz.agent.rl_engine import State
-        s = State(ambient="speech")
-        d = s.to_dict()
-        assert d["ambient"] == "speech"
+    def test_affinity_engine_importable(self):
+        from bantz.agent.affinity_engine import AffinityEngine
+        ae = AffinityEngine()
+        assert ae.initialized is False
+        assert ae.get_score() == 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════

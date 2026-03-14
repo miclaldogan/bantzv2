@@ -47,12 +47,26 @@ def style_hint() -> str:
 
 
 def persona_hint() -> str:
-    """Return dynamic persona state instruction (#169)."""
+    """Return dynamic persona state instruction (#169).
+
+    Merges the persona builder output with the affinity engine's
+    mood directive (#221) so the LLM has a complete picture.
+    """
+    parts: list[str] = []
     try:
         from bantz.personality.persona import persona_builder
-        return persona_builder.build()
+        base = persona_builder.build()
+        if base:
+            parts.append(base)
     except Exception:
-        return ""
+        pass
+    try:
+        from bantz.agent.affinity_engine import affinity_engine
+        if affinity_engine.initialized:
+            parts.append(f"[Affinity mood] {affinity_engine.get_persona_state()}")
+    except Exception:
+        pass
+    return "\n".join(parts)
 
 
 def formality_hint() -> str:

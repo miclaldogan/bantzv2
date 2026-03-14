@@ -383,13 +383,13 @@ async def _job_health_check() -> None:
                 log.info("🏥 Health rule fired: %s", r.rule_id)
                 break  # one intervention per cycle — don't spam
 
-        # RL reward for genuine break (Senior Fix #2)
+        # Affinity reward for genuine break (#221)
         if health_engine.check_break_reward():
             try:
-                from bantz.agent.rl_engine import rl_engine, Reward, Action
-                if rl_engine.initialized:
-                    rl_engine.record(Action.HEALTH_BREAK, Reward.POSITIVE)
-                    log.debug("🏥 RL: break reward for HEALTH_BREAK")
+                from bantz.agent.affinity_engine import affinity_engine
+                if affinity_engine.initialized:
+                    affinity_engine.add_reward(1.0)
+                    log.debug("🏥 Affinity: break reward +1.0")
             except Exception:
                 pass
     except Exception as exc:

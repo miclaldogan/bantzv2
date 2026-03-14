@@ -128,22 +128,14 @@ class DataLayer:
         except Exception as exc:
             log.debug("Navigator init skipped: %s", exc)
 
-        # ── RL engine (#125) ─────────────────────────────────────────────
+        # ── Affinity engine (#221) ────────────────────────────────────────
         if cfg.rl_enabled:
             try:
-                from bantz.agent.rl_engine import rl_engine
-                rl_engine.init(cfg.db_path)
-                rl_engine.alpha = cfg.rl_learning_rate
-                rl_engine.gamma = cfg.rl_discount_factor
-                rl_engine.epsilon = cfg.rl_exploration_rate
-                rl_engine.epsilon_min = cfg.rl_exploration_min
-                rl_engine.confidence_threshold = cfg.rl_confidence_threshold
-                # Seed from habit patterns on first run
-                if rl_engine.q_table.total_entries() == 0:
-                    rl_engine.seed_from_habits()
-                log.debug("RL engine initialized")
+                from bantz.agent.affinity_engine import affinity_engine
+                affinity_engine.init(cfg.db_path)
+                log.debug("Affinity engine initialized")
             except Exception as exc:
-                log.debug("RL engine init skipped: %s", exc)
+                log.debug("Affinity engine init skipped: %s", exc)
 
         # ── Intervention queue (#126) ────────────────────────────────────
         if cfg.rl_enabled:
@@ -317,10 +309,10 @@ class DataLayer:
             observer.stop()
         except Exception:
             pass
-        # Close RL engine (#125)
+        # Close affinity engine (#221)
         try:
-            from bantz.agent.rl_engine import rl_engine
-            rl_engine.close()
+            from bantz.agent.affinity_engine import affinity_engine
+            affinity_engine.close()
         except Exception:
             pass
         # Close intervention queue (#126)

@@ -827,16 +827,16 @@ async def _doctor() -> None:
     else:
         print(f"⚪ Observer: disabled  → BANTZ_OBSERVER_ENABLED=true")
 
-    # RL Engine (#125)
+    # Affinity Engine (#221)
     if config.rl_enabled:
         try:
-            from bantz.agent.rl_engine import rl_engine as _rl
-            _rl.init(config.db_path)
-            print(f"✅ RL Engine: {_rl.status_line()}")
+            from bantz.agent.affinity_engine import affinity_engine as _ae
+            _ae.init(config.db_path)
+            print(f"✅ Affinity Engine: {_ae.status_line()}")
         except Exception:
-            print(f"❌ RL Engine: enabled but init failed")
+            print(f"❌ Affinity Engine: enabled but init failed")
     else:
-        print(f"⚪ RL Engine: disabled  → BANTZ_RL_ENABLED=true")
+        print(f"⚪ Affinity Engine: disabled  → BANTZ_RL_ENABLED=true")
 
     # Intervention Queue (#126)
     if config.rl_enabled:

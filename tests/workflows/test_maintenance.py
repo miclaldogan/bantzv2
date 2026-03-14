@@ -521,14 +521,11 @@ class TestStepReport:
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
-                with patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+                with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
                     r = await _step_report(report)
 
         assert report.rl_reward_given
-        mock_rl.force_reward.assert_called_once()
-        call_args = mock_rl.force_reward.call_args
-        assert call_args[1].get("reward_value", call_args[0][2] if len(call_args[0]) > 2 else None) == _RL_REWARD_VALUE or \
-               (len(call_args[0]) >= 3 and call_args[0][2] == _RL_REWARD_VALUE)
+        mock_rl.add_reward.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_rl_reward_below_threshold(self, tmp_data_dir):
@@ -549,11 +546,11 @@ class TestStepReport:
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
-                with patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+                with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
                     r = await _step_report(report)
 
         assert not report.rl_reward_given
-        mock_rl.force_reward.assert_not_called()
+        mock_rl.add_reward.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_rl_reward_skipped_dry_run(self, tmp_data_dir):
@@ -575,11 +572,11 @@ class TestStepReport:
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
-                with patch("bantz.agent.rl_engine.rl_engine", mock_rl):
+                with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
                     r = await _step_report(report)
 
         assert not report.rl_reward_given
-        mock_rl.force_reward.assert_not_called()
+        mock_rl.add_reward.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
