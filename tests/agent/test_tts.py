@@ -955,7 +955,7 @@ class TestStripMarkdownForTTS:
         assert self._strip("") == ""
 
     def test_plain_text_unchanged(self):
-        text = "Hello, how are you doing today?"
+        text = "Hello how are you doing today?"
         assert self._strip(text) == text
 
     def test_whitespace_collapsed(self):
@@ -1018,6 +1018,133 @@ class TestGlobalTTSConfig:
         field = Config.model_fields["tts_speak_all_responses"]
         alias = field.alias
         assert alias == "BANTZ_TTS_SPEAK_ALL_RESPONSES"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12b. Phonetic Lexicon — apply_phonetic_fixes (#262)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPhoneticFixes:
+    """Verify the phonetic dictionary fixes pronunciation-breaking words."""
+
+    @staticmethod
+    def _fix(text: str) -> str:
+        from bantz.agent.tts import apply_phonetic_fixes
+        return apply_phonetic_fixes(text)
+
+    def test_mam_variants(self):
+        """ma'm, ma'am, Ma'm → mam (apostrophe removed, word preserved)."""
+        assert self._fix("Yes, ma'm.") == "Yes, mam."
+        assert self._fix("Yes, ma'am.") == "Yes, mam."
+        assert self._fix("How are you, Ma'm?") == "How are you, mam?"
+
+    def test_full_sentence(self):
+        """Full sentence with multiple ma'm occurrences."""
+        inp = "Yes, ma'm. How are you, Ma'm?"
+        out = self._fix(inp)
+        assert out == "Yes, mam. How are you, mam?"
+
+    def test_honorific_titles(self):
+        """Dr. Mr. Mrs. Ms. St. → full words."""
+        assert self._fix("Dr. Smith") == "doctor Smith"
+        assert self._fix("Mr. Jones") == "mister Jones"
+        assert self._fix("Mrs. Jones") == "missus Jones"
+        assert self._fix("Ms. Chen") == "miz Chen"
+        assert self._fix("St. Patrick") == "saint Patrick"
+
+    def test_oclock(self):
+        """o'clock → oh clock."""
+        assert self._fix("It's 5 o'clock.") == "It's 5 oh clock."
+
+    def test_tech_jargon(self):
+        """API, URL, JSON, SQL → phonetic."""
+        assert self._fix("the API is down") == "the A P I is down"
+        assert self._fix("check the URL") == "check the U R L"
+        assert self._fix("a JSON file") == "a jason file"
+        assert self._fix("SQL query") == "sequel query"
+
+    def test_no_false_positives(self):
+        """Normal words should not be mangled."""
+        normal = "The drama of the mammoth."
+        assert self._fix(normal) == normal
+
+    def test_empty_input(self):
+        assert self._fix("") == ""
+
+    def test_integrated_in_strip_markdown(self):
+        """strip_markdown_for_tts should include phonetic fixes."""
+        from bantz.agent.tts import strip_markdown_for_tts
+        result = strip_markdown_for_tts("**Yes, ma'm.** How are you?")
+        assert "mam" in result
+        assert "ma'm" not in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12c. Prosody normalizer — normalize_prosody (#262)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestProsodyNormalizer:
+    """Verify punctuation is softened for natural Piper pauses."""
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        from bantz.agent.tts import normalize_prosody
+        return normalize_prosody(text)
+
+    def test_ellipsis_removed(self):
+        """Ellipsis becomes space — no pause at all."""
+        assert self._norm("Well... I think so.") == "Well I think so."
+        assert self._norm("Hmm\u2026 okay.") == "Hmm okay."
+
+    def test_repeated_punctuation(self):
+        """!!! → !, ??? → ?, ?! → ?"""
+        assert self._norm("What!!!") == "What!"
+        assert self._norm("Really???") == "Really?"
+        assert self._norm("Wait?!") == "Wait?"
+
+    def test_semicolon_removed(self):
+        """Semicolons become spaces — no pause."""
+        assert self._norm("First part; second part.") == "First part second part."
+
+    def test_colon_before_lowercase(self):
+        """Colon before lowercase → space (but not before uppercase/numbers)."""
+        assert self._norm("here: details.") == "here details."
+        # Colon before uppercase stays (could be a title)
+        assert ":" in self._norm("Title: A Story")
+
+    def test_em_dash_to_space(self):
+        """Em-dash and en-dash → space."""
+        assert self._norm("word\u2014another") == "word another"
+        assert self._norm("word -- another") == "word another"
+
+    def test_parentheses_removed(self):
+        """Parenthetical asides → spaces."""
+        result = self._norm("Bantz (your assistant) is here.")
+        assert "(" not in result
+        assert ")" not in result
+
+    def test_brackets_quotes_stripped(self):
+        """Stray brackets and quotes are removed."""
+        assert self._norm('He said "hello" today.') == "He said hello today."
+
+    def test_commas_removed(self):
+        """All commas become spaces — Piper pauses too long on them."""
+        assert self._norm("Hello, world.") == "Hello world."
+        assert self._norm("one, two, three.") == "one two three."
+
+    def test_empty(self):
+        assert self._norm("") == ""
+
+    def test_end_to_end_in_strip_markdown(self):
+        """Full pipeline: markdown → phonetic → prosody."""
+        from bantz.agent.tts import strip_markdown_for_tts
+        result = strip_markdown_for_tts("**Hello...** ma'm!!! How are you?!")
+        assert "..." not in result
+        assert "!!!" not in result
+        assert "?!" not in result
+        assert "mam" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1179,8 +1306,8 @@ class TestPlayPipeline:
         aplay_cmd = mock_exec_fn.call_args_list[1][0]
         assert sox_cmd[0] == "/usr/bin/sox"
         assert "pitch" in sox_cmd
-        assert "-300" in sox_cmd
-        assert "reverb" in sox_cmd
+        assert "highpass" in sox_cmd
+        assert "lowpass" in sox_cmd
         assert "overdrive" in sox_cmd
         assert aplay_cmd[0] == "/usr/bin/aplay"
 

@@ -75,6 +75,14 @@ class GhostLoop:
         bus.on("wake_word_detected", self._on_wake_event)
         self._running = True
         log.info("Ghost Loop: active — waiting for wake word")
+
+        # Pre-load STT model in background so first voice command is fast
+        threading.Thread(
+            target=self._preload_stt,
+            name="bantz-stt-preload",
+            daemon=True,
+        ).start()
+
         return True
 
     def stop(self) -> None:
@@ -103,6 +111,15 @@ class GhostLoop:
         }
 
     # ── Event handler ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _preload_stt() -> None:
+        """Load the STT model in the background at startup."""
+        try:
+            from bantz.agent.stt import stt_engine
+            stt_engine._ensure_model()
+        except Exception as exc:
+            log.debug("Ghost Loop: STT preload failed — %s", exc)
 
     def _on_wake_event(self, event: Event) -> None:
         """Called (on the bus dispatcher) when wake word is detected.
@@ -133,6 +150,8 @@ class GhostLoop:
             try:
                 from bantz.agent.wake_word import wake_listener
                 wake_listener.pause()
+                import time
+                time.sleep(0.15)  # give ALSA a moment to release the device
             except Exception as exc:
                 log.debug("Ghost Loop: could not pause wake word — %s", exc)
 

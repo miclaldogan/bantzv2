@@ -28,8 +28,11 @@ returns None and logs a warning.
 from __future__ import annotations
 
 import logging
+import os
 import struct
+import sys
 import time
+from contextlib import contextmanager
 from typing import Optional
 
 log = logging.getLogger("bantz.voice_capture")
@@ -43,6 +46,28 @@ FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)  # 480 samples
 
 # Maximum recording duration (safety limit)
 MAX_RECORD_SECONDS = 30.0
+
+
+@contextmanager
+def suppress_alsa_stderr():
+    """Temporarily silence C-level ALSA warnings on fd 2.
+
+    PyAudio (via PortAudio) enumerates every ALSA device on init and
+    spews dozens of harmless warnings (``ALSA lib pcm…``) directly to
+    stderr at the file-descriptor level — Python's ``logging`` or
+    ``contextlib.redirect_stderr`` can't catch them.  This redirects
+    fd 2 to ``/dev/null`` for the duration of the block.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    sys.stderr.flush()
+    os.dup2(devnull, 2)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(devnull)
+        os.close(old_stderr)
 
 
 class VoiceCapture:
@@ -105,11 +130,12 @@ class VoiceCapture:
         except Exception:
             silence_ms = 800
 
-        # Open microphone
+        # Open microphone (suppress ALSA spam on stderr)
         pa = None
         stream = None
         try:
-            pa = pyaudio.PyAudio()
+            with suppress_alsa_stderr():
+                pa = pyaudio.PyAudio()
             stream = pa.open(
                 rate=SAMPLE_RATE,
                 channels=CHANNELS,
