@@ -388,12 +388,10 @@ class TestQuickRoute:
         r = self._route("move mouse to 500, 300")
         assert r is None
 
-    def test_click_the_still_goes_to_a11y(self):
-        """'click the Send button' now routes to visual_click (#185 unified pipeline)."""
+    def test_click_the_not_quick_routed(self):
+        """'click the Send button' must NOT quick-route; LLM picks the tool."""
         r = self._route("click the Send button in Firefox")
-        # #185: visual_click is the new unified pipeline wrapping Navigator
-        assert r is not None
-        assert r["tool"] == "visual_click"
+        assert r is None
 
     def test_scroll_doesnt_match_random(self):
         r = self._route("what is a scrollbar?")

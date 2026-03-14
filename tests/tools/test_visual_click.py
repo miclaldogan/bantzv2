@@ -299,6 +299,50 @@ class TestVisualClickActionError:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 4b. Navigator pipeline crash
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestVisualClickNavigatorError:
+    """Navigator itself blows up (VLM unreachable, screenshot fail, etc.)."""
+
+    @pytest.mark.asyncio
+    async def test_navigator_exception_caught(self):
+        from bantz.tools.visual_click import VisualClickTool
+
+        tool = VisualClickTool()
+
+        with patch("bantz.tools.visual_click.config") as mock_config, \
+             patch("bantz.vision.navigator.navigator") as mock_nav:
+            mock_config.input_control_enabled = True
+            mock_nav.navigate_to = AsyncMock(
+                side_effect=ConnectionError("VLM server unreachable"),
+            )
+
+            result = await tool.execute(target="Send", action="click")
+
+        assert result.success is False
+        assert "vision system" in result.output.lower()
+        assert "VLM server unreachable" in result.output
+        assert result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_navigator_import_error_caught(self):
+        """Even if the navigator module fails to import, tool reports cleanly."""
+        from bantz.tools.visual_click import VisualClickTool
+
+        tool = VisualClickTool()
+
+        with patch("bantz.tools.visual_click.config") as mock_config, \
+             patch.dict("sys.modules", {"bantz.vision.navigator": None}):
+            mock_config.input_control_enabled = True
+            result = await tool.execute(target="OK", action="click")
+
+        assert result.success is False
+        assert "error" in result.error.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 5. Tool registration
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -325,8 +369,8 @@ class TestVisualClickRegistration:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestVisualClickQuickRoute:
-    """Regex quick-route must match natural click/hover commands."""
+class TestVisualClickNoQuickRoute:
+    """visual_click must NOT be quick-routed — LLM picks it via tool-calling."""
 
     def _route(self, text: str) -> dict | None:
         from bantz.core.routing_engine import quick_route
@@ -334,50 +378,18 @@ class TestVisualClickQuickRoute:
             mock_config.input_control_enabled = True
             return quick_route(text, text)
 
-    def test_click_the_send_button(self):
+    def test_click_not_quick_routed(self):
         r = self._route("click the send button")
-        assert r is not None
-        assert r["tool"] == "visual_click"
-        assert r["args"]["target"] == "send"
-        assert r["args"]["action"] == "click"
-
-    def test_press_ok_not_matched(self):
-        """'press' is keyboard, not visual click — should NOT quick route."""
-        r = self._route("press ok")
         assert r is None or r["tool"] != "visual_click"
 
-    def test_click_at_coords_not_matched(self):
-        """Coordinate-based clicks go to input_control, not visual_click."""
-        r = self._route("double click at 500, 300")
-        assert r is None or r["tool"] != "visual_click"
-
-    def test_hover_settings_icon(self):
+    def test_hover_not_quick_routed(self):
         r = self._route("hover the settings icon")
-        assert r is not None
-        assert r["tool"] == "visual_click"
-        assert r["args"]["action"] == "hover"
-
-    def test_double_click_file(self):
-        r = self._route("double click the file.txt")
-        assert r is not None
-        assert r["tool"] == "visual_click"
-        assert r["args"]["action"] == "double_click"
-
-    def test_right_click_desktop(self):
-        r = self._route("right click on desktop")
-        assert r is not None
-        assert r["tool"] == "visual_click"
-        assert r["args"]["action"] == "right_click"
-
-    def test_no_match_for_regular_text(self):
-        r = self._route("what is the weather today")
-        # Should NOT match visual_click
         assert r is None or r["tool"] != "visual_click"
 
-    def test_disabled_config_no_route(self):
-        """When input_control_enabled=False, quick route should not match."""
-        from bantz.core.routing_engine import quick_route
-        with patch("bantz.core.routing_engine.config") as mock_config:
-            mock_config.input_control_enabled = False
-            r = quick_route("click the send button", "click the send button")
+    def test_double_click_not_quick_routed(self):
+        r = self._route("double click the file.txt")
+        assert r is None or r["tool"] != "visual_click"
+
+    def test_right_click_not_quick_routed(self):
+        r = self._route("right click on desktop")
         assert r is None or r["tool"] != "visual_click"
