@@ -37,7 +37,7 @@ RULES:
 - calendar: events, meetings, calendar, schedule
 - classroom: assignments, homework, deadlines
 - filesystem: read/write specific file content
-- gui_action: click/type/interact with UI elements in applications (uses AT-SPI, cache, VLM)
+- visual_click: click/double-click/right-click/hover on UI elements by description (uses vision + AT-SPI)
 - accessibility: list apps, focus windows, element trees, screenshots
 - input_control: raw mouse/keyboard — scroll, hotkeys, drag, mouse position
 - chat: ONLY if no tool can handle it

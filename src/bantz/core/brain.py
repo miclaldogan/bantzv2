@@ -97,10 +97,7 @@ class Brain:
             import bantz.tools.accessibility  # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass  # AT-SPI2/gi deps may not be installed
-        try:
-            import bantz.tools.gui_action  # noqa: F401  (#123)
-        except (ImportError, ModuleNotFoundError):
-            pass
+        # gui_action removed (#185) — superseded by visual_click
         try:
             import bantz.tools.visual_click  # noqa: F401  (#185)
         except (ImportError, ModuleNotFoundError):

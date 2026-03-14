@@ -158,7 +158,8 @@ class GUIActionTool(BaseTool):
             return ToolResult(success=False, output=str(exc), error=str(exc))
 
 
-# ── Auto-register ─────────────────────────────────────────────────────────────
-
-_tool = GUIActionTool()
-registry.register(_tool)
+# ── DEPRECATED (#185) ─────────────────────────────────────────────────────────
+# GUIActionTool is superseded by VisualClickTool.  No longer auto-registered
+# to avoid LLM tool-name confusion.  File kept for reference / backward compat.
+# _tool = GUIActionTool()
+# registry.register(_tool)
