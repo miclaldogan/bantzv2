@@ -35,6 +35,7 @@ except ImportError:
 from bantz.core.prompt_builder import (
     CHAT_SYSTEM,
     COMMAND_SYSTEM,
+    COMPUTER_USE_AUTHORIZATION,
     build_chat_system,
     is_refusal,
 )
@@ -136,6 +137,54 @@ class TestBuildChatSystem:
         tc = {}  # no prompt_hint key
         result = build_chat_system(ctx, tc)
         assert "Bantz" in result  # renders fine with empty time_hint
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Computer-Use Authorization (#185)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestComputerUseAuthorization:
+    """System prompt gets the physical-interaction authorization block."""
+
+    def _make_ctx(self, **overrides) -> BantzContext:
+        defaults = dict(
+            graph_context="", vector_context="", deep_memory="",
+            desktop_context="", persona_state="", formality_hint="",
+            style_hint="", profile_hint="", feedback_hint="",
+        )
+        defaults.update(overrides)
+        return BantzContext(**defaults)
+
+    def test_authorization_constant_has_key_directives(self):
+        assert "AUTHORIZED" in COMPUTER_USE_AUTHORIZATION
+        assert "visual_click" in COMPUTER_USE_AUTHORIZATION
+        assert "NO REFUSALS" in COMPUTER_USE_AUTHORIZATION
+        assert "VISUAL GROUNDING" in COMPUTER_USE_AUTHORIZATION
+
+    def test_authorization_injected_when_input_control_enabled(self):
+        from unittest.mock import patch
+        ctx = self._make_ctx()
+        tc = {"prompt_hint": ""}
+        with patch("bantz.config.config") as mock_config:
+            mock_config.input_control_enabled = True
+            result = build_chat_system(ctx, tc)
+        assert "AUTHORIZED" in result
+        assert "visual_click" in result
+
+    def test_authorization_absent_when_input_control_disabled(self):
+        from unittest.mock import patch
+        ctx = self._make_ctx()
+        tc = {"prompt_hint": ""}
+        with patch("bantz.config.config") as mock_config:
+            mock_config.input_control_enabled = False
+            result = build_chat_system(ctx, tc)
+        assert "COMPUTER USE" not in result
+        assert "AUTHORIZED" not in result
+
+    def test_rule_6_no_longer_blocks_visual_grounding(self):
+        """Rule 6 should NOT say 'use ONLY the Desktop Context'."""
+        assert "use ONLY the Desktop Context" not in CHAT_SYSTEM
 
 
 # ═══════════════════════════════════════════════════════════════════════════
