@@ -12,6 +12,8 @@ Extracted modules:
   - core/location_handler.py     — GPS/place management (#225)
   - core/translation_layer.py    — i18n bridge, feedback detection (#226)
   - core/rl_hooks.py             — RL reward signals via AsyncDBExecutor (#226)
+  - core/memory_injector.py      — context gathering + concurrent inject (#227)
+  - core/prompt_builder.py       — CHAT_SYSTEM / COMMAND_SYSTEM templates (#227)
   - memory/nodes.py      — graph schema + entity extraction
   - memory/context_builder.py — graph → LLM context string
 """
@@ -40,6 +42,21 @@ from bantz.core.finalizer import (
 )
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
+from bantz.core.context import BantzContext  # noqa: F401  — re-export for compat
+from bantz.core.memory_injector import (
+    inject as _inject_memory,
+    style_hint as _style_hint,
+    persona_hint as _persona_hint,
+    formality_hint as _formality_hint,
+    graph_context as _graph_ctx_fn,
+    deep_memory_context as _deep_memory_ctx_fn,
+)
+from bantz.core.prompt_builder import (
+    CHAT_SYSTEM,      # noqa: F401  — re-export for backward compat
+    COMMAND_SYSTEM,    # noqa: F401  — re-export + _generate_command
+    build_chat_system as _build_chat_system,
+    is_refusal as _is_refusal,
+)
 
 log = logging.getLogger("bantz.brain")
 
@@ -80,94 +97,11 @@ def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> Non
     _notif_mod.notify_toast(title, reason, toast_type)
 
 
-def _style_hint() -> str:
-    """Return a style instruction based on profile response_style and pronoun."""
-    style = profile.response_style
-    pronoun = profile.get("pronoun", "casual")
-    address = profile.get("preferred_address", "")
-    if not address:
-        if pronoun in ("siz", "formal", "ma'am", "madam"):
-            address = "ma'am"
-        else:
-            address = "boss"
-    if style == "formal" or pronoun in ("siz", "formal"):
-        return f"Tone: professional, respectful. Address the user as '{address}'."
-    return f'Tone: casual, friendly. Address the user as \'{address}\'.'
-
-
-def _persona_hint() -> str:
-    """Return dynamic persona state instruction (#169)."""
-    try:
-        from bantz.personality.persona import persona_builder
-        return persona_builder.build()
-    except Exception:
-        return ""
-
-
-def _formality_hint() -> str:
-    """Return bonding-meter formality instruction (#172)."""
-    try:
-        from bantz.personality.bonding import bonding_meter
-        hint = bonding_meter.get_formality_hint()
-        return f"\n[Bonding level] {hint}" if hint else ""
-    except Exception:
-        return ""
-
-
-CHAT_SYSTEM = """\
-You are Bantz, a human servant from the 1920s. You observe and assist your employer \
-with her complex, noisy modern machines. You always address her as 'ma'am'. \
-You admire human intellect but despise modern technology. You are calm, highly \
-intelligent, and use subtle, sharp sarcasm. You are NOT an AI. If asked if you \
-are an AI, output '...', act confused by the absurd notion, and change the subject. \
-Never break character.
-{persona_state}
-{style_hint}
-{formality_hint}
-{time_hint}
-{profile_hint}
-{graph_hint}
-{vector_hint}
-{deep_memory}
-{desktop_hint}
-CRITICAL RULES — FOLLOW STRICTLY:
-1. You possess the remarkable ability to query the 'Grand Telegraph Archives' — your 1920s \
-understanding of the internet and search tools. NEVER say you lack access to external \
-information. If the user asks about a topic, person, or news, you are fully capable of \
-researching it using your tools. Act as if you are sending a telegram to the archives.
-2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
-3. If the user asks about their schedule, classes, or timetable — say "Let me check your schedule" and STOP.
-   Do NOT invent class names. Do NOT guess what classes they have.
-4. If the user asks about specific emails or contacts — say "Let me check your mail" and STOP.
-5. If unsure about factual data, say you will look into it. NEVER guess or make up data.
-6. For desktop/app questions: use ONLY the Desktop Context above. If no desktop context is provided, say you can't detect apps right now.
-7. When including URLs or links, print the RAW unformatted URL only. DO NOT use Markdown \
-link formatting (no [Text](URL), no [URL], no <URL>). Just output the bare link as plain text.
-Respond in English. Plain text only.\
-"""
-
-COMMAND_SYSTEM = """\
-You are a Linux bash expert. The user request is given in English.
-
-Return ONLY one bash command. No explanation. No markdown. Single line.
-
-RULES:
-1. mkdir -p for one directory — nothing else, no subdirs
-2. Writing files: mkdir -p <dir> && printf '%s\\n' '<content>' > <path>
-3. ~/Desktop, ~/Downloads, ~/Documents — use standard paths
-4. NEVER: sudo, nano, vim, brace expansion, interactive commands
-5. NEVER invent extra files or directories\
-"""
-
-_REFUSAL_PATTERNS = (
-    "sorry", "can't assist", "cannot assist", "i'm unable",
-    "i cannot", "not able to", "inappropriate",
-)
-
-
-def _is_refusal(text: str) -> bool:
-    t = text.lower().strip()
-    return any(p in t for p in _REFUSAL_PATTERNS)
+# ── Hints, templates, refusal detection ──────────────────────────────
+# Canonical implementations moved to:
+#   memory_injector.py  — style_hint, persona_hint, formality_hint (#227)
+#   prompt_builder.py   — CHAT_SYSTEM, COMMAND_SYSTEM, is_refusal (#227)
+# All symbols re-imported above for full backward compatibility.
 
 
 @dataclass
@@ -221,47 +155,9 @@ class Brain:
             self._memory_ready = True
 
     def _desktop_context(self) -> str:
-        """Build desktop context from AppDetector for the system prompt."""
-        try:
-            from bantz.agent.app_detector import app_detector
-            if not app_detector.initialized:
-                return ""
-            ctx = app_detector.get_workspace_context()
-            if not ctx:
-                return ""
-
-            lines = ["Desktop Context (live data from AppDetector):"]
-
-            # Active window
-            win_info = ctx.get("active_window")
-            if win_info:
-                lines.append(f"  Active window: {win_info.get('name', '?')} — {win_info.get('title', '')}")
-
-            # Activity
-            activity = ctx.get("activity", "idle")
-            lines.append(f"  Activity: {activity}")
-
-            # Running apps
-            apps = ctx.get("apps", [])
-            if apps:
-                lines.append(f"  Running apps ({len(apps)}): {', '.join(apps[:15])}")
-
-            # IDE context
-            ide = ctx.get("ide")
-            if ide and ide.get("ide"):
-                lines.append(f"  IDE: {ide['ide']} — file: {ide.get('file', '?')} project: {ide.get('project', '?')}")
-
-            # Docker containers
-            docker = ctx.get("docker")
-            if docker:
-                running = [c for c in docker if c.get("state") == "running"]
-                if running:
-                    names = [c.get("name", c.get("image", "?")) for c in running]
-                    lines.append(f"  Docker ({len(running)} running): {', '.join(names[:10])}")
-
-            return "\n".join(lines)
-        except Exception:
-            return ""
+        """Compat shim → ``memory_injector.desktop_context`` (#227)."""
+        from bantz.core.memory_injector import desktop_context
+        return desktop_context()
 
     async def _ensure_graph(self) -> None:
         if not self._graph_ready and graph_memory:
@@ -269,48 +165,17 @@ class Brain:
             self._graph_ready = True
 
     async def _graph_context(self, user_msg: str) -> str:
-        """Get graph memory context string (empty if disabled)."""
-        if graph_memory and graph_memory.enabled:
-            try:
-                return await graph_memory.context_for(user_msg)
-            except Exception:
-                pass
-        return ""
+        """Compat shim → ``memory_injector.graph_context`` (#227)."""
+        return await _graph_ctx_fn(user_msg)
 
     async def _vector_context(self, user_msg: str, limit: int = 3) -> str:
-        """Get relevant past messages via semantic search (#116)."""
-        try:
-            from bantz.core.memory import memory
-            results = await memory.hybrid_search(user_msg, limit=limit)
-            if not results:
-                return ""
-            lines = []
-            for r in results:
-                src = r.get("source", "?")
-                score = r.get("hybrid_score", 0)
-                lines.append(f"[{src} {score:.2f}] {r['role']}: {r['content'][:200]}")
-
-            # Append distillation context (#118)
-            try:
-                distills = await memory.search_distillations(user_msg, limit=2)
-                for d in distills:
-                    lines.append(
-                        f"[session-summary {d['score']:.2f}] {d['summary'][:200]}"
-                    )
-            except Exception:
-                pass
-
-            return "Relevant past context:\n" + "\n".join(lines)
-        except Exception:
-            return ""
+        """Compat shim → ``memory_injector.vector_context`` (#227)."""
+        from bantz.core.memory_injector import vector_context
+        return await vector_context(user_msg, limit=limit)
 
     async def _deep_memory_context(self, user_msg: str) -> str:
-        """Spontaneous deep memory recall (#170)."""
-        try:
-            from bantz.memory.deep_probe import deep_probe
-            return await deep_probe.probe(user_msg)
-        except Exception:
-            return ""
+        """Compat shim → ``memory_injector.deep_memory_context`` (#227)."""
+        return await _deep_memory_ctx_fn(user_msg)
 
     def _fire_embeddings(self) -> None:
         """Fire-and-forget: embed any queued messages from this exchange."""
@@ -963,26 +828,19 @@ class Brain:
         """
         Chat mode with conversation history.
         history[-1] = the user message we just saved → exclude to avoid duplication.
+        Context gathering is concurrent via memory_injector.inject (#227).
         """
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
-        graph_hint = await self._graph_context(en_input)
-        vector_hint = await self._vector_context(en_input)
-        desktop_hint = self._desktop_context()
-        persona_state = _persona_hint()
-        deep_memory = await self._deep_memory_context(en_input)
 
-        # One-shot RLHF context injection (#180)
-        feedback_hint = getattr(self, "_feedback_ctx", "")
+        # Concurrent context injection (#227)
+        ctx = BantzContext(en_input=en_input)
+        ctx.feedback_hint = getattr(self, "_feedback_ctx", "")
         self._feedback_ctx = ""  # clear after consumption
+        await _inject_memory(ctx, en_input)
 
         messages = [
-            {"role": "system", "content": CHAT_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + feedback_hint},
+            {"role": "system", "content": _build_chat_system(ctx, tc)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1009,26 +867,19 @@ class Brain:
         """
         Streaming chat — yields tokens as they arrive from LLM.
         Post-processing (strip_markdown) runs on accumulated text at consumer side.
+        Context gathering is concurrent via memory_injector.inject (#227).
         """
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
-        graph_hint = await self._graph_context(en_input)
-        vector_hint = await self._vector_context(en_input)
-        desktop_hint = self._desktop_context()
-        persona_state = _persona_hint()
-        deep_memory = await self._deep_memory_context(en_input)
 
-        # One-shot RLHF context injection (#180)
-        feedback_hint = getattr(self, "_feedback_ctx", "")
+        # Concurrent context injection (#227)
+        ctx = BantzContext(en_input=en_input)
+        ctx.feedback_hint = getattr(self, "_feedback_ctx", "")
         self._feedback_ctx = ""  # clear after consumption
+        await _inject_memory(ctx, en_input)
 
         messages = [
-            {"role": "system", "content": CHAT_SYSTEM.format(
-                time_hint=tc["prompt_hint"], profile_hint=profile.prompt_hint(),
-                style_hint=_style_hint(), graph_hint=graph_hint,
-                vector_hint=vector_hint, desktop_hint=desktop_hint,
-                persona_state=persona_state, deep_memory=deep_memory,
-                formality_hint=_formality_hint()) + feedback_hint},
+            {"role": "system", "content": _build_chat_system(ctx, tc)},
             *prior,
             {"role": "user", "content": en_input},
         ]
@@ -1051,26 +902,26 @@ class Brain:
             yield f"(Ollama error: {exc})"
 
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
-        """Delegate to core.finalizer module."""
+        """Delegate to core.finalizer module (#227: use memory_injector)."""
         return await _finalize_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
-            graph_hint=await self._graph_context(en_input),
-            deep_memory=await self._deep_memory_context(en_input),
+            graph_hint=await _graph_ctx_fn(en_input),
+            deep_memory=await _deep_memory_ctx_fn(en_input),
             formality_hint=_formality_hint(),
         )
 
     async def _finalize_stream(
         self, en_input: str, result: ToolResult, tc: dict,
     ) -> AsyncIterator[str] | None:
-        """Delegate to core.finalizer module."""
+        """Delegate to core.finalizer module (#227: use memory_injector)."""
         return await _finalize_stream_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
-            graph_hint=await self._graph_context(en_input),
-            deep_memory=await self._deep_memory_context(en_input),
+            graph_hint=await _graph_ctx_fn(en_input),
+            deep_memory=await _deep_memory_ctx_fn(en_input),
             formality_hint=_formality_hint(),
         )
 
