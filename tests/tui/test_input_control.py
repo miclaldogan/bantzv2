@@ -389,10 +389,11 @@ class TestQuickRoute:
         assert r is None
 
     def test_click_the_still_goes_to_a11y(self):
-        """'click the Send button' should go to gui_action (unified pipeline), not input_control."""
+        """'click the Send button' now routes to visual_click (#185 unified pipeline)."""
         r = self._route("click the Send button in Firefox")
-        assert r is None
-        # #123: gui_action is the unified pipeline that wraps AT-SPI
+        # #185: visual_click is the new unified pipeline wrapping Navigator
+        assert r is not None
+        assert r["tool"] == "visual_click"
 
     def test_scroll_doesnt_match_random(self):
         r = self._route("what is a scrollbar?")
