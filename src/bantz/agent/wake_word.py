@@ -72,6 +72,7 @@ class WakeWordListener:
         self._stop = threading.Event()
         self._on_wake: Optional[Callable[[], None]] = None
         self._running = False
+        self._paused = False
         self._last_trigger: float = 0.0
         self._total_detections: int = 0
 
@@ -139,6 +140,43 @@ class WakeWordListener:
         log.info("Wake word listener stopped (total detections: %d)",
                  self._total_detections)
 
+    # ── Pause / Resume (for Ghost Loop mic sharing) ─────────────────────
+
+    def pause(self) -> None:
+        """Temporarily release the microphone so another module can use it.
+
+        The wake word thread keeps running but ``stream.read()`` will
+        raise after we close the stream — the loop catches that and
+        sleeps until ``resume()`` re-opens the stream.
+        """
+        if not self._running:
+            return
+        self._paused = True
+        if self._audio_stream:
+            try:
+                self._audio_stream.stop_stream()
+                self._audio_stream.close()
+            except Exception:
+                pass
+            self._audio_stream = None
+        if self._pa:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+            self._pa = None
+        log.info("Wake word: paused (mic released for voice capture)")
+
+    def resume(self) -> None:
+        """Re-open the microphone after a pause."""
+        if not self._running:
+            return
+        self._paused = False
+        if self._init_audio():
+            log.info("Wake word: resumed (mic re-acquired)")
+        else:
+            log.error("Wake word: could not re-acquire mic after pause")
+
     def diagnose(self) -> dict:
         """Return diagnostic info for --doctor."""
         result: dict = {
@@ -201,6 +239,14 @@ class WakeWordListener:
             pass
 
         while not self._stop.is_set():
+            # While paused, sleep and skip audio reads
+            if self._paused or self._audio_stream is None:
+                time.sleep(0.05)
+                # Re-acquire stream reference after resume()
+                if not self._paused and self._audio_stream is not None:
+                    stream = self._audio_stream
+                continue
+
             try:
                 pcm_bytes = stream.read(frame_length, exception_on_overflow=False)
                 pcm = struct.unpack_from(f"{frame_length}h", pcm_bytes)
@@ -248,6 +294,9 @@ class WakeWordListener:
             except Exception as exc:
                 if self._stop.is_set():
                     break
+                if self._paused:
+                    # Stream was closed by pause() — just loop back
+                    continue
                 log.warning("Wake word: audio read error — %s", exc)
                 time.sleep(0.1)
 

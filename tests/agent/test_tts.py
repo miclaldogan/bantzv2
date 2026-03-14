@@ -1147,20 +1147,16 @@ class TestPlayPipeline:
         eng = TTSEngine()
         eng._aplay_path = "/usr/bin/aplay"
         eng._sox_path = "/usr/bin/sox"
+        eng._sample_rate = 16000
 
-        # Mock sox process with stdin/stdout pipes
-        mock_sox = MagicMock()
-        mock_sox.stdout = MagicMock()
-        mock_sox.stdin = MagicMock()
-        mock_sox.stdin.write = MagicMock()
-        mock_sox.stdin.drain = AsyncMock()
-        mock_sox.stdin.close = MagicMock()
-        mock_sox.wait = AsyncMock(return_value=0)
+        # Mock sox process (two-stage: sox → memory → aplay)
+        mock_sox = AsyncMock()
+        mock_sox.communicate = AsyncMock(return_value=(b"\x00" * 100, b""))
         mock_sox.returncode = 0
 
         # Mock aplay process
-        mock_aplay = MagicMock()
-        mock_aplay.wait = AsyncMock(return_value=0)
+        mock_aplay = AsyncMock()
+        mock_aplay.communicate = AsyncMock(return_value=(b"", b""))
         mock_aplay.returncode = 0
 
         call_count = {"n": 0}
@@ -1177,7 +1173,7 @@ class TestPlayPipeline:
 
             await eng._play(b"\x00" * 100)
 
-        # Two subprocesses: sox + aplay
+        # Two subprocesses: sox + aplay (two-stage pipeline)
         assert mock_exec_fn.call_count == 2
         sox_cmd = mock_exec_fn.call_args_list[0][0]
         aplay_cmd = mock_exec_fn.call_args_list[1][0]

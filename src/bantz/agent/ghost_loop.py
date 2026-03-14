@@ -129,6 +129,13 @@ class GhostLoop:
         self._busy = True
 
         try:
+            # 0. Pause wake word listener to release the mic
+            try:
+                from bantz.agent.wake_word import wake_listener
+                wake_listener.pause()
+            except Exception as exc:
+                log.debug("Ghost Loop: could not pause wake word — %s", exc)
+
             # 1. Emit "listening" event so TUI can show indicator
             bus.emit_threadsafe("ghost_loop_listening")
 
@@ -165,6 +172,12 @@ class GhostLoop:
             log.error("Ghost Loop: pipeline error — %s", exc)
         finally:
             self._busy = False
+            # Resume wake word listener so it re-acquires the mic
+            try:
+                from bantz.agent.wake_word import wake_listener
+                wake_listener.resume()
+            except Exception:
+                pass
             try:
                 bus.emit_threadsafe("ghost_loop_idle")
             except Exception:
