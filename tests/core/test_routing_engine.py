@@ -275,6 +275,44 @@ class TestExecutePlan:
         assert result.tool_used == "planner"
         assert "All done" in result.response
 
+    def test_passes_recent_history_to_decompose(self):
+        """execute_plan forwards recent_history to planner_agent.decompose (#212)."""
+        with patch("bantz.core.routing_engine.registry") as mock_reg, \
+             patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
+            mock_reg.names.return_value = ["shell"]
+            mock_planner.decompose = AsyncMock(return_value=[])
+            dl.conversations = MagicMock()
+
+            history = [
+                {"role": "user", "content": "Who is John?"},
+                {"role": "assistant", "content": "John is your colleague."},
+            ]
+            from bantz.core.routing_engine import execute_plan
+            _run(execute_plan("send him the file", "send him the file", {},
+                              recent_history=history))
+
+        # Verify decompose was called with recent_history
+        mock_planner.decompose.assert_awaited_once()
+        call_kwargs = mock_planner.decompose.call_args
+        assert call_kwargs.kwargs.get("recent_history") is history
+
+    def test_execute_plan_without_history_still_works(self):
+        """execute_plan without recent_history defaults to None (#212 backward compat)."""
+        with patch("bantz.core.routing_engine.registry") as mock_reg, \
+             patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
+            mock_reg.names.return_value = ["shell"]
+            mock_planner.decompose = AsyncMock(return_value=[])
+            dl.conversations = MagicMock()
+
+            from bantz.core.routing_engine import execute_plan
+            result = _run(execute_plan("hello", "hello", {}))
+
+        assert result is None
+        call_kwargs = mock_planner.decompose.call_args
+        assert call_kwargs.kwargs.get("recent_history") is None
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5. Workflow handlers

@@ -65,6 +65,18 @@ STANDARD OPERATING PROCEDURES (SOP) & FALLBACKS:
 - Rule 1 (Strict Path Selection): NEVER create conditional steps (e.g., 'If Step 1 fails...'). The executor runs ALL steps sequentially. You must choose ONE path before planning: EITHER use the simple specialist tool (like `weather`) OR use the deep research flow (`web_search` -> `read_url` -> `process_text`). Do NOT mix them in the same plan.
 - Deep Research bypass: If the user explicitly asks you to search the internet, read a site, or bypass your normal tools, or asks for "latest news about [topic]", choose the deep research flow. Always chain `web_search` -> `read_url` -> `process_text` to extract detailed facts from the actual articles.
 
+COREFERENCE RESOLUTION (CRITICAL):
+Before generating ANY tool arguments, you MUST resolve pronouns and
+references by analyzing the RECENT CONVERSATION provided below.
+- "him" / "her" → find the person's name from recent context
+- "it" / "that" / "this" → find the specific object/file/topic mentioned
+- "yesterday's file" / "that report" → find the exact filename or path
+- "the same city" → find which city was discussed
+If you cannot resolve a reference, use the most recent relevant entity
+from the conversation. NEVER leave pronouns unresolved in tool params.
+
+{recent_history_block}
+
 RULES:
 1. Each step must use exactly ONE tool.
 2. Steps execute in order. Later steps can reference output of earlier steps.
@@ -160,13 +172,21 @@ class PlanStep:
 class PlannerAgent:
     """Decomposes complex user requests into structured step arrays."""
 
-    def is_complex(self, en_input: str) -> bool:
+    def is_complex(
+        self,
+        en_input: str,
+        *,
+        recent_history: list[dict] | None = None,
+    ) -> bool:
         """Heuristic check: does this input likely need multi-step planning?
 
         Returns True if:
         - Input has sequence markers (then, after that, next...)
         - Input references 2+ distinct tool categories
         - Input is long (>15 words) with multiple verb phrases
+
+        The optional *recent_history* is reserved for future heuristic
+        expansion (e.g. detecting implicit multi-step across turns).
         """
         text = en_input.lower()
 
@@ -201,21 +221,41 @@ class PlannerAgent:
                     break
         return len(found)
 
+    @staticmethod
+    def _format_recent_history(recent_history: list[dict] | None) -> str:
+        """Format recent conversation for coreference resolution block."""
+        if not recent_history:
+            return "RECENT CONVERSATION: (none)"
+        lines = ["RECENT CONVERSATION:"]
+        for msg in recent_history[-6:]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")[:200]
+            lines.append(f"  {role}: {content}")
+        return "\n".join(lines)
+
     async def decompose(
         self,
         en_input: str,
         tool_names: list[str],
+        *,
+        recent_history: list[dict] | None = None,
     ) -> list[PlanStep]:
         """Use the LLM to decompose a complex request into plan steps.
 
         Args:
             en_input: User request (in English).
             tool_names: Available tool names from the registry.
+            recent_history: Last few conversation turns for coreference
+                resolution (e.g. resolving 'him', 'that file').
 
         Returns:
             List of PlanStep objects. Empty list if decomposition fails.
         """
-        prompt = PLANNER_SYSTEM.format(tool_names=", ".join(tool_names))
+        history_block = self._format_recent_history(recent_history)
+        prompt = PLANNER_SYSTEM.format(
+            tool_names=", ".join(tool_names),
+            recent_history_block=history_block,
+        )
 
         raw = await ollama.chat([
             {"role": "system", "content": prompt},

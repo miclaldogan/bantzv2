@@ -1369,3 +1369,146 @@ class TestReadUrlKeywords:
         assert self._agent().is_complex(
             "open link https://example.com and save the full article to a file"
         ) is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. Coreference resolution — recent_history in decompose (#212)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCoreferenceResolution:
+    """decompose() injects recent_history for pronoun resolution."""
+
+    @pytest.mark.asyncio
+    async def test_recent_history_injected_into_prompt(self):
+        """When recent_history is provided, coreference block appears in system prompt."""
+        from bantz.agent.planner import PlannerAgent
+
+        captured_messages: list = []
+
+        async def capture_chat(messages):
+            captured_messages.extend(messages)
+            return json.dumps([
+                {"step": 1, "tool": "gmail",
+                 "params": {"action": "compose_and_send",
+                            "to": "john@example.com",
+                            "intent": "Send the quarterly report"},
+                 "description": "Send email to John", "depends_on": None},
+            ])
+
+        history = [
+            {"role": "user", "content": "Do you know John's email?"},
+            {"role": "assistant", "content": "Yes, John's email is john@example.com."},
+        ]
+
+        agent = PlannerAgent()
+        with patch("bantz.agent.planner.ollama") as mock_llm:
+            mock_llm.chat = capture_chat
+            await agent.decompose(
+                "Send him the quarterly report",
+                ["gmail", "filesystem"],
+                recent_history=history,
+            )
+
+        system_content = captured_messages[0]["content"]
+        assert "RECENT CONVERSATION" in system_content
+        assert "john@example.com" in system_content
+        assert "COREFERENCE RESOLUTION" in system_content
+
+    @pytest.mark.asyncio
+    async def test_no_history_shows_none_marker(self):
+        """Without history, the coreference block says '(none)'."""
+        from bantz.agent.planner import PlannerAgent
+
+        captured_messages: list = []
+
+        async def capture_chat(messages):
+            captured_messages.extend(messages)
+            return json.dumps([
+                {"step": 1, "tool": "weather",
+                 "params": {"city": "London"},
+                 "description": "Check weather", "depends_on": None},
+            ])
+
+        agent = PlannerAgent()
+        with patch("bantz.agent.planner.ollama") as mock_llm:
+            mock_llm.chat = capture_chat
+            await agent.decompose("Check weather in London", ["weather"])
+
+        system_content = captured_messages[0]["content"]
+        assert "RECENT CONVERSATION: (none)" in system_content
+
+    @pytest.mark.asyncio
+    async def test_backward_compat_decompose_without_history(self):
+        """decompose() works without recent_history (default None)."""
+        from bantz.agent.planner import PlannerAgent
+
+        llm_response = json.dumps([
+            {"step": 1, "tool": "weather", "params": {"city": "Tokyo"},
+             "description": "Check weather", "depends_on": None},
+        ])
+
+        agent = PlannerAgent()
+        with patch("bantz.agent.planner.ollama") as mock_llm:
+            mock_llm.chat = AsyncMock(return_value=llm_response)
+            steps = await agent.decompose("Check weather", ["weather"])
+
+        assert len(steps) == 1
+        assert steps[0].tool == "weather"
+
+
+class TestFormatRecentHistoryPlanner:
+    """PlannerAgent._format_recent_history formatting helper."""
+
+    def test_formats_turns(self):
+        from bantz.agent.planner import PlannerAgent
+
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi!"},
+        ]
+        result = PlannerAgent._format_recent_history(history)
+        assert "RECENT CONVERSATION:" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi!" in result
+
+    def test_none_returns_none_marker(self):
+        from bantz.agent.planner import PlannerAgent
+        result = PlannerAgent._format_recent_history(None)
+        assert "(none)" in result
+
+    def test_empty_returns_none_marker(self):
+        from bantz.agent.planner import PlannerAgent
+        result = PlannerAgent._format_recent_history([])
+        assert "(none)" in result
+
+    def test_limits_to_six_turns(self):
+        from bantz.agent.planner import PlannerAgent
+
+        history = [{"role": "user", "content": f"msg {i}"} for i in range(10)]
+        result = PlannerAgent._format_recent_history(history)
+        assert "msg 4" in result
+        assert "msg 9" in result
+        assert "msg 3" not in result
+
+    def test_truncates_long_content(self):
+        from bantz.agent.planner import PlannerAgent
+
+        history = [{"role": "user", "content": "x" * 300}]
+        result = PlannerAgent._format_recent_history(history)
+        # Each content entry should be max 200 chars
+        lines = result.split("\n")
+        user_line = [l for l in lines if "user:" in l][0]
+        assert len(user_line) <= 210  # "  user: " + 200 chars
+
+    def test_is_complex_accepts_recent_history_kwarg(self):
+        """is_complex() accepts recent_history keyword without error."""
+        from bantz.agent.planner import PlannerAgent
+
+        agent = PlannerAgent()
+        history = [{"role": "user", "content": "Send email to John"}]
+        # Should not raise — result doesn't matter, just kwarg acceptance
+        agent.is_complex(
+            "search for articles and then save to a file",
+            recent_history=history,
+        )
