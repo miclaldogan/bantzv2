@@ -15,6 +15,7 @@ Usage (via registry):
 from __future__ import annotations
 
 import logging
+import random
 import re
 from html.parser import HTMLParser
 from typing import Any
@@ -32,6 +33,17 @@ FETCH_TIMEOUT = 15.0       # seconds
 MAX_HTML_SIZE = 2_000_000  # ~2 MB — refuse huge pages
 
 _INVISIBLE_TAGS = frozenset({"script", "style", "noscript", "svg", "head"})
+
+# Modern browser User-Agents for rotation — avoids naive bot detection (#257)
+_BROWSER_UAS: tuple[str, ...] = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+)
+
+_MAX_RETRIES = 2
+_MIN_READABLE_LENGTH = 20  # chars — anything shorter is likely a blocked/empty page
 
 
 # ── HTML → plain-text stripper (stdlib only) ─────────────────────────────────
@@ -81,7 +93,11 @@ class WebReaderTool(BaseTool):
     risk_level = "safe"
 
     async def execute(self, url: str = "", **kwargs: Any) -> ToolResult:
-        """Fetch *url*, strip HTML, return truncated plain text."""
+        """Fetch *url*, strip HTML, return truncated plain text.
+
+        Uses UA rotation and a single retry on 401/403 to bypass
+        naive bot-detection walls (#257).
+        """
         if not url:
             return ToolResult(
                 success=False, output="",
@@ -95,41 +111,74 @@ class WebReaderTool(BaseTool):
                 error=f"Invalid URL (must start with http:// or https://): {url}",
             )
 
-        try:
-            async with httpx.AsyncClient(
-                timeout=FETCH_TIMEOUT,
-                follow_redirects=True,
-                headers={"User-Agent": "Bantz/3.0 (Web Reader)"},
-            ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
+        # ── Fetch with UA rotation + retry on 401/403 (#257) ──────────────
+        used_uas: list[str] = []
+        resp: httpx.Response | None = None
+        last_status: int | None = None
 
-                # Guard against absurdly large pages
-                raw_html = resp.text
-                if len(raw_html) > MAX_HTML_SIZE:
-                    raw_html = raw_html[:MAX_HTML_SIZE]
-                    log.warning("Truncated HTML from %s (exceeded %d bytes)",
-                                url, MAX_HTML_SIZE)
+        for attempt in range(_MAX_RETRIES):
+            # Pick a UA we haven't tried yet
+            remaining = [ua for ua in _BROWSER_UAS if ua not in used_uas]
+            ua = random.choice(remaining) if remaining else random.choice(_BROWSER_UAS)
+            used_uas.append(ua)
 
-        except httpx.HTTPStatusError as exc:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=FETCH_TIMEOUT,
+                    follow_redirects=True,
+                    headers={"User-Agent": ua},
+                ) as client:
+                    resp = await client.get(url)
+                    last_status = resp.status_code
+
+                    if last_status in (401, 403) and attempt < _MAX_RETRIES - 1:
+                        log.warning(
+                            "read_url: HTTP %d from %s (attempt %d), retrying with different UA",
+                            last_status, url, attempt + 1,
+                        )
+                        continue  # retry with different UA
+
+                    # Any other status — break out (success or final failure)
+                    break
+
+            except Exception as exc:
+                # Network-level failure — no point retrying with a different UA
+                return ToolResult(
+                    success=False, output="",
+                    error=f"Failed to fetch URL: {exc}",
+                )
+
+        # ── Handle final HTTP errors ──────────────────────────────────────
+        assert resp is not None  # loop always runs at least once
+        if resp.status_code >= 400:
             return ToolResult(
-                success=False, output="",
-                error=f"HTTP {exc.response.status_code} fetching {url}",
-            )
-        except Exception as exc:
-            return ToolResult(
-                success=False, output="",
-                error=f"Failed to fetch URL: {exc}",
+                success=False,
+                output=(
+                    f"Error: Could not read URL. HTTP Status: {resp.status_code}. "
+                    "The site might be blocking automated access."
+                ),
+                error=f"HTTP {resp.status_code} fetching {url}",
             )
 
-        # Strip HTML → plain text
+        # Guard against absurdly large pages
+        raw_html = resp.text
+        if len(raw_html) > MAX_HTML_SIZE:
+            raw_html = raw_html[:MAX_HTML_SIZE]
+            log.warning("Truncated HTML from %s (exceeded %d bytes)",
+                        url, MAX_HTML_SIZE)
+
+        # ── Strip HTML → plain text ───────────────────────────────────────
         text = strip_html(raw_html)
 
-        if not text:
+        # Empty / dangerously short content — likely JS challenge or captcha (#257)
+        if len(text) < _MIN_READABLE_LENGTH:
             return ToolResult(
-                success=True,
-                output=f"(Page at {url} returned no readable text content.)",
-                data={"url": url, "length": 0},
+                success=False,
+                output=(
+                    "Error: The page returned empty content or requires "
+                    "JavaScript/Captcha to view."
+                ),
+                data={"url": url, "length": len(text)},
             )
 
         # Truncate to keep context window happy
