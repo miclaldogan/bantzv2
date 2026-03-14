@@ -1,19 +1,50 @@
-"""
-Bantz v2 — Filesystem Tool
-File system operations: listing, reading, writing.
-Path security check — cannot go outside the home directory (by default).
+"""Bantz v2 - Filesystem Tool (#258: PDF support + binary rejection)
+
+File system operations: listing, reading (text + PDF), writing.
+Path security check - cannot go outside the home directory (by default).
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
 
 from bantz.tools import BaseTool, ToolResult, registry
 
-# Safe root — default is home directory
+log = logging.getLogger("bantz.filesystem")
+
+# Safe root - default is home directory
 SAFE_ROOT = Path.home()
-MAX_READ_BYTES = 50_000   # truncates files larger than 50KB
+MAX_READ_BYTES = 50_000   # truncates text files larger than 50KB
+MAX_PDF_CHARS = 25_000    # truncates PDF text to ~10-15 pages (#258)
+
+# Binary extensions that cannot be meaningfully read as text
+_BINARY_EXTENSIONS = frozenset({
+    ".exe", ".dll", ".so", ".dylib", ".bin",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".ico", ".webp",
+    ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma",
+    ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".iso", ".img", ".dmg",
+    ".pyc", ".pyo", ".class", ".o",
+    ".db", ".sqlite", ".sqlite3",
+})
+
+# Lazy import for PyMuPDF - app must not crash if missing (#258)
+_fitz = None
+
+
+def _get_fitz():
+    """Lazy-load fitz (PyMuPDF). Returns module or None."""
+    global _fitz
+    if _fitz is None:
+        try:
+            import fitz  # type: ignore[import-untyped]
+            _fitz = fitz
+        except ImportError:
+            return None
+    return _fitz
 
 
 def _safe_path(raw: str) -> Path | None:
@@ -111,6 +142,22 @@ class FilesystemTool(BaseTool):
             return ToolResult(success=False, output="", error=f"File not found: {p}")
         if p.is_dir():
             return ToolResult(success=False, output="", error=f"This is a directory: {p}. Use 'ls'.")
+
+        suffix = p.suffix.lower()
+
+        # ── Binary file rejection (#258) ──────────────────────────────
+        if suffix in _BINARY_EXTENSIONS:
+            return ToolResult(
+                success=False,
+                output="Error: Cannot read binary file format as text.",
+                error=f"Unsupported binary format: {suffix}",
+            )
+
+        # ── PDF reading via PyMuPDF (#258) ────────────────────────────
+        if suffix == ".pdf":
+            return await self._read_pdf(p)
+
+        # ── Plain text reading ────────────────────────────────────────
         try:
             raw = p.read_bytes()
             truncated = len(raw) > MAX_READ_BYTES
@@ -124,6 +171,72 @@ class FilesystemTool(BaseTool):
             )
         except PermissionError:
             return ToolResult(success=False, output="", error=f"Permission denied: {p}")
+
+    # ── PDF reader (#258) ─────────────────────────────────────────────────
+
+    async def _read_pdf(self, p: Path) -> ToolResult:
+        """Extract text from PDF with context-bloat safeguard."""
+        fitz = _get_fitz()
+        if fitz is None:
+            return ToolResult(
+                success=False,
+                output="Error: PDF reading requires PyMuPDF. Install with: pip install pymupdf",
+                error="PyMuPDF (fitz) not installed.",
+            )
+
+        try:
+            doc = fitz.open(str(p))
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="",
+                error=f"Failed to open PDF: {exc}",
+            )
+
+        # Encrypted / password-protected
+        if doc.is_encrypted:
+            doc.close()
+            return ToolResult(
+                success=False,
+                output="Error: PDF is password protected or encrypted.",
+                error="Encrypted PDF.",
+            )
+
+        # Extract text from all pages
+        try:
+            page_count = len(doc)
+            text = "\n".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+
+        # No readable text (scanned images only)
+        if not text.strip():
+            return ToolResult(
+                success=False,
+                output="Error: PDF contains no readable text (might be scanned images only).",
+                error="Empty PDF text.",
+            )
+
+        # Context bloat safeguard — truncate long PDFs
+        original_len = len(text)
+        truncated = original_len > MAX_PDF_CHARS
+        if truncated:
+            text = (
+                text[:MAX_PDF_CHARS]
+                + "\n\n[SYSTEM WARNING: File truncated due to length limits. "
+                "Only the beginning is shown.]"
+            )
+            log.warning("PDF %s truncated from %d to %d chars", p.name, original_len, MAX_PDF_CHARS)
+
+        return ToolResult(
+            success=True,
+            output=text,
+            data={
+                "path": str(p),
+                "pages": page_count,
+                "length": len(text),
+                "truncated": truncated,
+            },
+        )
 
     # ── write ─────────────────────────────────────────────────────────────
 
