@@ -90,6 +90,10 @@ RULES:
       - Step 3: Double-Check / Self-Correction: Have I skipped any required tools? Am I faking variables? Are my params correct and based on real input?
    b. After the thinking block, output ONLY a valid JSON array. No markdown fences. No explanation.
 7. CRITICAL: When referencing output from a previous step, you MUST use the EXACT format `{{step_N_output}}` (e.g. `{{step_1_output}}`, `{{step_2_output}}`). Do NOT invent custom variable names like `{{step_1_url}}`, `{{step_1_best_article_url}}`, or `{{step_1_summary}}`. The ONLY valid placeholder is `{{step_N_output}}`.
+8. PATH CHAINING: When a later step needs the file path or folder path from an earlier step, use `{{step_N_params_KEY}}` where KEY is the exact param name from that step. For example:
+   - If Step 1 used `filesystem` with `"folder_path": "~/Desktop/research"`, Step 2 can reference that folder as `{{step_1_params_folder_path}}/summary.txt`.
+   - If Step 1 used `filesystem` with `"path": "~/report.txt"`, Step 2 can use `{{step_1_params_path}}` to read the same file.
+   - NEVER use `{{step_N_output}}` to construct file paths. Tool output is human-readable text like "Folder created successfully", NOT a path. Always use `{{step_N_params_path}}` or `{{step_N_params_folder_path}}` for paths.
 
 OUTPUT FORMAT (return a JSON array of objects):
 <thinking>
@@ -116,6 +120,19 @@ Step 3: Double-Check: read_url needs a URL, which I will dynamically get from {{
   {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full article from the URL returned by step 1", "depends_on": 1}},
   {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize this article in detail, preserving source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the article text from step 2", "depends_on": 2}},
   {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
+]
+
+User: "Create a research folder and save a summary of quantum computing into it"
+<thinking>
+Step 1: Goal is to create a folder, then search, summarize, and save into that folder.
+Step 2: filesystem -> web_search -> process_text -> filesystem.
+Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use {{step_1_params_folder_path}} NOT {{step_1_output}} (which would be "Folder created" text).
+</thinking>
+[
+  {{"step": 1, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": ".gitkeep", "content": ""}}, "description": "Create the research folder", "depends_on": null}},
+  {{"step": 2, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs 2025"}}, "description": "Search for articles", "depends_on": null}},
+  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize this article in detail: {{step_2_output}}"}}, "description": "Summarize the search results", "depends_on": 2}},
+  {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "{{step_1_params_folder_path}}/quantum_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save summary into the research folder", "depends_on": 3}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -306,7 +323,10 @@ class PlannerAgent:
     @staticmethod
     def _parse_steps(raw: str) -> list[dict]:
         """Extract a JSON array from the LLM response."""
-        text = raw.strip().strip("`")
+        from bantz.core.intent import strip_thinking
+
+        text = strip_thinking(raw)  # #214 — remove leaked thinking blocks
+        text = text.strip().strip("`")
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
 

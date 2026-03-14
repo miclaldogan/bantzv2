@@ -483,7 +483,8 @@ class TestContextPassing:
         from bantz.agent.executor import PlanExecutor
 
         params = {"content": "{step_1_output}", "path": "~/file.txt"}
-        result = PlanExecutor._inject_context(params, "Hello World")
+        ctx = {1: {"params": {}, "output": "Hello World"}}
+        result = PlanExecutor._inject_context(params, ctx)
         assert result["content"] == "Hello World"
         assert result["path"] == "~/file.txt"  # unchanged
 
@@ -501,7 +502,9 @@ class TestContextPassing:
             "{step_3_translated_text}",
         ]:
             params = {"url": placeholder}
-            result = PlanExecutor._inject_context(params, "https://example.com")
+            step_num = int(placeholder.split("_")[1])  # extract N
+            ctx = {step_num: {"params": {}, "output": "https://example.com"}}
+            result = PlanExecutor._inject_context(params, ctx)
             assert result["url"] == "https://example.com", (
                 f"Failed to replace hallucinated placeholder: {placeholder}"
             )
@@ -516,7 +519,8 @@ class TestContextPassing:
             "query": "static text",
             "content": "{step_1_output}",
         }
-        result = PlanExecutor._inject_context(params, "DATA")
+        ctx = {1: {"params": {}, "output": "DATA"}}
+        result = PlanExecutor._inject_context(params, ctx)
         assert result["url"] == "DATA"
         assert result["content"] == "DATA"
         assert result["query"] == "static text"
@@ -791,7 +795,7 @@ class TestPlannerPrompt:
         assert "step_1_url" in PLANNER_SYSTEM or "custom variable" in PLANNER_SYSTEM.lower()
 
     def test_example_uses_canonical_placeholders_only(self):
-        """Example in prompt must use {step_N_output}, not hallucinated names."""
+        """Example in prompt must use {step_N_output} or {step_N_params_KEY}, not hallucinated names."""
         from bantz.agent.planner import PLANNER_SYSTEM
         import re
         idx_examples = PLANNER_SYSTEM.index("EXAMPLES:")
@@ -799,7 +803,7 @@ class TestPlannerPrompt:
         # Find all step placeholders in the example
         placeholders = re.findall(r"\{step_\d+_[a-zA-Z_]+\}", example_block)
         for p in placeholders:
-            assert re.match(r"\{step_\d+_output\}", p), (
+            assert re.match(r"\{step_\d+_(output|params_[a-zA-Z_]+)\}", p), (
                 f"Example uses non-canonical placeholder: {p}"
             )
 
