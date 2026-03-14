@@ -834,3 +834,186 @@ class TestTTSSingleton:
     def test_singleton_is_tts_engine(self):
         from bantz.agent.tts import tts_engine, TTSEngine
         assert isinstance(tts_engine, TTSEngine)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. strip_markdown_for_tts (#247)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestStripMarkdownForTTS:
+    """Verify the TTS markdown sanitizer strips dangerous content."""
+
+    @staticmethod
+    def _strip(text: str) -> str:
+        from bantz.agent.tts import strip_markdown_for_tts
+        return strip_markdown_for_tts(text)
+
+    # ── Code blocks (Rule 1) ─────────────────────────────────────────────
+
+    def test_fenced_code_block_removed(self):
+        text = "Here's some code:\n```python\ndef foo():\n    return 42\n```\nDone."
+        result = self._strip(text)
+        assert "def foo" not in result
+        assert "return 42" not in result
+        assert "Done" in result
+
+    def test_multiline_code_block_removed(self):
+        text = "Before\n```\nline1\nline2\nline3\n```\nAfter"
+        result = self._strip(text)
+        assert "line1" not in result
+        assert "line2" not in result
+        assert "Before" in result
+        assert "After" in result
+
+    def test_multiple_code_blocks_removed(self):
+        text = "A ```x``` B ```y``` C"
+        result = self._strip(text)
+        assert "x" not in result
+        assert "y" not in result
+        assert "A" in result
+        assert "C" in result
+
+    # ── Inline code (Rule 2) ─────────────────────────────────────────────
+
+    def test_inline_code_removed(self):
+        text = "Use the `strip_thinking()` function."
+        result = self._strip(text)
+        assert "`" not in result
+        assert "strip_thinking()" not in result
+        assert "function" in result
+
+    # ── Markdown links (Rule 3) ──────────────────────────────────────────
+
+    def test_markdown_link_keeps_text(self):
+        text = "Click [here](https://example.com) for details."
+        result = self._strip(text)
+        assert "here" in result
+        assert "https://example.com" not in result
+        assert "(" not in result
+
+    def test_multiple_links(self):
+        text = "[Google](https://google.com) and [GitHub](https://github.com)"
+        result = self._strip(text)
+        assert "Google" in result
+        assert "GitHub" in result
+        assert "https://" not in result
+
+    # ── Thinking blocks (Rule 4) ─────────────────────────────────────────
+
+    def test_thinking_block_removed(self):
+        text = "<thinking>I need to plan carefully.</thinking>The answer is 42."
+        result = self._strip(text)
+        assert "<thinking>" not in result
+        assert "plan carefully" not in result
+        assert "answer is 42" in result
+
+    def test_multiline_thinking_removed(self):
+        text = "<thinking>\nStep 1: analyze.\nStep 2: respond.\n</thinking>\nHere you go."
+        result = self._strip(text)
+        assert "Step 1" not in result
+        assert "Here you go" in result
+
+    # ── Bare URLs (Rule 5) ───────────────────────────────────────────────
+
+    def test_bare_url_removed(self):
+        text = "Check https://example.com/page for more info."
+        result = self._strip(text)
+        assert "https://example.com" not in result
+        assert "Check" in result
+        assert "info" in result
+
+    # ── Markdown symbols (Rule 6) ────────────────────────────────────────
+
+    def test_heading_hashes_removed(self):
+        text = "## Section Title"
+        result = self._strip(text)
+        assert "#" not in result
+        assert "Section Title" in result
+
+    def test_bold_asterisks_removed(self):
+        text = "This is **bold** text."
+        result = self._strip(text)
+        assert "**" not in result
+        assert "bold" in result
+
+    def test_italic_underscores_removed(self):
+        text = "This is _italic_ text."
+        result = self._strip(text)
+        assert "_" not in result
+        assert "italic" in result
+
+    def test_blockquote_removed(self):
+        text = "> This is a quote."
+        result = self._strip(text)
+        assert ">" not in result
+        assert "This is a quote" in result
+
+    # ── Edge cases ───────────────────────────────────────────────────────
+
+    def test_empty_string(self):
+        assert self._strip("") == ""
+
+    def test_plain_text_unchanged(self):
+        text = "Hello, how are you doing today?"
+        assert self._strip(text) == text
+
+    def test_whitespace_collapsed(self):
+        text = "Word   one     two"
+        result = self._strip(text)
+        assert "  " not in result
+
+    def test_combined_kitchen_sink(self):
+        """Full LLM response with code, links, thinking, markdown."""
+        text = (
+            "<thinking>Let me think about this.</thinking>\n"
+            "## Summary\n\n"
+            "Here's the **result**:\n\n"
+            "```python\ndef hello():\n    print('hi')\n```\n\n"
+            "Use the `hello()` function. "
+            "See [docs](https://docs.python.org) for more.\n"
+            "Also check https://example.com/guide for tips."
+        )
+        result = self._strip(text)
+        # Code must be gone
+        assert "def hello" not in result
+        assert "print('hi')" not in result
+        # Inline code gone
+        assert "`" not in result
+        # Thinking gone
+        assert "Let me think" not in result
+        # URLs gone
+        assert "https://" not in result
+        # Markdown symbols gone
+        assert "##" not in result
+        assert "**" not in result
+        # Useful text preserved
+        assert "Summary" in result
+        assert "result" in result
+        assert "docs" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. Global TTS config (#247)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestGlobalTTSConfig:
+    """Verify the tts_speak_all_responses config field."""
+
+    def test_config_field_exists(self):
+        from bantz.config import Config
+        cfg = Config()
+        assert hasattr(cfg, "tts_speak_all_responses")
+
+    def test_default_is_false(self):
+        from bantz.config import Config
+        cfg = Config()
+        assert cfg.tts_speak_all_responses is False
+
+    def test_env_alias(self):
+        """Config field has the correct BANTZ_ env alias."""
+        from bantz.config import Config
+        field = Config.model_fields["tts_speak_all_responses"]
+        alias = field.alias
+        assert alias == "BANTZ_TTS_SPEAK_ALL_RESPONSES"

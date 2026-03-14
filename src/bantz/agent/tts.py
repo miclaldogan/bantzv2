@@ -99,6 +99,53 @@ def split_sentences(text: str) -> list[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Markdown sanitizer for TTS (#247)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Compiled regexes — strict ordering is critical (see issue #247 commentary).
+# 1. Code blocks FIRST (before we strip backticks individually)
+_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```", re.DOTALL)
+# 2. Inline code backticks
+_INLINE_CODE_RE = re.compile(r"`[^`]+`")
+# 3. Markdown links [text](url) → keep "text"
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+# 4. <thinking>…</thinking> blocks (import-free, self-contained)
+_THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.DOTALL)
+# 5. Bare URLs
+_URL_RE = re.compile(r"https?://[^\s\"'>]+")
+# 6. Markdown heading hashes, bold/italic markers, blockquote
+_MD_SYMBOLS_RE = re.compile(r"[#*_>~`]+")
+
+
+def strip_markdown_for_tts(text: str) -> str:
+    """Remove code, URLs, and Markdown syntax so TTS reads clean prose.
+
+    Processing order matters — code blocks must be removed **before**
+    individual backtick stripping, otherwise partial code leaks into
+    the speech output and Piper reads it character-by-character.
+
+    Steps (in strict order):
+      1. Remove fenced code blocks (```…```) and all their content.
+      2. Remove inline code (`…`).
+      3. Convert Markdown links [text](url) → text.
+      4. Remove <thinking>…</thinking> internal monologue blocks.
+      5. Remove bare URLs (https://…).
+      6. Strip remaining Markdown symbols (#, *, _, >, ~).
+      7. Collapse whitespace.
+    """
+    if not text:
+        return ""
+    text = _CODE_BLOCK_RE.sub("", text)       # 1
+    text = _INLINE_CODE_RE.sub("", text)      # 2
+    text = _MD_LINK_RE.sub(r"\1", text)       # 3
+    text = _THINKING_RE.sub("", text)         # 4
+    text = _URL_RE.sub("", text)              # 5
+    text = _MD_SYMBOLS_RE.sub("", text)       # 6
+    text = re.sub(r"\s{2,}", " ", text)       # 7 — collapse whitespace
+    return text.strip()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # TTS Engine
 # ═══════════════════════════════════════════════════════════════════════════
 
