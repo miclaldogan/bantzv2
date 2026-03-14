@@ -40,6 +40,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from bantz.core.event_bus import bus
+
 log = logging.getLogger("bantz.wake_word")
 
 # Cooldown between detections to prevent rapid re-triggers
@@ -227,7 +229,16 @@ class WakeWordListener:
                     # Play acknowledgment sound
                     self._play_ack()
 
-                    # Fire callback
+                    # Publish to EventBus (Sprint 3 Part 2)
+                    try:
+                        bus.emit_threadsafe(
+                            "wake_word_detected",
+                            count=self._total_detections,
+                        )
+                    except Exception:
+                        pass  # never crash the audio thread
+
+                    # Fire legacy callback (backward compat)
                     if self._on_wake:
                         try:
                             self._on_wake()

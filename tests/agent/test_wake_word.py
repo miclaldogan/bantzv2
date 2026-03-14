@@ -511,3 +511,39 @@ class TestArchitectureAudit:
         from bantz.agent.wake_word import WakeWordListener
         src = inspect.getsource(WakeWordListener._listen_loop)
         assert "_interrupt_tts" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EventBus integration (Sprint 3 Part 2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestWakeWordEventBus:
+    """Verify wake_word_detected events are emitted via the EventBus."""
+
+    def test_bus_emit_in_listen_loop_source(self):
+        """_listen_loop must call bus.emit_threadsafe('wake_word_detected')."""
+        import inspect
+        from bantz.agent.wake_word import WakeWordListener
+        src = inspect.getsource(WakeWordListener._listen_loop)
+        assert "bus.emit_threadsafe" in src
+        assert "wake_word_detected" in src
+
+    def test_bus_import_exists(self):
+        """wake_word.py must import from event_bus."""
+        import inspect
+        from bantz.agent import wake_word
+        src = inspect.getsource(wake_word)
+        assert "from bantz.core.event_bus import bus" in src
+
+    def test_no_brain_or_tui_imports(self):
+        """wake_word.py must NOT import from brain or TUI."""
+        import ast, inspect
+        from bantz.agent import wake_word
+        tree = ast.parse(inspect.getsource(wake_word))
+        imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+        for imp in imports:
+            if imp.module:
+                assert "bantz.core.brain" not in imp.module, \
+                    f"Forbidden import: {imp.module}"
+                assert "bantz.interface.tui" not in imp.module, \
+                    f"Forbidden import: {imp.module}"

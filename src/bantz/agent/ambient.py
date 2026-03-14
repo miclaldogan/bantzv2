@@ -60,6 +60,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from bantz.core.event_bus import bus
+
 log = logging.getLogger("bantz.ambient")
 
 # ── Defaults ─────────────────────────────────────────────────────────────
@@ -270,6 +272,12 @@ class AmbientAnalyzer:
             "Ambient: %s (RMS=%.0f, ZCR=%.4f) [#%d]",
             label.value.upper(), rms, zcr, self._total_analyses,
         )
+
+        # ── Publish to EventBus (Sprint 3 Part 2) ─────────────
+        try:
+            bus.emit_threadsafe("ambient_change", **snap.to_dict())
+        except Exception:
+            pass  # never crash the audio thread
 
         return snap
 

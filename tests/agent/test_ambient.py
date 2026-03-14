@@ -334,3 +334,60 @@ class TestAmbientAnalyzerDiagnostics:
         assert a._total_analyses == 0
         assert a.latest() is None
         assert len(a.history()) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EventBus integration (Sprint 3 Part 2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestAmbientEventBus:
+    """Verify ambient_change events are emitted via the EventBus."""
+
+    def test_feed_frames_emits_event(self):
+        """A successful analysis should emit 'ambient_change'."""
+        from bantz.core.event_bus import EventBus
+        with patch("bantz.agent.ambient.bus") as mock_bus:
+            a = AmbientAnalyzer(sample_rate=16000, sample_window_s=0.1, sample_interval_s=0)
+            result = a.feed_frames([0] * 1600)
+            assert result is not None
+            mock_bus.emit_threadsafe.assert_called_once()
+            call_args = mock_bus.emit_threadsafe.call_args
+            assert call_args[0][0] == "ambient_change"
+            assert "label" in call_args[1]
+            assert call_args[1]["label"] == "silence"
+
+    def test_no_event_when_disabled(self):
+        """Disabled analyser emits nothing."""
+        with patch("bantz.agent.ambient.bus") as mock_bus:
+            a = AmbientAnalyzer(sample_rate=16000, sample_window_s=0.1, sample_interval_s=0)
+            a.enabled = False
+            a.feed_frames([0] * 1600)
+            mock_bus.emit_threadsafe.assert_not_called()
+
+    def test_no_event_when_not_enough_frames(self):
+        """Partial feed (not enough for window) emits nothing."""
+        with patch("bantz.agent.ambient.bus") as mock_bus:
+            a = AmbientAnalyzer(sample_rate=16000, sample_window_s=1.0, sample_interval_s=0)
+            a.feed_frames([0] * 100)
+            mock_bus.emit_threadsafe.assert_not_called()
+
+    def test_bus_exception_does_not_crash(self):
+        """If bus.emit_threadsafe raises, feed_frames still returns the snapshot."""
+        with patch("bantz.agent.ambient.bus") as mock_bus:
+            mock_bus.emit_threadsafe.side_effect = RuntimeError("bus down")
+            a = AmbientAnalyzer(sample_rate=16000, sample_window_s=0.1, sample_interval_s=0)
+            result = a.feed_frames([0] * 1600)
+            assert result is not None  # snapshot still returned
+
+    def test_no_brain_or_tui_imports(self):
+        """ambient.py must NOT import from brain or TUI."""
+        import ast, inspect
+        from bantz.agent import ambient
+        tree = ast.parse(inspect.getsource(ambient))
+        imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+        for imp in imports:
+            if imp.module:
+                assert "bantz.core.brain" not in imp.module, \
+                    f"Forbidden import: {imp.module}"
+                assert "bantz.interface.tui" not in imp.module, \
+                    f"Forbidden import: {imp.module}"
