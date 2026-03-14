@@ -99,6 +99,10 @@ class TestSubscribeEventBus:
             assert test_bus.subscriber_count("wake_word_detected") == 1
             assert test_bus.subscriber_count("ambient_change") == 1
             assert test_bus.subscriber_count("health_alert") == 1
+            assert test_bus.subscriber_count("voice_input") == 1
+            assert test_bus.subscriber_count("ghost_loop_listening") == 1
+            assert test_bus.subscriber_count("ghost_loop_transcribing") == 1
+            assert test_bus.subscriber_count("ghost_loop_idle") == 1
 
     def test_calls_bind_loop(self):
         app = self._make_app()
@@ -136,11 +140,15 @@ class TestUnsubscribeEventBus:
         test_bus.bind_loop = MagicMock()
         with patch("bantz.interface.tui.app.bus", test_bus):
             app._subscribe_event_bus()
-            assert test_bus.subscriber_count() == 3
+            assert test_bus.subscriber_count() == 7
             app._unsubscribe_event_bus()
             assert test_bus.subscriber_count("wake_word_detected") == 0
             assert test_bus.subscriber_count("ambient_change") == 0
             assert test_bus.subscriber_count("health_alert") == 0
+            assert test_bus.subscriber_count("voice_input") == 0
+            assert test_bus.subscriber_count("ghost_loop_listening") == 0
+            assert test_bus.subscriber_count("ghost_loop_transcribing") == 0
+            assert test_bus.subscriber_count("ghost_loop_idle") == 0
 
     def test_safe_when_not_subscribed(self):
         """No crash if _unsubscribe called before _subscribe."""

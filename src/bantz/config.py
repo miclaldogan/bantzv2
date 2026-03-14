@@ -166,6 +166,15 @@ class Config(BaseSettings):
     picovoice_access_key: str = Field("", alias="BANTZ_PICOVOICE_ACCESS_KEY")
     wake_word_sensitivity: float = Field(0.5, alias="BANTZ_WAKE_WORD_SENSITIVITY")
 
+    # ── Ghost Loop / STT (#36) ───────────────────────────────────────────
+    stt_enabled: bool = Field(False, alias="BANTZ_STT_ENABLED")
+    stt_model: str = Field("tiny", alias="BANTZ_STT_MODEL")
+    stt_language: str = Field("en", alias="BANTZ_STT_LANGUAGE")
+    stt_device: str = Field("cpu", alias="BANTZ_STT_DEVICE")
+    vad_silence_ms: int = Field(800, alias="BANTZ_VAD_SILENCE_MS")
+    vad_aggressiveness: int = Field(2, alias="BANTZ_VAD_AGGRESSIVENESS")
+    ghost_loop_enabled: bool = Field(False, alias="BANTZ_GHOST_LOOP_ENABLED")
+
     # ── Ambient Sound Analysis (#166) ────────────────────────────────────
     ambient_enabled: bool = Field(False, alias="BANTZ_AMBIENT_ENABLED")
     ambient_interval: int = Field(600, alias="BANTZ_AMBIENT_INTERVAL")

@@ -1008,8 +1008,9 @@ class TestGlobalTTSConfig:
 
     def test_default_is_false(self):
         from bantz.config import Config
-        cfg = Config()
-        assert cfg.tts_speak_all_responses is False
+        # Check the Field default directly (immune to .env overrides)
+        field = Config.model_fields["tts_speak_all_responses"]
+        assert field.default is False
 
     def test_env_alias(self):
         """Config field has the correct BANTZ_ env alias."""
@@ -1034,8 +1035,9 @@ class TestAnimatronicConfig:
 
     def test_default_is_false(self):
         from bantz.config import Config
-        cfg = Config()
-        assert cfg.tts_animatronic_filter is False
+        # Check the Field default directly (immune to .env overrides)
+        field = Config.model_fields["tts_animatronic_filter"]
+        assert field.default is False
 
     def test_env_alias(self):
         from bantz.config import Config
