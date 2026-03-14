@@ -207,29 +207,44 @@ class TestBrainDelegation:
 
     @pytest.mark.asyncio
     async def test_brain_handle_save_place_delegates(self):
-        from bantz.core.brain import Brain
-        with patch("bantz.core.location_handler.handle_save_place", new_callable=AsyncMock) as mock:
+        """dispatch_internal routes _save_place to location_handler."""
+        from bantz.core.routing_engine import dispatch_internal
+        with patch("bantz.core.location_handler.handle_save_place", new_callable=AsyncMock) as mock, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
+            dl.conversations = MagicMock()
             mock.return_value = "saved"
-            b = Brain.__new__(Brain)
-            result = await b._handle_save_place("Park")
+            result = await dispatch_internal(
+                "_save_place", {"name": "Park"}, MagicMock(), "", "", {},
+            )
         mock.assert_called_once_with("Park")
-        assert result == "saved"
+        assert result is not None
+        assert "saved" in result.response
 
     @pytest.mark.asyncio
     async def test_brain_handle_list_places_delegates(self):
-        from bantz.core.brain import Brain
-        with patch("bantz.core.location_handler.handle_list_places", new_callable=AsyncMock) as mock:
+        """dispatch_internal routes _list_places to location_handler."""
+        from bantz.core.routing_engine import dispatch_internal
+        with patch("bantz.core.location_handler.handle_list_places", new_callable=AsyncMock) as mock, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
+            dl.conversations = MagicMock()
             mock.return_value = "places list"
-            b = Brain.__new__(Brain)
-            result = await b._handle_list_places()
-        assert result == "places list"
+            result = await dispatch_internal(
+                "_list_places", {}, MagicMock(), "", "", {},
+            )
+        assert result is not None
+        assert "places list" in result.response
 
     @pytest.mark.asyncio
     async def test_brain_handle_delete_place_delegates(self):
-        from bantz.core.brain import Brain
-        with patch("bantz.core.location_handler.handle_delete_place", new_callable=AsyncMock) as mock:
+        """dispatch_internal routes _delete_place to location_handler."""
+        from bantz.core.routing_engine import dispatch_internal
+        with patch("bantz.core.location_handler.handle_delete_place", new_callable=AsyncMock) as mock, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
+            dl.conversations = MagicMock()
             mock.return_value = "deleted"
-            b = Brain.__new__(Brain)
-            result = await b._handle_delete_place("Gym")
+            result = await dispatch_internal(
+                "_delete_place", {"name": "Gym"}, MagicMock(), "", "", {},
+            )
         mock.assert_called_once_with("Gym")
-        assert result == "deleted"
+        assert result is not None
+        assert "deleted" in result.response

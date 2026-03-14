@@ -458,12 +458,16 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_memory = MagicMock()
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="run maintenance")
-        b._handle_maintenance = AsyncMock(return_value="🔧 Maintenance: all ok")
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.routing_engine.handle_maintenance",
+                   new_callable=AsyncMock,
+                   return_value="🔧 Maintenance: all ok") as mock_maint:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             # workflow_engine.detect returns [] (no workflow)
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
@@ -478,12 +482,15 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_memory = MagicMock()
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="show reflections")
-        b._handle_list_reflections = MagicMock(return_value="🤔 Recent reflections:\n  • 2025-07-14")
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.routing_engine.handle_list_reflections",
+                   return_value="🤔 Recent reflections:\n  • 2025-07-14") as mock_refl:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
                 mock_wf.detect.return_value = []
@@ -497,19 +504,23 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_memory = MagicMock()
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="run reflection")
-        b._handle_run_reflection = AsyncMock(return_value="🤔 Reflection done")
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.routing_engine.handle_run_reflection",
+                   new_callable=AsyncMock,
+                   return_value="🤔 Reflection done") as mock_refl:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
                 mock_wf.detect.return_value = []
                 result = _run(b.process("run reflection"))
 
         assert result.tool_used == "reflection"
-        b._handle_run_reflection.assert_awaited_once()
+        mock_refl.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -584,9 +595,11 @@ class TestWakeWordProcessHandlers:
         mock_listener.running = True
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
                 mock_wf.detect.return_value = []
@@ -609,9 +622,11 @@ class TestWakeWordProcessHandlers:
         mock_listener.start.return_value = True
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
                 mock_wf.detect.return_value = []
@@ -633,9 +648,11 @@ class TestWakeWordProcessHandlers:
         mock_listener.running = False
 
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
-             patch("bantz.core.brain.data_layer") as mock_dl:
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
+            dl_re.conversations = MagicMock()
 
             with patch("bantz.core.workflow.workflow_engine") as mock_wf:
                 mock_wf.detect.return_value = []
@@ -766,7 +783,9 @@ class TestAudioDuckRoutes:
         mock_ducker = MagicMock()
         mock_ducker.available.return_value = True
         with patch("bantz.core.brain.data_layer") as dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            dl_re.conversations = MagicMock()
             result = _run(b.process("enable ducking"))
         assert "enabled" in result.response.lower() or "🔉" in result.response
         assert mock_ducker.enabled is True
@@ -776,7 +795,9 @@ class TestAudioDuckRoutes:
         mock_ducker = MagicMock()
         mock_ducker.available.return_value = False
         with patch("bantz.core.brain.data_layer") as dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            dl_re.conversations = MagicMock()
             result = _run(b.process("enable ducking"))
         assert "not available" in result.response.lower() or "❌" in result.response
 
@@ -784,7 +805,9 @@ class TestAudioDuckRoutes:
         b = self._make_brain()
         mock_ducker = MagicMock()
         with patch("bantz.core.brain.data_layer") as dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
+            dl_re.conversations = MagicMock()
             result = _run(b.process("disable ducking"))
         assert "disabled" in result.response.lower() or "🔇" in result.response
 
@@ -844,7 +867,9 @@ class TestAmbientRoutes:
         mock_analyzer.latest.return_value = snap
         mock_analyzer.day_summary.return_value = "Ambient today (5 samples): speech: 60%, silence: 40%"
         with patch("bantz.core.brain.data_layer") as dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
+            dl_re.conversations = MagicMock()
             result = _run(b.process("ambient noise"))
         assert "SPEECH" in result.response
         assert "🎤" in result.response
@@ -854,7 +879,9 @@ class TestAmbientRoutes:
         mock_analyzer = MagicMock()
         mock_analyzer.latest.return_value = None
         with patch("bantz.core.brain.data_layer") as dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
+            dl_re.conversations = MagicMock()
             result = _run(b.process("ambient status"))
         assert "waiting" in result.response.lower() or "no ambient" in result.response.lower()
 
