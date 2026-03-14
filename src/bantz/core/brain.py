@@ -261,6 +261,7 @@ class Brain:
         # recent_history feeds coreference resolution (#212) so the
         # planner can resolve pronouns like "him", "it", "that file".
         recent_history = data_layer.conversations.context(n=6)
+        planner_error: str | None = None
         try:
             from bantz.agent.planner import planner_agent
             if planner_agent.is_complex(en_input, recent_history=recent_history):
@@ -273,7 +274,8 @@ class Brain:
                     self._fire_embeddings()
                     return plan_result
         except Exception as exc:
-            log.debug("Planner check failed: %s — falling through", exc)
+            log.warning("Planner check failed: %s — propagating to LLM", exc)
+            planner_error = f"Multi-step planner failed: {exc}"
 
         # ── Quick-route → internal dispatch (#228) ──────────────────────
         quick = self._quick_route(user_input, en_input)
@@ -296,12 +298,22 @@ class Brain:
                 plan = {"route": "tool", "tool_name": quick["tool"],
                         "tool_args": quick["args"], "risk_level": "safe"}
         else:
-            plan = await cot_route(
+            plan, routing_error = await cot_route(
                 en_input, registry.all_schemas(),
                 recent_history=recent_history,
             )
+
+            # Merge planner_error if cot_route had no error of its own
+            if routing_error is None and planner_error is not None:
+                routing_error = planner_error
+
             if plan is None:
-                stream = self._chat_stream(en_input, tc)
+                # (#253) If routing_error is set, a tool was attempted
+                # but failed.  Inject a system alert so the LLM does NOT
+                # hallucinate tool success.
+                stream = self._chat_stream(
+                    en_input, tc, system_alert=routing_error,
+                )
                 return BrainResult(
                     response="", tool_used=None, stream=stream,
                 )
@@ -427,11 +439,20 @@ class Brain:
         except Exception as exc:
             return f"(Ollama error: {exc})"
 
-    async def _chat_stream(self, en_input: str, tc: dict) -> AsyncIterator[str]:
+    async def _chat_stream(
+        self, en_input: str, tc: dict,
+        *, system_alert: str | None = None,
+    ) -> AsyncIterator[str]:
         """
         Streaming chat — yields tokens as they arrive from LLM.
         Post-processing (strip_markdown) runs on accumulated text at consumer side.
         Context gathering is concurrent via memory_injector.inject (#227).
+
+        Args:
+            system_alert: (#253) When a tool routing / planner attempt
+                failed, this carries the error description.  It is
+                injected into the system prompt so the LLM honestly
+                reports the failure instead of hallucinating success.
         """
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
@@ -442,8 +463,24 @@ class Brain:
         self._feedback_ctx = ""  # clear after consumption
         await _inject_memory(ctx, en_input)
 
+        system_content = _build_chat_system(ctx, tc)
+
+        # (#253) People-Pleaser guard: inject routing failure context
+        if system_alert:
+            system_content += (
+                "\n\n[SYSTEM ALERT: You just attempted to use a tool to "
+                "fulfill the user's request, but your internal routing/JSON "
+                f"generation failed with error: {system_alert}. "
+                "DO NOT pretend you completed the task. DO NOT fabricate "
+                "data, emails, search results, or file contents. "
+                "Apologize to the user in your butler persona and explain "
+                "that a technical difficulty prevented you from completing "
+                "the request. Suggest they try again or rephrase.]"
+            )
+            log.warning("People-Pleaser guard activated: %s", system_alert)
+
         messages = [
-            {"role": "system", "content": _build_chat_system(ctx, tc)},
+            {"role": "system", "content": system_content},
             *prior,
             {"role": "user", "content": en_input},
         ]
