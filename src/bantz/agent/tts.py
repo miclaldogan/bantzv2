@@ -447,12 +447,15 @@ class TTSEngine:
 
         try:
             if use_sox:
-                # Pipeline: stdin → sox (effects) → aplay
+                # Two-stage: stdin → sox (effects) → memory → aplay
+                # NOTE: asyncio.StreamReader can't be passed as stdin
+                # to another subprocess, so we collect sox output first.
                 sox_proc = await asyncio.create_subprocess_exec(
                     self._sox_path,
                     "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
                     "-b", "16", "-c", "1", "-",   # input spec
-                    "-t", "raw", "-",               # output spec
+                    "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
+                    "-b", "16", "-c", "1", "-",   # output spec (explicit)
                     "pitch", "-300",
                     "reverb", "50",
                     "overdrive", "10",
@@ -461,30 +464,32 @@ class TTSEngine:
                     stderr=asyncio.subprocess.DEVNULL,
                     env=env,
                 )
-                aplay_proc = await asyncio.create_subprocess_exec(
+                self._sox_proc = sox_proc
+                processed, _ = await asyncio.wait_for(
+                    sox_proc.communicate(input=wav_data),
+                    timeout=30.0,
+                )
+                self._sox_proc = None
+
+                if not processed:
+                    log.warning("TTS: sox produced no output")
+                    return
+
+                # Play processed audio via aplay
+                proc = await asyncio.create_subprocess_exec(
                     self._aplay_path,
                     "-r", str(self._sample_rate),
                     "-f", "S16_LE",
                     "-t", "raw",
                     "-c", "1",
-                    stdin=sox_proc.stdout,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                     env=env,
                 )
-                self._sox_proc = sox_proc
-                self._playing = aplay_proc
-
-                # Feed wav data to sox and close its stdin
-                sox_proc.stdin.write(wav_data)
-                await sox_proc.stdin.drain()
-                sox_proc.stdin.close()
-
-                # Wait for both processes to finish
-                await aplay_proc.wait()
-                await sox_proc.wait()
+                self._playing = proc
+                await proc.communicate(input=processed)
                 self._playing = None
-                self._sox_proc = None
             else:
                 # Direct: stdin → aplay
                 proc = await asyncio.create_subprocess_exec(
