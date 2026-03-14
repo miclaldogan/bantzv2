@@ -1,9 +1,10 @@
-"""Tests for bantz.agent.app_detector (#127)."""
+"""Tests for bantz.agent.app_detector (#127, #220 Sprint 3 Part 4)."""
 from __future__ import annotations
 
 import json
+import threading
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch, PropertyMock, call
 
 import pytest
 
@@ -33,6 +34,9 @@ from bantz.agent.app_detector import (
     _APP_CATEGORIES,
     _BROWSER_TITLE_PATTERNS,
     _BROWSER_NAMES,
+    _start_x11_listener,
+    _start_dbus_listener,
+    _start_slow_poll,
     app_detector,
 )
 
@@ -1223,3 +1227,258 @@ class TestLayerIntegration:
             # We can't easily test this without a full DataLayer init
             # Just verify the config field exists as expected
             assert config.app_detector_enabled is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Native event listeners (#220 Sprint 3 Part 4)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestStartX11Listener:
+    """Tests for _start_x11_listener."""
+
+    def test_returns_false_without_xlib(self):
+        with patch.dict("sys.modules", {"Xlib": None, "Xlib.X": None,
+                                         "Xlib.display": None}):
+            stop = threading.Event()
+            assert _start_x11_listener(lambda: None, stop) is False
+            stop.set()
+
+    def test_returns_true_with_xlib(self):
+        mock_display_cls = MagicMock()
+        mock_X = MagicMock()
+        mock_X.PropertyChangeMask = 0x400000
+        mock_display_mod = MagicMock()
+        mock_display_mod.Display = mock_display_cls
+        mock_d = MagicMock()
+        mock_display_cls.return_value = mock_d
+        mock_d.screen.return_value.root = MagicMock()
+        mock_d.intern_atom.return_value = 42
+        mock_d.pending_events.return_value = 0
+        mock_d.fileno.return_value = 3
+
+        with patch.dict("sys.modules", {
+            "Xlib": MagicMock(X=mock_X, display=mock_display_mod),
+            "Xlib.X": mock_X,
+            "Xlib.display": mock_display_mod,
+        }):
+            stop = threading.Event()
+            cb = MagicMock()
+            result = _start_x11_listener(cb, stop)
+            assert result is True
+            time.sleep(0.05)
+            stop.set()
+
+
+class TestStartDbusListener:
+    """Tests for _start_dbus_listener."""
+
+    def test_returns_false_without_dbus_next(self):
+        with patch.dict("sys.modules", {"dbus_next": None,
+                                         "dbus_next.aio": None}):
+            stop = threading.Event()
+            assert _start_dbus_listener(lambda: None, stop) is False
+            stop.set()
+
+    def test_returns_true_with_dbus_next(self):
+        mock_bus_cls = MagicMock()
+        mock_aio = MagicMock()
+        mock_aio.MessageBus = mock_bus_cls
+
+        with patch.dict("sys.modules", {
+            "dbus_next": MagicMock(aio=mock_aio),
+            "dbus_next.aio": mock_aio,
+        }):
+            stop = threading.Event()
+            cb = MagicMock()
+            result = _start_dbus_listener(cb, stop)
+            assert result is True
+            time.sleep(0.05)
+            stop.set()
+
+
+class TestStartSlowPoll:
+    """Tests for _start_slow_poll with short interval."""
+
+    def test_starts_and_detects_change(self):
+        cb = MagicMock()
+        stop = threading.Event()
+        wid_seq = iter(["100", "100", "200"])
+
+        with patch("bantz.agent.app_detector._run_cmd",
+                    side_effect=lambda cmd, **kw: next(wid_seq, "200")):
+            _start_slow_poll(cb, stop, interval=0.05)
+            time.sleep(0.25)
+            stop.set()
+
+        # At least one on_change call when window id changes
+        assert cb.call_count >= 1
+
+    def test_stop_event_terminates(self):
+        cb = MagicMock()
+        stop = threading.Event()
+        with patch("bantz.agent.app_detector._run_cmd", return_value="100"):
+            _start_slow_poll(cb, stop, interval=0.05)
+            time.sleep(0.1)
+            stop.set()
+            time.sleep(0.1)
+            count_at_stop = cb.call_count
+            time.sleep(0.15)
+            assert cb.call_count == count_at_stop  # no more calls after stop
+
+
+class TestAppDetectorListener:
+    """Tests for AppDetector listener lifecycle and EventBus emission."""
+
+    def _make_detector(self) -> AppDetector:
+        d = AppDetector()
+        d._display_server = "unknown"
+        d._initialized = True
+        d._listener_type = "none"
+        return d
+
+    def test_listener_type_property(self):
+        d = self._make_detector()
+        assert d.listener_type == "none"
+        d._listener_type = "x11-propertynotify"
+        assert d.listener_type == "x11-propertynotify"
+
+    def test_stats_includes_listener_type(self):
+        d = self._make_detector()
+        d._listener_type = "dbus"
+        s = d.stats()
+        assert "listener_type" in s
+        assert s["listener_type"] == "dbus"
+
+    def test_stop_sets_event(self):
+        d = self._make_detector()
+        assert not d._stop.is_set()
+        d.stop()
+        assert d._stop.is_set()
+
+    def test_on_window_change_emits_event(self):
+        d = self._make_detector()
+        win = WindowInfo(name="code", title="test.py – bantz – Visual Studio Code",
+                         pid=1234, wm_class="code")
+        with patch.object(d, "get_active_window", return_value=win), \
+             patch("bantz.agent.app_detector.bus") as mock_bus:
+            d._on_window_change()
+            mock_bus.emit_threadsafe.assert_called_once()
+            args, kwargs = mock_bus.emit_threadsafe.call_args
+            assert args[0] == "app_changed"
+            assert kwargs["name"] == "code"
+            assert kwargs["pid"] == 1234
+            assert kwargs["activity"] == "coding"
+
+    def test_on_window_change_no_window(self):
+        d = self._make_detector()
+        with patch.object(d, "get_active_window", return_value=None), \
+             patch("bantz.agent.app_detector.bus") as mock_bus:
+            d._on_window_change()
+            mock_bus.emit_threadsafe.assert_called_once()
+            _, kwargs = mock_bus.emit_threadsafe.call_args
+            assert kwargs["name"] == ""
+            assert kwargs["activity"] == "idle"
+
+    def test_on_window_change_invalidates_cache(self):
+        d = self._make_detector()
+        d._active_window_cache = _CachedResult(
+            value=WindowInfo(name="old"), timestamp=time.time())
+        with patch.object(d, "get_active_window", return_value=None), \
+             patch("bantz.agent.app_detector.bus"):
+            d._on_window_change()
+        # Cache should be invalidated (new _CachedResult with no value)
+        assert not d._active_window_cache.is_valid(10.0)
+
+    def test_init_starts_slow_poll_on_unknown(self):
+        d = AppDetector()
+        with patch("bantz.agent.app_detector._detect_display_server",
+                    return_value="unknown"), \
+             patch("bantz.agent.app_detector._start_slow_poll",
+                    return_value=True) as mock_sp:
+            d.init()
+            mock_sp.assert_called_once()
+            assert d.listener_type == "slow-poll"
+            d.stop()
+
+    def test_init_starts_x11_on_x11(self):
+        d = AppDetector()
+        with patch("bantz.agent.app_detector._detect_display_server",
+                    return_value="x11"), \
+             patch("bantz.agent.app_detector._start_x11_listener",
+                    return_value=True) as mock_x:
+            d.init()
+            mock_x.assert_called_once()
+            assert d.listener_type == "x11-propertynotify"
+            d.stop()
+
+    def test_init_x11_fallback_to_slow_poll(self):
+        d = AppDetector()
+        with patch("bantz.agent.app_detector._detect_display_server",
+                    return_value="x11"), \
+             patch("bantz.agent.app_detector._start_x11_listener",
+                    return_value=False), \
+             patch("bantz.agent.app_detector._start_slow_poll",
+                    return_value=True) as mock_sp:
+            d.init()
+            mock_sp.assert_called_once()
+            assert d.listener_type == "slow-poll"
+            d.stop()
+
+    def test_init_wayland_dbus(self):
+        d = AppDetector()
+        with patch("bantz.agent.app_detector._detect_display_server",
+                    return_value="wayland"), \
+             patch("bantz.agent.app_detector._start_dbus_listener",
+                    return_value=True) as mock_db:
+            d.init()
+            mock_db.assert_called_once()
+            assert d.listener_type == "dbus"
+            d.stop()
+
+    def test_init_wayland_fallback_to_slow_poll(self):
+        d = AppDetector()
+        with patch("bantz.agent.app_detector._detect_display_server",
+                    return_value="wayland"), \
+             patch("bantz.agent.app_detector._start_dbus_listener",
+                    return_value=False), \
+             patch("bantz.agent.app_detector._start_slow_poll",
+                    return_value=True) as mock_sp:
+            d.init()
+            mock_sp.assert_called_once()
+            assert d.listener_type == "slow-poll"
+            d.stop()
+
+
+class TestEventDrivenSourceAudit:
+    """Verify no aggressive polling patterns remain."""
+
+    def test_no_time_sleep_in_source(self):
+        import inspect
+        src = inspect.getsource(AppDetector)
+        assert "time.sleep(" not in src, "AppDetector must not use time.sleep"
+
+    def test_no_while_true_in_source(self):
+        import inspect
+        src = inspect.getsource(AppDetector)
+        assert "while True" not in src, "AppDetector must not have while True"
+
+    def test_listener_types_are_valid(self):
+        valid = {"none", "x11-propertynotify", "dbus", "slow-poll"}
+        d = AppDetector()
+        assert d.listener_type in valid
+
+    def test_new_exports_importable(self):
+        """All new #220 exports must be importable."""
+        from bantz.agent.app_detector import _start_x11_listener
+        from bantz.agent.app_detector import _start_dbus_listener
+        from bantz.agent.app_detector import _start_slow_poll
+        assert callable(_start_x11_listener)
+        assert callable(_start_dbus_listener)
+        assert callable(_start_slow_poll)
+
+    def test_bus_import_exists(self):
+        """EventBus must be imported in app_detector."""
+        from bantz.agent import app_detector as mod
+        assert hasattr(mod, "bus")
+
