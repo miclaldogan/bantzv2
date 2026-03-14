@@ -36,11 +36,12 @@ class TestCotRouteBasic:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value=llm_response)
-            plan = await cot_route("What is the weather in Istanbul?", [
+            plan, error = await cot_route("What is the weather in Istanbul?", [
                 {"name": "weather", "description": "Check weather", "risk_level": "safe"},
             ])
 
         assert plan is not None
+        assert error is None
         assert plan["tool_name"] == "weather"
         assert plan["tool_args"]["city"] == "Istanbul"
 
@@ -58,9 +59,10 @@ class TestCotRouteBasic:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value=llm_response)
-            plan = await cot_route("Hello there!", [])
+            plan, error = await cot_route("Hello there!", [])
 
         assert plan is not None
+        assert error is None
         assert plan["route"] == "chat"
 
     @pytest.mark.asyncio
@@ -69,9 +71,10 @@ class TestCotRouteBasic:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value="Sorry, I can't assist with that.")
-            plan = await cot_route("do something bad", [])
+            plan, error = await cot_route("do something bad", [])
 
         assert plan is None
+        assert error is None  # refusal is not a routing error
 
     @pytest.mark.asyncio
     async def test_returns_none_on_low_confidence(self):
@@ -87,10 +90,11 @@ class TestCotRouteBasic:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value=llm_response)
-            plan = await cot_route("maybe delete everything", [],
+            plan, error = await cot_route("maybe delete everything", [],
                                    confidence_threshold=0.4)
 
         assert plan is None
+        assert error is None  # low confidence is not a routing error
 
     @pytest.mark.asyncio
     async def test_handles_thinking_block(self):
@@ -110,11 +114,12 @@ class TestCotRouteBasic:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value=llm_response)
-            plan = await cot_route("weather in London", [
+            plan, error = await cot_route("weather in London", [
                 {"name": "weather", "description": "Check weather", "risk_level": "safe"},
             ])
 
         assert plan is not None
+        assert error is None
         assert plan["tool_name"] == "weather"
 
 
@@ -152,13 +157,14 @@ class TestCotRouteWithHistory:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = capture_chat
-            await cot_route(
+            plan, error = await cot_route(
                 "Yes, send it to him",
                 [{"name": "gmail", "description": "Send email", "risk_level": "safe"}],
                 recent_history=history,
             )
 
         assert len(captured_messages) >= 1
+        assert error is None
         system_content = captured_messages[0]["content"]
         assert "RECENT CONVERSATION" in system_content
         assert "john@example.com" in system_content
@@ -182,7 +188,7 @@ class TestCotRouteWithHistory:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = capture_chat
-            await cot_route("hello", [], recent_history=None)
+            plan, error = await cot_route("hello", [], recent_history=None)
 
         system_content = captured_messages[0]["content"]
         assert "RECENT CONVERSATION" not in system_content
@@ -206,7 +212,7 @@ class TestCotRouteWithHistory:
 
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = capture_chat
-            await cot_route("hello", [], recent_history=[])
+            plan, error = await cot_route("hello", [], recent_history=[])
 
         system_content = captured_messages[0]["content"]
         assert "RECENT CONVERSATION" not in system_content
@@ -313,6 +319,75 @@ class TestBackwardCompat:
         with patch("bantz.core.intent.ollama") as mock_llm:
             mock_llm.chat = AsyncMock(return_value=llm_response)
             # Old call signature — no recent_history
-            plan = await cot_route("hello", [])
+            plan, error = await cot_route("hello", [])
 
         assert plan is not None
+        assert error is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. People-Pleaser guard — malformed JSON returns error (#253)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPeoplePleaser:
+    """cot_route returns error string instead of silent None on JSON failures."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_both_attempts_returns_error(self):
+        """When both LLM attempts return garbage, (None, error_string) is returned."""
+        from bantz.core.intent import cot_route
+
+        with patch("bantz.core.intent.ollama") as mock_llm:
+            # Both attempts return non-JSON garbage
+            mock_llm.chat = AsyncMock(return_value="Sure! I'll send that email right away!")
+            plan, error = await cot_route("send email to john", [
+                {"name": "gmail", "description": "Send email", "risk_level": "safe"},
+            ])
+
+        assert plan is None
+        assert error is not None
+        assert "failed" in error.lower() or "error" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_first_attempt_recovers(self):
+        """When 1st attempt fails but 2nd returns valid JSON, success."""
+        from bantz.core.intent import cot_route
+
+        call_count = 0
+
+        async def flaky_chat(messages):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return "Hmm, let me think about that..."  # garbage
+            return json.dumps({
+                "route": "tool",
+                "tool_name": "gmail",
+                "tool_args": {"action": "compose", "to": "john"},
+                "risk_level": "safe",
+                "confidence": 0.9,
+            })
+
+        with patch("bantz.core.intent.ollama") as mock_llm:
+            mock_llm.chat = flaky_chat
+            plan, error = await cot_route("send email to john", [
+                {"name": "gmail", "description": "Send email", "risk_level": "safe"},
+            ])
+
+        assert plan is not None
+        assert error is None
+        assert plan["tool_name"] == "gmail"
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_returns_error(self):
+        """Non-JSON exceptions (e.g. network) return error string."""
+        from bantz.core.intent import cot_route
+
+        with patch("bantz.core.intent.ollama") as mock_llm:
+            mock_llm.chat = AsyncMock(side_effect=ConnectionError("Ollama is down"))
+            plan, error = await cot_route("check weather", [])
+
+        assert plan is None
+        assert error is not None
+        assert "Ollama is down" in error

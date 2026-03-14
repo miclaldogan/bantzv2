@@ -268,8 +268,8 @@ class TestSentimentInterceptProcess:
         b._to_en = AsyncMock(return_value="good job on that")
         b._quick_route = MagicMock(return_value=None)
 
-        # Mock cot_route to return None → chat path
-        with patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=None), \
+        # Mock cot_route to return (None, None) → chat path
+        with patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=(None, None)), \
              patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.agent.affinity_engine.affinity_engine") as mock_ae:

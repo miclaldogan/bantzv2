@@ -173,16 +173,20 @@ async def cot_route(
     *,
     recent_history: list[dict] | None = None,
     confidence_threshold: float = 0.4,
-) -> dict | None:
+) -> tuple[dict | None, str | None]:
     """
     Chain-of-Thought routing via Ollama.
 
-    Returns a plan dict compatible with ``brain.process()``:
+    Returns ``(plan, routing_error)``:
 
-        {"route", "tool_name", "tool_args", "risk_level", "chain", "confidence"}
-
-    Returns *None* when routing fails (model refusal, parse error, or very
-    low confidence) — the caller should fall back to chat.
+    - ``(plan_dict, None)``     — successful routing (tool or chat).
+    - ``(None, None)``          — pure chat / refusal / low confidence
+                                  (no tool was attempted).
+    - ``(None, error_string)``  — a tool route was *attempted* but JSON
+                                  parsing or validation failed.  The
+                                  caller **must not** silently fall back
+                                  to chat — it should inform the user
+                                  (#253 People-Pleaser fix).
 
     Args:
         recent_history: Last few conversation turns (user/assistant dicts)
@@ -215,22 +219,23 @@ async def cot_route(
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
-            return None
+            return None, None
 
         _log_thinking(raw)
         plan = _extract_json(raw)
 
         if plan.get("confidence", 0.8) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])
-            return None
+            return None, None
 
-        return plan
+        return plan, None
 
     except (json.JSONDecodeError, AttributeError) as exc:
-        log.debug("CoT JSON parse failed (attempt 1): %s — raw: %.200s", exc, raw)
+        log.warning("CoT JSON parse failed (attempt 1): %s — raw: %.200s", exc, raw)
+        # Fall through to attempt 2
     except Exception as exc:
         log.warning("CoT error (attempt 1): %s", exc)
-        return None
+        return None, f"CoT routing error: {exc}"
 
     # ── Attempt 2: retry with correction ───────────────────────────────────
     try:
@@ -248,8 +253,8 @@ async def cot_route(
         raw2 = await ollama.chat(messages)
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)
-        return plan
+        return plan, None
 
     except Exception as exc:
-        log.debug("CoT parse failed (attempt 2): %s", exc)
-        return None
+        log.warning("CoT parse failed (attempt 2): %s", exc)
+        return None, f"Intent routing failed after 2 attempts: {exc}"
