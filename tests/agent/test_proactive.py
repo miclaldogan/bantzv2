@@ -466,12 +466,18 @@ class TestProactiveBrainHandler:
         mock_dl.kv = mock_kv
 
         with patch("bantz.core.brain.data_layer", mock_dl), \
+             patch("bantz.core.routing_engine.data_layer", mock_dl), \
              patch("bantz.core.brain.config") as cfg, \
+             patch("bantz.core.routing_engine.config") as cfg_re, \
              patch("bantz.agent.rl_engine.rl_engine", mock_rl):
             cfg.proactive_enabled = True
             cfg.proactive_max_daily = 1
             cfg.proactive_interval_hours = 3.0
             cfg.proactive_jitter_minutes = 30
+            cfg_re.proactive_enabled = True
+            cfg_re.proactive_max_daily = 1
+            cfg_re.proactive_interval_hours = 3.0
+            cfg_re.proactive_jitter_minutes = 30
             result = _run(b.process("proactive status"))
 
         assert "💬" in result.response

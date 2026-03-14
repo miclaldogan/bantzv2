@@ -607,7 +607,9 @@ class TestBrainPlannerIntegration:
         with patch("bantz.agent.planner.planner_agent") as mock_planner, \
              patch("bantz.agent.executor.plan_executor") as mock_executor, \
              patch("bantz.core.brain.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.data_layer") as dal_re, \
              patch("bantz.core.brain.ollama") as mock_ollama, \
+             patch("bantz.core.routing_engine.ollama") as ollama_re, \
              patch("bantz.core.brain.cot_route") as mock_cot:
 
             mock_planner.is_complex = MagicMock(return_value=True)
@@ -617,7 +619,9 @@ class TestBrainPlannerIntegration:
             mock_executor.run = AsyncMock(return_value=exec_result)
             mock_dal.conversations = MagicMock()
             mock_dal.init = MagicMock()
+            dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
+            ollama_re.chat = AsyncMock(return_value="")
 
             from bantz.core.brain import Brain
             brain = Brain.__new__(Brain)
@@ -674,7 +678,9 @@ class TestBrainPlannerIntegration:
         with patch("bantz.agent.planner.planner_agent") as mock_planner, \
              patch("bantz.agent.executor.plan_executor") as mock_executor, \
              patch("bantz.core.brain.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.data_layer") as dal_re, \
              patch("bantz.core.brain.ollama") as mock_ollama, \
+             patch("bantz.core.routing_engine.ollama") as ollama_re, \
              patch("bantz.core.workflow.workflow_engine") as mock_wf:
 
             mock_planner.is_complex = MagicMock(return_value=True)
@@ -682,7 +688,9 @@ class TestBrainPlannerIntegration:
             mock_planner.format_itinerary = MagicMock(return_value="Plan...")
             mock_executor.run = AsyncMock(return_value=exec_result)
             mock_dal.conversations = MagicMock()
+            dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
+            ollama_re.chat = AsyncMock(return_value="")
 
             from bantz.core.brain import Brain
             brain = Brain.__new__(Brain)
@@ -1168,11 +1176,11 @@ class TestProcessTextVirtualTool:
 
 
 class TestBrainProcessTextIntegration:
-    """Brain._execute_plan passes ollama.chat as llm_fn to executor."""
+    """routing_engine.execute_plan passes ollama.chat as llm_fn to executor."""
 
     @pytest.mark.asyncio
     async def test_execute_plan_passes_llm_fn(self):
-        """_execute_plan must call plan_executor.run with llm_fn=ollama.chat."""
+        """execute_plan must call plan_executor.run with llm_fn=ollama.chat."""
         from bantz.agent.planner import PlanStep
         from bantz.agent.executor import PlanExecutionResult, StepResult
 
@@ -1194,8 +1202,8 @@ class TestBrainProcessTextIntegration:
 
         with patch("bantz.agent.planner.planner_agent") as mock_planner, \
              patch("bantz.agent.executor.plan_executor") as mock_executor, \
-             patch("bantz.core.brain.data_layer") as mock_dal, \
-             patch("bantz.core.brain.ollama") as mock_ollama:
+             patch("bantz.core.routing_engine.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.ollama") as mock_ollama:
 
             mock_planner.decompose = AsyncMock(return_value=plan_steps)
             mock_planner.format_itinerary = MagicMock(
@@ -1204,12 +1212,13 @@ class TestBrainProcessTextIntegration:
             mock_dal.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="llm output")
 
-            from bantz.core.brain import Brain
-            brain = Brain.__new__(Brain)
+            from bantz.core.routing_engine import execute_plan
+            brain = MagicMock()
             brain._graph_store = AsyncMock()
             brain._fire_embeddings = MagicMock()
 
-            result = await brain._execute_plan(
+            result = await execute_plan(
+                brain,
                 "search AI and summarize",
                 "search AI and summarize",
                 {},
@@ -1223,15 +1232,15 @@ class TestBrainProcessTextIntegration:
 
     @pytest.mark.asyncio
     async def test_tool_names_include_process_text(self):
-        """Brain._execute_plan adds 'process_text' to tool_names."""
+        """execute_plan adds 'process_text' to tool_names."""
         from bantz.agent.planner import PlanStep
         from bantz.agent.executor import PlanExecutionResult
 
         with patch("bantz.agent.planner.planner_agent") as mock_planner, \
              patch("bantz.agent.executor.plan_executor") as mock_executor, \
-             patch("bantz.core.brain.data_layer") as mock_dal, \
-             patch("bantz.core.brain.ollama") as mock_ollama, \
-             patch("bantz.core.brain.registry") as mock_registry:
+             patch("bantz.core.routing_engine.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.ollama") as mock_ollama, \
+             patch("bantz.core.routing_engine.registry") as mock_registry:
 
             mock_registry.names.return_value = ["web_search", "filesystem"]
             mock_planner.decompose = AsyncMock(return_value=[
@@ -1244,12 +1253,12 @@ class TestBrainProcessTextIntegration:
             mock_dal.conversations = MagicMock()
             mock_ollama.chat = AsyncMock()
 
-            from bantz.core.brain import Brain
-            brain = Brain.__new__(Brain)
+            from bantz.core.routing_engine import execute_plan
+            brain = MagicMock()
             brain._graph_store = AsyncMock()
             brain._fire_embeddings = MagicMock()
 
-            await brain._execute_plan("test", "test", {})
+            await execute_plan(brain, "test", "test", {})
 
         # decompose must receive process_text in tool_names
         call_args = mock_planner.decompose.call_args[0]

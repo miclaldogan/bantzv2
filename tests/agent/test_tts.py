@@ -635,6 +635,7 @@ class TestBrainTTSStopHandler:
         mock_conv = MagicMock()
 
         with patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.agent.tts.tts_engine", mock_tts), \
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="shut up"), \
              patch.object(b, "_ensure_memory"), \
@@ -642,6 +643,7 @@ class TestBrainTTSStopHandler:
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
+            dl_re.conversations = MagicMock()
 
             result = await b.process("shut up")
             assert "Stopped" in result.response or "🔇" in result.response
@@ -657,6 +659,7 @@ class TestBrainTTSStopHandler:
         mock_conv = MagicMock()
 
         with patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.agent.tts.tts_engine", mock_tts), \
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="shut up"), \
              patch.object(b, "_ensure_memory"), \
@@ -664,6 +667,7 @@ class TestBrainTTSStopHandler:
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
+            dl_re.conversations = MagicMock()
 
             result = await b.process("shut up")
             assert "not speaking" in result.response.lower()
@@ -703,6 +707,7 @@ class TestBrainBriefingWithTTS:
         mock_conv = MagicMock()
 
         with patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.briefing.briefing", mock_briefing), \
              patch("bantz.agent.tts.tts_engine", mock_tts), \
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
@@ -711,6 +716,7 @@ class TestBrainBriefingWithTTS:
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
+            dl_re.conversations = MagicMock()
 
             result = await b.process("good morning")
             assert "sunny" in result.response.lower() or "Good morning" in result.response
@@ -730,6 +736,7 @@ class TestBrainBriefingWithTTS:
         mock_conv = MagicMock()
 
         with patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.briefing.briefing", mock_briefing), \
              patch("bantz.agent.tts.tts_engine", mock_tts), \
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
@@ -738,6 +745,7 @@ class TestBrainBriefingWithTTS:
              patch("bantz.core.brain.time_ctx") as mock_tc:
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
+            dl_re.conversations = MagicMock()
 
             result = await b.process("good morning")
             assert result.response == "Morning briefing text"

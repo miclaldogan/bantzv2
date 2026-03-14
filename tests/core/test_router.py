@@ -318,15 +318,13 @@ class TestDiskShortcutsRegression:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestQuickRouteAudit:
-    """Structural assertions on the _quick_route code."""
+    """Structural assertions on the quick_route code (#228 → routing_engine)."""
 
     def test_no_bare_search_keyword_match(self):
         """Web search must NOT use 'any(k in both for k in (\"search\", ...))'."""
         import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._quick_route)
-        # The old pattern was:  any(k in both for k in ("search", ...))
-        # with return {"tool": "web_search", "args": {"query": orig}}
+        from bantz.core.routing_engine import quick_route
+        src = inspect.getsource(quick_route)
         assert '"query": orig' not in src, \
             "web_search must not pass raw orig as query"
 
@@ -336,10 +334,9 @@ class TestQuickRouteAudit:
     def test_disk_regex_has_word_boundary(self):
         """Shell/disk regex must use \\b word boundaries."""
         import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._quick_route)
-        # Find the disk/size section
-        idx = src.find("Folder/directory sizes")
+        from bantz.core.routing_engine import quick_route
+        src = inspect.getsource(quick_route)
+        idx = src.find("Folder / directory sizes")
         assert idx != -1, "Disk section comment must exist"
         section = src[idx:idx + 600]
         assert r"\b" in section, "Disk regex must use word boundaries"
@@ -347,9 +344,9 @@ class TestQuickRouteAudit:
     def test_disk_regex_requires_context(self):
         """Shell/disk match requires both a size keyword AND a disk-context keyword."""
         import inspect
-        from bantz.core.brain import Brain
-        src = inspect.getsource(Brain._quick_route)
-        idx = src.find("Folder/directory sizes")
+        from bantz.core.routing_engine import quick_route
+        src = inspect.getsource(quick_route)
+        idx = src.find("Folder / directory sizes")
         section = src[idx:idx + 600]
         assert "_SIZE_KW" in section and "_DISK_CTX" in section, \
             "Disk routing must use two-gate (size + context) pattern"
