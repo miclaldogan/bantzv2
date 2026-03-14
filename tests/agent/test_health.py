@@ -684,3 +684,96 @@ class TestJobHealthCheck:
             mock_engine.initialized = False
             await _job_health_check()
             mock_engine.evaluate_all.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EventBus integration (Sprint 3 Part 2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestHealthEventBus:
+    """Verify health_alert events are emitted via the EventBus."""
+
+    def test_fired_rule_emits_health_alert(self):
+        """When a rule fires, bus.emit_threadsafe('health_alert') is called."""
+        engine = _make_engine()
+        ctx = _mock_gather(hour=3, cpu_pct=90, activity="coding")
+        with patch.object(engine, "_gather", return_value=ctx), \
+             patch("bantz.agent.health.get_idle_ms", return_value=0), \
+             patch("bantz.agent.health.is_screen_locked", return_value=False), \
+             patch("bantz.agent.health.bus") as mock_bus:
+            results = engine.evaluate_all()
+            fired = [r for r in results if r.fired]
+            assert len(fired) >= 1
+            mock_bus.emit_threadsafe.assert_called()
+            call_args = mock_bus.emit_threadsafe.call_args
+            assert call_args[0][0] == "health_alert"
+            assert "rule_id" in call_args[1]
+
+    def test_no_event_when_no_rule_fires(self):
+        """No bus emission when all rules pass clean."""
+        engine = _make_engine()
+        ctx = _mock_gather(hour=10, cpu_pct=30, activity="idle")
+        with patch.object(engine, "_gather", return_value=ctx), \
+             patch("bantz.agent.health.get_idle_ms", return_value=0), \
+             patch("bantz.agent.health.is_screen_locked", return_value=False), \
+             patch("bantz.agent.health.bus") as mock_bus:
+            results = engine.evaluate_all()
+            mock_bus.emit_threadsafe.assert_not_called()
+
+    def test_telemetry_cache_via_bus(self):
+        """_on_telemetry updates the internal cache from bus events."""
+        from bantz.core.event_bus import Event
+        engine = _make_engine()
+        event = Event(name="telemetry_update", data={
+            "cpu_pct": 87.5, "cpu_temp": 72.0, "gpu_temp": 65.0,
+        })
+        engine._on_telemetry(event)
+        assert engine._telemetry["cpu_pct"] == 87.5
+        assert engine._telemetry["cpu_temp"] == 72.0
+        assert engine._telemetry["gpu_temp"] == 65.0
+
+    def test_no_tui_telemetry_import(self):
+        """health.py must NOT import from bantz.interface.tui."""
+        import ast, inspect
+        from bantz.agent import health
+        tree = ast.parse(inspect.getsource(health))
+        imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+        for imp in imports:
+            if imp.module:
+                assert "bantz.interface.tui" not in imp.module, \
+                    f"Forbidden TUI import: {imp.module}"
+
+    def test_no_brain_import(self):
+        """health.py must NOT import from bantz.core.brain."""
+        import ast, inspect
+        from bantz.agent import health
+        tree = ast.parse(inspect.getsource(health))
+        imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+        for imp in imports:
+            if imp.module:
+                assert "bantz.core.brain" not in imp.module, \
+                    f"Forbidden brain import: {imp.module}"
+
+    def test_bus_exception_does_not_crash_evaluate(self):
+        """If bus.emit_threadsafe raises, evaluate_all still returns results."""
+        engine = _make_engine()
+        ctx = _mock_gather(hour=3, cpu_pct=90, activity="coding")
+        with patch.object(engine, "_gather", return_value=ctx), \
+             patch("bantz.agent.health.get_idle_ms", return_value=0), \
+             patch("bantz.agent.health.is_screen_locked", return_value=False), \
+             patch("bantz.agent.health.bus") as mock_bus:
+            mock_bus.emit_threadsafe.side_effect = RuntimeError("bus down")
+            results = engine.evaluate_all()
+            assert len(results) == 5  # all 5 rules evaluated
+            fired = [r for r in results if r.fired]
+            assert len(fired) >= 1  # rule still fired despite bus error
+
+    def test_init_subscribes_to_telemetry(self):
+        """init() should register _on_telemetry on the bus."""
+        with patch("bantz.agent.health.bus") as mock_bus:
+            from bantz.agent.health import HealthRuleEvaluator
+            engine = HealthRuleEvaluator()
+            engine.init()
+            mock_bus.on.assert_called_once_with(
+                "telemetry_update", engine._on_telemetry,
+            )

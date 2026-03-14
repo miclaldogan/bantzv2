@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from bantz.core.event_bus import bus, Event
+
 log = logging.getLogger("bantz.health")
 
 
@@ -311,6 +313,10 @@ class HealthRuleEvaluator:
         self._initialized = False
         self._screen_time_start: float = time.monotonic()
         self._last_activity_not_idle: float = time.monotonic()
+        # Telemetry cache — updated via EventBus (Sprint 3 Part 2)
+        self._telemetry: dict[str, float] = {
+            "cpu_pct": 0.0, "cpu_temp": 0.0, "gpu_temp": 0.0,
+        }
 
     def init(self) -> None:
         self._initialized = True
@@ -318,11 +324,20 @@ class HealthRuleEvaluator:
         self._thermal.reset()
         self._cooldowns.clear()
         self._screen_time_start = time.monotonic()
+        # Subscribe to telemetry events from the bus
+        bus.on("telemetry_update", self._on_telemetry)
         log.info("HealthRuleEvaluator initialized")
 
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    def _on_telemetry(self, event: Event) -> None:
+        """Bus handler: cache latest telemetry for rule evaluation."""
+        d = event.data
+        for key in ("cpu_pct", "cpu_temp", "gpu_temp"):
+            if key in d:
+                self._telemetry[key] = float(d[key])
 
     @property
     def session(self) -> SessionTracker:
@@ -373,16 +388,10 @@ class HealthRuleEvaluator:
             from datetime import datetime
             ctx["hour"] = datetime.now().hour
 
-        # Telemetry
-        try:
-            from bantz.interface.tui.telemetry import telemetry
-            latest = telemetry.latest
-            if latest:
-                ctx["cpu_pct"] = latest.cpu_pct
-                ctx["cpu_temp"] = latest.cpu_temp
-                ctx["gpu_temp"] = latest.gpu_temp
-        except Exception:
-            pass
+        # Telemetry — from EventBus cache (Sprint 3 Part 2)
+        ctx["cpu_pct"] = self._telemetry.get("cpu_pct", 0.0)
+        ctx["cpu_temp"] = self._telemetry.get("cpu_temp", 0.0)
+        ctx["gpu_temp"] = self._telemetry.get("gpu_temp", 0.0)
 
         # App detector
         try:
@@ -563,6 +572,17 @@ class HealthRuleEvaluator:
         for r in results:
             if r.fired:
                 self._mark_fired(r.rule_id)
+                # Publish to EventBus (Sprint 3 Part 2)
+                try:
+                    bus.emit_threadsafe(
+                        "health_alert",
+                        rule_id=r.rule_id.value,
+                        title=r.title,
+                        reason=r.reason,
+                        **r.data,
+                    )
+                except Exception:
+                    pass
 
         return results
 
