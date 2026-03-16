@@ -354,6 +354,11 @@ class TestBuildToolContext:
         brain = object.__new__(Brain)
         brain._last_messages = []
         brain._last_events = []
+        brain._last_tool_output = ""
+        brain._last_tool_name = ""
+        brain._turn_counter = 0
+        brain._context_turn = 0
+        brain._CONTEXT_TTL = 3
         return brain
 
     def test_empty_when_no_data(self):
@@ -560,3 +565,205 @@ class TestCotPromptVisualClick:
         """CoT prompt must instruct models to use snake_case tool names."""
         from bantz.core.intent import COT_SYSTEM
         assert "snake_case" in COT_SYSTEM
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. Tool Context Retention (#276)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestToolContextTTL:
+    """Turn-based TTL for _last_messages / _last_events (#276)."""
+
+    def _make_brain(self):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._memory_ready = True
+        b._graph_ready = True
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
+        return b
+
+    def test_context_expires_after_ttl(self):
+        """After TTL turns, stale context is cleared."""
+        b = self._make_brain()
+        b._last_messages = [{"id": "abc", "from": "test", "subject": "hi"}]
+        b._context_turn = 0
+        b._turn_counter = 4  # 4 > TTL=3 → expired
+        b._clear_stale_context()
+        assert b._last_messages == []
+        assert b._last_tool_output == ""
+
+    def test_context_alive_within_ttl(self):
+        """Within TTL turns, context is preserved."""
+        b = self._make_brain()
+        b._last_messages = [{"id": "abc", "from": "test", "subject": "hi"}]
+        b._context_turn = 2
+        b._turn_counter = 4  # 4 - 2 = 2, ≤ TTL=3
+        b._clear_stale_context()
+        assert len(b._last_messages) == 1
+
+    def test_email_context_injected_on_relevant_query(self):
+        """_build_tool_context injects email IDs when query mentions email."""
+        b = self._make_brain()
+        b._last_messages = [
+            {"id": "msg1", "from": "alice@example.com", "subject": "Erasmus"},
+            {"id": "msg2", "from": "bob@example.com", "subject": "Meeting"},
+        ]
+        b._context_turn = 0
+        b._turn_counter = 1
+        ctx = b._build_tool_context("read the first email")
+        assert "msg1" in ctx
+        assert "msg2" in ctx
+        assert "RECENT EMAIL RESULTS" in ctx
+
+    def test_calendar_context_injected_on_relevant_query(self):
+        """_build_tool_context injects event IDs when query mentions calendar."""
+        b = self._make_brain()
+        b._last_events = [
+            {"id": "evt1", "summary": "Lecture", "start_local": "09:00"},
+        ]
+        b._context_turn = 0
+        b._turn_counter = 1
+        ctx = b._build_tool_context("delete that calendar event")
+        assert "evt1" in ctx
+        assert "RECENT CALENDAR EVENTS" in ctx
+
+    def test_no_context_on_unrelated_query(self):
+        """_build_tool_context returns empty for unrelated queries."""
+        b = self._make_brain()
+        b._last_messages = [{"id": "msg1", "from": "x", "subject": "y"}]
+        b._context_turn = 0
+        b._turn_counter = 1
+        ctx = b._build_tool_context("what is the weather in istanbul")
+        assert ctx == ""
+
+    def test_generic_followup_context(self):
+        """Generic tool output is injected for follow-up queries."""
+        b = self._make_brain()
+        b._last_tool_output = "Found 3 results about AI regulation"
+        b._last_tool_name = "web_search"
+        b._context_turn = 0
+        b._turn_counter = 1
+        ctx = b._build_tool_context("tell me more about that")
+        assert "web_search" in ctx
+        assert "AI regulation" in ctx
+
+    def test_ttl_refreshed_on_context_use(self):
+        """When context is used in a query, the TTL clock resets."""
+        b = self._make_brain()
+        b._last_messages = [{"id": "msg1", "from": "x", "subject": "y"}]
+        b._context_turn = 0
+        b._turn_counter = 2
+        b._build_tool_context("check my email")
+        # After querying email, context_turn should be refreshed
+        assert b._context_turn == b._turn_counter
+
+    def test_expired_context_not_injected(self):
+        """Expired context must not appear even for relevant queries."""
+        b = self._make_brain()
+        b._last_messages = [{"id": "msg1", "from": "x", "subject": "y"}]
+        b._context_turn = 0
+        b._turn_counter = 5  # 5 > TTL=3
+        ctx = b._build_tool_context("read my email")
+        # Context should have been cleared before injection
+        assert ctx == ""
+
+
+class TestEmbedMetadata:
+    """Metadata embedding in tool output (#276)."""
+
+    def test_email_metadata_embedded(self):
+        """Email message IDs are embedded in ToolResult output."""
+        from bantz.core.brain import Brain
+        data = {"messages": [
+            {"id": "abc123", "from": "alice@test.com", "subject": "Hello"},
+            {"id": "def456", "from": "bob@test.com", "subject": "Meeting"},
+        ]}
+        result = Brain._embed_metadata("Found 2 emails.", "gmail", data)
+        assert "[CONTEXT:" in result
+        assert "abc123" in result
+        assert "def456" in result
+
+    def test_calendar_metadata_embedded(self):
+        """Calendar event IDs are embedded in ToolResult output."""
+        from bantz.core.brain import Brain
+        data = {"events": [
+            {"id": "evt1", "summary": "Lecture"},
+        ]}
+        result = Brain._embed_metadata("1 event today.", "calendar", data)
+        assert "[CONTEXT:" in result
+        assert "evt1" in result
+
+    def test_no_metadata_for_empty_data(self):
+        """No [CONTEXT:] block when data is empty or None."""
+        from bantz.core.brain import Brain
+        assert Brain._embed_metadata("ok", "shell", None) == "ok"
+        assert Brain._embed_metadata("ok", "shell", {}) == "ok"
+
+    def test_single_item_metadata(self):
+        """Single message_id / event_id / thread_id are embedded."""
+        from bantz.core.brain import Brain
+        data = {"message_id": "xyz789", "thread_id": "t123"}
+        result = Brain._embed_metadata("Email read.", "gmail", data)
+        assert "xyz789" in result
+        assert "t123" in result
+
+    def test_path_metadata_for_filesystem(self):
+        """File path is embedded for filesystem tool results."""
+        from bantz.core.brain import Brain
+        data = {"path": "/home/user/notes.txt"}
+        result = Brain._embed_metadata("File created.", "filesystem", data)
+        assert "/home/user/notes.txt" in result
+
+
+class TestStoreToolContext:
+    """_store_tool_context stores and resets TTL (#276)."""
+
+    def _make_brain(self):
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._memory_ready = True
+        b._graph_ready = True
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 5
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
+        return b
+
+    def test_stores_email_messages(self):
+        from bantz.tools import ToolResult
+        b = self._make_brain()
+        msgs = [{"id": "m1", "from": "a", "subject": "b"}]
+        result = ToolResult(success=True, output="Emails", data={"messages": msgs})
+        b._store_tool_context("gmail", result)
+        assert b._last_messages == msgs
+        assert b._context_turn == 5  # reset to current turn
+
+    def test_stores_calendar_events(self):
+        from bantz.tools import ToolResult
+        b = self._make_brain()
+        evts = [{"id": "e1", "summary": "Lecture"}]
+        result = ToolResult(success=True, output="Events", data={"events": evts})
+        b._store_tool_context("calendar", result)
+        assert b._last_events == evts
+        assert b._context_turn == 5
+
+    def test_stores_generic_output(self):
+        from bantz.tools import ToolResult
+        b = self._make_brain()
+        result = ToolResult(success=True, output="Search results: AI news...")
+        b._store_tool_context("web_search", result)
+        assert b._last_tool_name == "web_search"
+        assert "Search results" in b._last_tool_output
