@@ -6,11 +6,14 @@ Destructive commands require confirmation, which is triggered by brain.py.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 from typing import Any
 
 from bantz.config import config
 from bantz.tools import BaseTool, ToolResult, registry
+
+_HOME = os.path.expanduser("~")
 
 # ── Security Lists ───────────────────────────────────────────────────────────
 
@@ -54,7 +57,13 @@ class ShellTool(BaseTool):
     name = "shell"
     description = (
         "Runs Bash commands in the terminal. "
-        "Used for file listing, process management, text processing, and similar tasks."
+        "Used for file listing, process management, text processing, "
+        "and similar tasks. "
+        f"CRITICAL: Always use absolute paths. The user's home directory is "
+        f"{_HOME}. WRONG: du -sh ~/* (scans entire home). "
+        f"RIGHT: du -sh {_HOME}/Downloads/* (specific folder). "
+        "Do NOT use this tool for GUI interaction (clicking, hovering) "
+        "— use visual_click instead."
     )
     risk_level = "moderate"
 

@@ -295,6 +295,7 @@ async def cot_route(
     tool_schemas: list[dict],
     *,
     recent_history: list[dict] | None = None,
+    tool_context: str = "",
     confidence_threshold: float = 0.4,
 ) -> tuple[dict | None, str | None]:
     """
@@ -314,6 +315,13 @@ async def cot_route(
     Now streams via ``ollama.chat_stream()`` and emits ``thinking_token``
     events on the EventBus so the TUI can display the chain-of-thought
     in real-time.
+
+    Parameters
+    ----------
+    tool_context : str
+        Optional dynamic context block (e.g. recent email IDs, calendar
+        events) injected only when relevant (#275 — avoids bloating the
+        prompt when unrelated queries are asked).
     """
     schema_str = "\n".join(
         f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
@@ -329,8 +337,13 @@ async def cot_route(
             f"'him', 'it', 'that file', 'yesterday\'s report'):\n{formatted}"
         )
 
+    # Build optional dynamic tool context (#275)
+    tool_ctx_block = ""
+    if tool_context:
+        tool_ctx_block = f"\n\n{tool_context}"
+
     messages: list[dict] = [
-        {"role": "system", "content": COT_SYSTEM.format(tool_schemas=schema_str) + history_block},
+        {"role": "system", "content": COT_SYSTEM.format(tool_schemas=schema_str) + history_block + tool_ctx_block},
         {"role": "user", "content": en_input},
     ]
 

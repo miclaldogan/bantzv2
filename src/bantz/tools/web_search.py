@@ -356,7 +356,8 @@ class WebSearchTool(BaseTool):
     description = (
         "Search the internet via DuckDuckGo. "
         "Use for: search, look up, find online, google, research, "
-        "anything about, is there any information about."
+        "anything about, is there any information about. "
+        "Be specific with query terms — NEVER use vague single-word queries."
     )
     risk_level = "safe"
 

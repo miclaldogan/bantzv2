@@ -46,7 +46,9 @@ class CalendarTool(BaseTool):
         "Shows, creates, updates and deletes Google Calendar events. "
         "Supports recurring events, attendees, conflict detection. "
         "Use for: calendar, meeting, event, what's today, this week, "
-        "add appointment, schedule, reschedule, delete event, upcoming."
+        "add appointment, schedule, reschedule, delete event, upcoming. "
+        "Always include date/time when creating events. "
+        "NEVER invent event titles or times — ask if not provided."
     )
     risk_level = "safe"
 

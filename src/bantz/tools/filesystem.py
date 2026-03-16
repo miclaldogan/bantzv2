@@ -64,7 +64,9 @@ class FilesystemTool(BaseTool):
         "writing (write), or atomic folder+file creation (create_folder_and_file). "
         "Only works under the home directory. "
         "Use action='create_folder_and_file' when the user wants to create a "
-        "folder AND put a file in it in a single step — avoids multi-step hallucination."
+        "folder AND put a file in it in a single step — avoids multi-step hallucination. "
+        "Always use absolute paths (e.g. ~/Documents/file.txt). "
+        "NEVER guess file names — if unsure, list the directory first."
     )
     risk_level = "moderate"
 
