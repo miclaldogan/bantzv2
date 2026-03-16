@@ -114,12 +114,22 @@ class GhostLoop:
 
     @staticmethod
     def _preload_stt() -> None:
-        """Load the STT model in the background at startup."""
+        """Load the STT model in the background at startup.
+
+        Emits ``stt_model_loading`` / ``stt_model_ready`` events so the
+        TUI can show a status indicator instead of silently freezing on
+        first run when the model must be downloaded from HuggingFace.
+        """
         try:
+            bus.emit_threadsafe("stt_model_loading")
+            log.info("Ghost Loop: pre-loading STT model …")
             from bantz.agent.stt import stt_engine
             stt_engine._ensure_model()
+            bus.emit_threadsafe("stt_model_ready")
+            log.info("Ghost Loop: STT model ready")
         except Exception as exc:
             log.debug("Ghost Loop: STT preload failed — %s", exc)
+            bus.emit_threadsafe("stt_model_failed", error=str(exc))
 
     def _on_wake_event(self, event: Event) -> None:
         """Called (on the bus dispatcher) when wake word is detected.
