@@ -26,7 +26,13 @@ def _notify_health(ok: bool) -> None:
 
 class OllamaClient:
     def __init__(self) -> None:
-        self.base_url = config.ollama_base_url
+        # Strip trailing /api/chat (common misconfiguration) and slashes
+        base = config.ollama_base_url.rstrip("/")
+        for suffix in ("/api/chat", "/api"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+        self.base_url = base
         self.model = config.ollama_model
 
     async def chat(self, messages: list[dict], stream: bool = False) -> str:
