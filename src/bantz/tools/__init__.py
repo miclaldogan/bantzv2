@@ -41,6 +41,15 @@ class BaseTool(ABC):
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
+def _normalise_tool_name(name: str) -> str:
+    """Normalise a tool name: lowercase, strip, spaces/hyphens → underscores.
+
+    Small LLMs frequently return 'Web Search', 'Visual Click', 'web-search',
+    etc.  This gives us a canonical form for lookup.
+    """
+    return name.strip().lower().replace(" ", "_").replace("-", "_")
+
+
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
@@ -49,7 +58,17 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool | None:
-        return self._tools.get(name)
+        """Look up a tool by name — fuzzy: case-insensitive, space/hyphen tolerant."""
+        # Exact match first (fast path)
+        tool = self._tools.get(name)
+        if tool:
+            return tool
+        # Normalised fuzzy lookup
+        norm = _normalise_tool_name(name)
+        for registered_name, t in self._tools.items():
+            if _normalise_tool_name(registered_name) == norm:
+                return t
+        return None
 
     def all_schemas(self) -> list[dict]:
         return [t.schema() for t in self._tools.values()]

@@ -345,26 +345,25 @@ class Brain:
 
         # ── Step 3b: Normalise sloppy routes from small LLMs ─────────
         #    llama3.1:8b often returns route="gmail" instead of "tool",
-        #    or route="search" instead of "tool" with tool_name="web_search".
+        #    or route="Web Search" instead of "tool".
         #    Fix: if route looks like a tool name → normalise to "tool".
         if route not in ("tool", "planner", "chat"):
-            known = registry.names()
-            if route in known:
-                # Model put the tool name in "route" instead of "tool"
+            # Fuzzy-match route against registered tool names
+            if registry.get(route):
                 if not tool_name:
                     tool_name = route
                 route = "tool"
                 log.info("Normalised sloppy route=%r → tool=%s", plan.get("route"), tool_name)
-            elif tool_name and tool_name in known:
-                # route is garbage but tool_name is valid
+            elif tool_name and registry.get(tool_name):
                 route = "tool"
                 log.info("Normalised unknown route=%r → tool (tool_name=%s)", plan.get("route"), tool_name)
             else:
                 log.warning("Unrecognised route=%r, tool_name=%r — falling back to chat", route, tool_name)
                 route = "chat"
 
-        # ── Step 3c: Normalise common tool_name aliases ───────────────
-        #    Small LLMs sometimes use "email" instead of "gmail", etc.
+        # ── Step 3c: Normalise tool_name ──────────────────────────────
+        #    Small LLMs return "Web Search", "email", "Visual Click", etc.
+        #    Two-pass approach: (1) fuzzy registry lookup, (2) alias map.
         _TOOL_ALIASES: dict[str, str] = {
             "email": "gmail", "mail": "gmail", "inbox": "gmail",
             "search": "web_search", "google": "web_search",
@@ -376,11 +375,21 @@ class Brain:
             "events": "calendar", "schedule": "calendar",
             "class": "classroom", "homework": "classroom",
         }
-        if tool_name and tool_name not in registry.names():
-            alias = _TOOL_ALIASES.get(tool_name.lower())
-            if alias:
-                log.info("Normalised tool alias %r → %r", tool_name, alias)
-                tool_name = alias
+        if tool_name:
+            # Pass 1: fuzzy registry lookup (handles "Web Search" → "web_search")
+            matched = registry.get(tool_name)
+            if matched and hasattr(matched, "name") and isinstance(matched.name, str):
+                if matched.name != tool_name:
+                    log.info("Normalised tool_name %r → %r (fuzzy)", tool_name, matched.name)
+                    tool_name = matched.name
+            elif not matched:
+                # Pass 2: alias map (handles "email" → "gmail", etc.)
+                from bantz.tools import _normalise_tool_name
+                norm = _normalise_tool_name(tool_name)
+                alias = _TOOL_ALIASES.get(norm) or _TOOL_ALIASES.get(tool_name.lower())
+                if alias:
+                    log.info("Normalised tool alias %r → %r", tool_name, alias)
+                    tool_name = alias
 
         # ── Step 4: route == "planner" → multi-step decomposition ─────
         if route == "planner":

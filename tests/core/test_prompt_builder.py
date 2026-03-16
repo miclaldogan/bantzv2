@@ -466,3 +466,97 @@ class TestIsRefusalNoFalsePositives:
         from bantz.core.intent import _is_refusal as intent_is_refusal
         raw = '<thinking>I\'m sorry, I need to re-read the request.</thinking>{"route":"tool","tool_name":"gmail","tool_args":{}}'
         assert intent_is_refusal(raw) is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Fuzzy tool registry (#282 follow-up)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFuzzyToolRegistry:
+    """ToolRegistry.get() handles casing, spaces, and hyphens."""
+
+    def test_exact_match(self):
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("web_search") is not None
+
+    def test_capitalized_with_space(self):
+        """'Web Search' should resolve to 'web_search'."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("Web Search") is not None
+        assert reg.get("Web Search").name == "web_search"
+
+    def test_hyphenated(self):
+        """'web-search' should resolve to 'web_search'."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("web-search") is not None
+
+    def test_visual_click_variants(self):
+        """'Visual Click', 'visual-click', 'VISUAL_CLICK' should all match."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "visual_click"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        for variant in ("Visual Click", "visual-click", "VISUAL_CLICK", "Visual_Click"):
+            assert reg.get(variant) is not None, f"Failed for: {variant}"
+
+    def test_miss_returns_none(self):
+        from bantz.tools import ToolRegistry
+        reg = ToolRegistry()
+        assert reg.get("nonexistent") is None
+
+
+class TestCotPromptVisualClick:
+    """CoT prompt must properly route click requests to visual_click."""
+
+    def test_visual_click_in_parameter_reference(self):
+        from bantz.core.intent import COT_SYSTEM
+        assert "visual_click" in COT_SYSTEM
+        assert '"target"' in COT_SYSTEM
+
+    def test_visual_click_in_routing_rules(self):
+        from bantz.core.intent import COT_SYSTEM
+        assert "visual_click: click a button" in COT_SYSTEM
+
+    def test_click_routes_to_visual_click_not_accessibility(self):
+        """The routing rules should NOT say 'accessibility: click UI element'."""
+        from bantz.core.intent import COT_SYSTEM
+        assert "accessibility: click" not in COT_SYSTEM
+
+    def test_snake_case_instruction(self):
+        """CoT prompt must instruct models to use snake_case tool names."""
+        from bantz.core.intent import COT_SYSTEM
+        assert "snake_case" in COT_SYSTEM
