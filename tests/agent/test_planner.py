@@ -54,8 +54,7 @@ class TestDecomposition:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose(
                 "search for AI news and save to a file",
                 ["web_search", "filesystem", "gmail", "shell"],
@@ -82,8 +81,7 @@ class TestDecomposition:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose(
                 "check my email, check the weather, and show my calendar",
                 ["gmail", "weather", "calendar", "web_search", "filesystem"],
@@ -105,8 +103,7 @@ class TestDecomposition:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose("test", ["web_search", "filesystem"])
 
         assert len(steps) == 1
@@ -120,8 +117,7 @@ class TestDecomposition:
         llm_response = '```json\n[{"step": 1, "tool": "weather", "params": {"city": "London"}, "description": "Check weather", "depends_on": null}]\n```'
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose("check weather", ["weather"])
 
         assert len(steps) == 1
@@ -145,8 +141,7 @@ class TestDecomposition:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose(
                 "search AI news, summarize, save to file",
                 ["web_search", "filesystem"],
@@ -174,8 +169,7 @@ class TestDecomposition:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose(
                 "search AI, read the article, summarize",
                 ["web_search", "filesystem"],
@@ -188,8 +182,7 @@ class TestDecomposition:
         from bantz.agent.planner import PlannerAgent
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value="I'm just a butler, I can't do that.")
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value="I'm just a butler, I can't do that.")):
             steps = await agent.decompose("do something", ["web_search"])
 
         assert steps == []
@@ -1337,7 +1330,7 @@ class TestCoreferenceResolution:
 
         captured_messages: list = []
 
-        async def capture_chat(messages):
+        async def capture_stream(messages, *, emit_thinking=True, source=""):
             captured_messages.extend(messages)
             return json.dumps([
                 {"step": 1, "tool": "gmail",
@@ -1353,8 +1346,7 @@ class TestCoreferenceResolution:
         ]
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = capture_chat
+        with patch("bantz.core.intent._stream_and_collect", new=capture_stream):
             await agent.decompose(
                 "Send him the quarterly report",
                 ["gmail", "filesystem"],
@@ -1373,7 +1365,7 @@ class TestCoreferenceResolution:
 
         captured_messages: list = []
 
-        async def capture_chat(messages):
+        async def capture_stream(messages, *, emit_thinking=True, source=""):
             captured_messages.extend(messages)
             return json.dumps([
                 {"step": 1, "tool": "weather",
@@ -1382,8 +1374,7 @@ class TestCoreferenceResolution:
             ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = capture_chat
+        with patch("bantz.core.intent._stream_and_collect", new=capture_stream):
             await agent.decompose("Check weather in London", ["weather"])
 
         system_content = captured_messages[0]["content"]
@@ -1400,8 +1391,7 @@ class TestCoreferenceResolution:
         ])
 
         agent = PlannerAgent()
-        with patch("bantz.agent.planner.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
             steps = await agent.decompose("Check weather", ["weather"])
 
         assert len(steps) == 1

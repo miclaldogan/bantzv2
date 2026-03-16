@@ -317,7 +317,9 @@ class TestCircuitBreaker:
             "send_email": mock_send_email,
         }
 
-        with patch("bantz.agent.executor.registry") as mock_registry:
+        with patch("bantz.agent.executor.registry") as mock_registry, \
+             patch("bantz.agent.executor.bus") as mock_bus:
+            mock_bus.emit = AsyncMock()
             mock_registry.get = lambda name: tool_map.get(name)
             executor = PlanExecutor()
             result = await executor.run(steps)
@@ -366,7 +368,9 @@ class TestCircuitBreaker:
 
         tool_map = {"web_search": mock_web_search, "save_file": mock_save_file}
 
-        with patch("bantz.agent.executor.registry") as mock_registry:
+        with patch("bantz.agent.executor.registry") as mock_registry, \
+             patch("bantz.agent.executor.bus") as mock_bus:
+            mock_bus.emit = AsyncMock()
             mock_registry.get = lambda name: tool_map.get(name)
             result = await PlanExecutor().run(steps)
 
@@ -401,7 +405,9 @@ class TestCircuitBreaker:
 
         tool_map = {"web_search": mock_web_search, "read_url": mock_read_url}
 
-        with patch("bantz.agent.executor.registry") as mock_registry:
+        with patch("bantz.agent.executor.registry") as mock_registry, \
+             patch("bantz.agent.executor.bus") as mock_bus:
+            mock_bus.emit = AsyncMock()
             mock_registry.get = lambda name: tool_map.get(name)
             result = await PlanExecutor().run(steps)
 
@@ -433,7 +439,9 @@ class TestCircuitBreaker:
 
         tool_map = {"web_search": mock_web_search, "read_url": mock_read_url}
 
-        with patch("bantz.agent.executor.registry") as mock_registry:
+        with patch("bantz.agent.executor.registry") as mock_registry, \
+             patch("bantz.agent.executor.bus") as mock_bus:
+            mock_bus.emit = AsyncMock()
             mock_registry.get = lambda name: tool_map.get(name)
             result = await PlanExecutor().run(steps)
 
@@ -451,8 +459,10 @@ class TestCircuitBreaker:
             self._make_step(2, "web_search", "Search", query="q"),
         ]
 
-        from unittest.mock import patch
-        with patch("bantz.agent.executor.registry") as mock_registry:
+        from unittest.mock import patch, AsyncMock
+        with patch("bantz.agent.executor.registry") as mock_registry, \
+             patch("bantz.agent.executor.bus") as mock_bus:
+            mock_bus.emit = AsyncMock()
             mock_registry.get = lambda name: None
             result = await PlanExecutor().run(steps)
 

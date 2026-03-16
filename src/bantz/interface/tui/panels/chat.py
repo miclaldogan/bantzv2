@@ -3,6 +3,7 @@ Bantz — Chat Panel Widgets
 
 ChatLog: scrollable rich-text chat log with streaming support.
 ThinkingLabel: animated spinner shown while Bantz is processing.
+ThinkingPanel: collapsible panel showing real-time <thinking> stream (#273).
 """
 from __future__ import annotations
 
@@ -26,6 +27,66 @@ class ThinkingLabel(Static):
     def render(self) -> str:
         f = self.FRAMES[self._frame % len(self.FRAMES)]
         return f"[dim cyan]  {f} thinking...[/]"
+
+
+class ThinkingPanel(Static):
+    """Collapsible panel showing real-time ``<thinking>`` stream (#273).
+
+    Displays the LLM's chain-of-thought reasoning in dim gray text
+    as tokens arrive via EventBus ``thinking_token`` events.  Auto-hides
+    when thinking completes (``thinking_done`` event).
+
+    The panel is invisible by default and only appears when there is
+    active thinking content to show.
+    """
+
+    DEFAULT_CSS = """
+    ThinkingPanel {
+        height: auto;
+        max-height: 6;
+        overflow-y: auto;
+        padding: 0 1;
+        display: none;
+    }
+    ThinkingPanel.visible {
+        display: block;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._buffer: str = ""
+
+    def start(self) -> None:
+        """Begin a new thinking session — clear and show."""
+        self._buffer = ""
+        self.update("[dim]  🧠 Thinking...[/]")
+        self.add_class("visible")
+
+    def append_token(self, token: str) -> None:
+        """Append a thinking token and refresh display."""
+        self._buffer += token
+        # Truncate display to last ~300 chars for readability
+        display = self._buffer[-300:]
+        if len(self._buffer) > 300:
+            display = "…" + display
+        self.update(f"[dim]  🧠 {display}[/]")
+
+    def finish(self) -> None:
+        """Thinking complete — hide after a brief moment."""
+        if self._buffer:
+            display = self._buffer[-200:]
+            if len(self._buffer) > 200:
+                display = "…" + display
+            self.update(f"[dim]  ✓ {display}[/]")
+        # Auto-hide after 2 seconds
+        self.set_timer(2.0, self._hide)
+
+    def _hide(self) -> None:
+        """Remove visibility."""
+        self.remove_class("visible")
+        self._buffer = ""
+        self.update("")
 
 
 class ChatLog(RichLog):
