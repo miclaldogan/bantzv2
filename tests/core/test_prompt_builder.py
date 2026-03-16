@@ -283,3 +283,122 @@ class TestBrainReExports:
     def test_is_refusal_available_from_brain(self):
         from bantz.core.brain import _is_refusal as brain_ir
         assert brain_ir is is_refusal
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tool description guardrails (#275)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestToolDescriptionGuardrails:
+    """Verify all tool descriptions contain required guardrail keywords."""
+
+    def test_gmail_has_follow_up_rule(self):
+        from bantz.tools.gmail import GmailTool
+        desc = GmailTool.description.lower()
+        assert "follow-up" in desc or "message id" in desc
+
+    def test_gmail_forbids_repeat_search(self):
+        from bantz.tools.gmail import GmailTool
+        assert "NEVER repeat" in GmailTool.description or "never repeat" in GmailTool.description.lower()
+
+    def test_shell_has_absolute_path_rule(self):
+        from bantz.tools.shell import ShellTool
+        desc = ShellTool.description
+        assert "absolute path" in desc.lower()
+
+    def test_shell_has_dynamic_home_dir(self):
+        """Shell description must contain actual home directory, not a placeholder."""
+        import os
+        from bantz.tools.shell import ShellTool
+        assert os.path.expanduser("~") in ShellTool.description
+
+    def test_shell_has_wrong_right_example(self):
+        from bantz.tools.shell import ShellTool
+        assert "WRONG:" in ShellTool.description and "RIGHT:" in ShellTool.description
+
+    def test_filesystem_has_path_rule(self):
+        from bantz.tools.filesystem import FilesystemTool
+        desc = FilesystemTool.description.lower()
+        assert "absolute path" in desc or "never guess" in desc
+
+    def test_web_search_has_specificity_rule(self):
+        from bantz.tools.web_search import WebSearchTool
+        desc = WebSearchTool.description.lower()
+        assert "specific" in desc or "vague" in desc
+
+    def test_calendar_has_no_invent_rule(self):
+        from bantz.tools.calendar import CalendarTool
+        desc = CalendarTool.description.lower()
+        assert "never invent" in desc
+
+    def test_web_reader_has_url_validation_rule(self):
+        from bantz.tools.web_reader import WebReaderTool
+        desc = WebReaderTool.description.lower()
+        assert "never fabricate" in desc or "valid url" in desc
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Dynamic tool context injection (#275)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestBuildToolContext:
+    """Verify brain._build_tool_context injects data only when relevant."""
+
+    def _make_brain(self):
+        from bantz.core.brain import Brain
+        brain = object.__new__(Brain)
+        brain._last_messages = []
+        brain._last_events = []
+        return brain
+
+    def test_empty_when_no_data(self):
+        brain = self._make_brain()
+        assert brain._build_tool_context("what is the weather") == ""
+
+    def test_empty_when_unrelated_query(self):
+        brain = self._make_brain()
+        brain._last_messages = [{"id": "abc", "from": "x@y.com", "subject": "Test"}]
+        # Weather query should NOT inject email context
+        assert brain._build_tool_context("what is the weather") == ""
+
+    def test_injects_email_context_when_relevant(self):
+        brain = self._make_brain()
+        brain._last_messages = [
+            {"id": "abc123", "from": "erasmus@uni.eu", "subject": "Application Status"},
+        ]
+        ctx = brain._build_tool_context("read that email")
+        assert "abc123" in ctx
+        assert "erasmus@uni.eu" in ctx
+        assert "Application Status" in ctx
+
+    def test_injects_calendar_context_when_relevant(self):
+        brain = self._make_brain()
+        brain._last_events = [
+            {"id": "evt1", "summary": "Team Meeting", "start": "2026-03-16T14:00"},
+        ]
+        ctx = brain._build_tool_context("what meetings do I have today")
+        assert "evt1" in ctx
+        assert "Team Meeting" in ctx
+
+    def test_no_cross_contamination(self):
+        """Email data should NOT appear for calendar queries and vice versa."""
+        brain = self._make_brain()
+        brain._last_messages = [{"id": "m1", "from": "a@b.com", "subject": "Hi"}]
+        brain._last_events = [{"id": "e1", "summary": "Standup", "start": "10:00"}]
+        # Calendar query — should have events but NOT emails
+        ctx = brain._build_tool_context("what's on my calendar today")
+        assert "e1" in ctx
+        assert "m1" not in ctx
+
+    def test_limits_to_5_entries(self):
+        brain = self._make_brain()
+        brain._last_messages = [
+            {"id": f"m{i}", "from": f"u{i}@x.com", "subject": f"Subj {i}"}
+            for i in range(10)
+        ]
+        ctx = brain._build_tool_context("check my email")
+        # Should only have 5 entries (m0-m4), not m5-m9
+        assert "m4" in ctx
+        assert "m5" not in ctx

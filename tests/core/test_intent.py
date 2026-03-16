@@ -257,6 +257,65 @@ class TestCotRouteWithHistory:
         system_content = captured_messages[0]["content"]
         assert "RECENT CONVERSATION" not in system_content
 
+    @pytest.mark.asyncio
+    async def test_tool_context_injected_when_provided(self):
+        """tool_context string is appended to system prompt (#275)."""
+        from bantz.core.intent import cot_route
+
+        captured_messages: list = []
+
+        async def capture_stream(messages):
+            captured_messages.extend(messages)
+            response = json.dumps({
+                "route": "tool",
+                "tool_name": "gmail",
+                "tool_args": {"action": "read", "message_id": "abc123"},
+                "risk_level": "safe",
+                "confidence": 0.95,
+            })
+            for ch in response:
+                yield ch
+
+        tool_ctx = 'RECENT EMAIL RESULTS:\n  - ID: abc123 | From: test@x.com | Subject: "Test"'
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = capture_stream
+            mock_bus.emit = AsyncMock()
+            plan, error = await cot_route(
+                "read that email", [],
+                tool_context=tool_ctx,
+            )
+
+        system_content = captured_messages[0]["content"]
+        assert "abc123" in system_content
+        assert "test@x.com" in system_content
+
+    @pytest.mark.asyncio
+    async def test_tool_context_empty_not_injected(self):
+        """Empty tool_context does not add extra content (#275)."""
+        from bantz.core.intent import cot_route
+
+        captured_messages: list = []
+
+        async def capture_stream(messages):
+            captured_messages.extend(messages)
+            response = json.dumps({
+                "route": "chat", "tool_name": None, "tool_args": {},
+                "risk_level": "safe", "confidence": 0.9,
+            })
+            for ch in response:
+                yield ch
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = capture_stream
+            mock_bus.emit = AsyncMock()
+            plan, error = await cot_route("hello", [], tool_context="")
+
+        system_content = captured_messages[0]["content"]
+        assert "RECENT EMAIL" not in system_content
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. _format_recent_history

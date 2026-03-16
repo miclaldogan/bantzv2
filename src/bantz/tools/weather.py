@@ -19,7 +19,8 @@ class WeatherTool(BaseTool):
     name = "weather"
     description = (
         "Fetches current weather conditions and forecast. "
-        "Use for: weather, forecast, temperature, is it raining, how's the weather."
+        "Use for: weather, forecast, temperature, is it raining, how's the weather. "
+        "Uses the user's configured location if no city is specified."
     )
     risk_level = "safe"
 

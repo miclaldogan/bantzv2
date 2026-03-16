@@ -393,3 +393,33 @@ class TestVisualClickNoQuickRoute:
     def test_right_click_not_quick_routed(self):
         r = self._route("right click on desktop")
         assert r is None or r["tool"] != "visual_click"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. Anti-prompt & few-shot guards (#185)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAntiPromptGuards:
+    """Shell tool warns against UI use; visual_click has a few-shot example."""
+
+    def test_shell_description_warns_against_clicking(self):
+        from bantz.tools.shell import ShellTool
+        desc = ShellTool.description.lower()
+        assert "do not use this tool" in desc and ("click" in desc or "gui" in desc)
+
+    def test_shell_description_points_to_visual_click(self):
+        from bantz.tools.shell import ShellTool
+        assert "visual_click" in ShellTool.description
+
+    def test_visual_click_has_few_shot_example(self):
+        from bantz.tools.visual_click import VisualClickTool
+        desc = VisualClickTool.description.lower()
+        assert "example" in desc
+        assert "click the terminal" in desc
+
+    def test_authorization_has_few_shot_example(self):
+        from bantz.core.prompt_builder import COMPUTER_USE_AUTHORIZATION
+        assert "EXAMPLE" in COMPUTER_USE_AUTHORIZATION
+        assert "visual_click" in COMPUTER_USE_AUTHORIZATION
+        assert "WRONG action" in COMPUTER_USE_AUTHORIZATION

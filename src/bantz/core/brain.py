@@ -173,6 +173,48 @@ class Brain:
         from bantz.core.translation_layer import resolve_message_ref
         return resolve_message_ref(text, self._last_messages)
 
+    # ── Dynamic context injection (#275) ─────────────────────────────
+
+    _EMAIL_HINTS = frozenset({
+        "email", "mail", "gmail", "inbox", "message", "reply", "forward",
+        "send", "compose", "draft", "thread", "unread",
+    })
+    _CALENDAR_HINTS = frozenset({
+        "calendar", "event", "meeting", "schedule", "appointment",
+        "today", "tomorrow", "week", "upcoming",
+    })
+
+    def _build_tool_context(self, en_input: str) -> str:
+        """Build dynamic tool context — injected only when relevant.
+
+        Avoids bloating the CoT prompt with stale email/event data
+        when the user asks about weather, shell commands, etc.
+        """
+        parts: list[str] = []
+        lower = en_input.lower()
+
+        # Inject recent email IDs only if query relates to email
+        if self._last_messages and any(h in lower for h in self._EMAIL_HINTS):
+            lines = ["RECENT EMAIL RESULTS (use these IDs for follow-ups):"]
+            for m in self._last_messages[:5]:
+                mid = m.get("id", "?")
+                frm = m.get("from", "?")
+                subj = m.get("subject", "(no subject)")
+                lines.append(f"  - ID: {mid} | From: {frm} | Subject: \"{subj}\"")
+            parts.append("\n".join(lines))
+
+        # Inject recent calendar events only if query relates to calendar
+        if self._last_events and any(h in lower for h in self._CALENDAR_HINTS):
+            lines = ["RECENT CALENDAR EVENTS (use these for follow-ups):"]
+            for ev in self._last_events[:5]:
+                eid = ev.get("id", "?")
+                title = ev.get("summary", ev.get("title", "?"))
+                when = ev.get("start", ev.get("date", "?"))
+                lines.append(f"  - ID: {eid} | Title: \"{title}\" | When: {when}")
+            parts.append("\n".join(lines))
+
+        return "\n\n".join(parts)
+
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
         """Compat shim → ``routing_engine.quick_route`` (#228)."""
@@ -275,9 +317,11 @@ class Brain:
             # fall through to cot_route as a safety net.
 
         # ── Step 2: cot_route — LLM decides everything ───────────────
+        tool_ctx = self._build_tool_context(en_input)
         plan, routing_error = await cot_route(
             en_input, registry.all_schemas(),
             recent_history=recent_history,
+            tool_context=tool_ctx,
         )
 
         # ── Step 3: Safety net — if cot_route fails, chat gracefully ─

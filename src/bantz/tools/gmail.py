@@ -113,7 +113,10 @@ class GmailTool(BaseTool):
         "Supports compose_and_send action to draft AND send an email atomically "
         "when recipient and intent/body are provided in a single request. "
         "Params for compose_and_send: to (recipient), intent or body (content), "
-        "subject (optional, auto-generated if missing)."
+        "subject (optional, auto-generated if missing). "
+        "FOLLOW-UP RULE: When the user asks about a recently retrieved email, "
+        "use the specific Message ID from the previous result with action='read'. "
+        "NEVER repeat a broad search for an email you already found."
     )
     risk_level = "safe"
 

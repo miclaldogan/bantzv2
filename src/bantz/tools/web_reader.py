@@ -88,7 +88,8 @@ class WebReaderTool(BaseTool):
     description = (
         "Fetch and read the full text content of a specific URL / webpage. "
         "Use when you need the complete article text, not just a search snippet. "
-        "Returns clean plain text (HTML stripped)."
+        "Returns clean plain text (HTML stripped). "
+        "Requires a valid URL — NEVER fabricate or guess URLs."
     )
     risk_level = "safe"
 
