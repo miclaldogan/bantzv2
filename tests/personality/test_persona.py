@@ -442,7 +442,7 @@ class TestPersonaStateEnum:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestGrandTelegraphArchives:
-    """Butler must believe he can research via 'Grand Telegraph Archives'."""
+    """Butler uses 'Grand Telegraph Archives' metaphor ONLY when tools already ran (#282)."""
 
     def test_chat_system_has_telegraph_lore(self):
         """brain.py CHAT_SYSTEM must mention Grand Telegraph Archives."""
@@ -454,10 +454,11 @@ class TestGrandTelegraphArchives:
         from bantz.core.brain import CHAT_SYSTEM
         assert "no access to" not in CHAT_SYSTEM.lower()
 
-    def test_chat_system_never_say_lack_access(self):
-        """CHAT_SYSTEM must tell LLM to NEVER say it lacks external info."""
+    def test_chat_system_telegraph_conditional_on_real_data(self):
+        """Grand Telegraph Archives must only be used when tools ALREADY returned data (#282)."""
         from bantz.core.brain import CHAT_SYSTEM
-        assert "never say you lack access" in CHAT_SYSTEM.lower()
+        # New rule: only describe results in 1920s voice AFTER tools ran
+        assert "already been used" in CHAT_SYSTEM.lower()
 
     def test_system_prompt_has_telegraph_lore(self):
         """system_prompt.py BANTZ_CHAT must mention Grand Telegraph Archives."""
@@ -468,10 +469,12 @@ class TestGrandTelegraphArchives:
         from bantz.personality.system_prompt import BANTZ_CHAT
         assert "never say you lack access" in BANTZ_CHAT.lower()
 
-    def test_telegram_metaphor(self):
-        """Butler acts as if sending a telegram to the archives."""
+    def test_anti_hallucination_rule(self):
+        """CHAT_SYSTEM must explicitly prohibit fake parenthetical tool calls (#282)."""
         from bantz.core.brain import CHAT_SYSTEM
-        assert "telegram" in CHAT_SYSTEM.lower()
+        lower = CHAT_SYSTEM.lower()
+        assert "anti-hallucination" in lower
+        assert "chat mode" in lower
 
     def test_cot_router_web_search_entity_lookup(self):
         """intent.py CoT prompt must map entity lookups to web_search."""

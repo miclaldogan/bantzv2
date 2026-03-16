@@ -145,13 +145,20 @@ def strip_thinking(text: str) -> str:
 
 
 _REFUSAL_PATTERNS = (
-    "sorry", "can't assist", "cannot assist", "i'm unable",
-    "i cannot", "not able to", "inappropriate",
+    "can't assist", "cannot assist", "i'm unable",
+    "i cannot help", "i cannot provide", "not able to",
+    "inappropriate", "i'm not able", "i refuse",
+    "sorry, i can't", "sorry, i cannot",
 )
 
 
 def _is_refusal(text: str) -> bool:
-    t = text.lower().strip()
+    """Detect model safety-refusal.
+
+    Strips ``<thinking>`` blocks first so that CoT reasoning containing
+    stray words like 'sorry' doesn't falsely abort tool routing (#282).
+    """
+    t = strip_thinking(text).lower().strip()
     return any(p in t for p in _REFUSAL_PATTERNS)
 
 
@@ -359,6 +366,9 @@ async def cot_route(
 
         _log_thinking(raw)
         plan = _extract_json(raw)
+
+        log.info("CoT parsed: route=%s tool=%s conf=%.2f",
+                 plan.get("route"), plan.get("tool_name"), plan.get("confidence", 0))
 
         if plan.get("confidence", 0.8) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])

@@ -326,6 +326,7 @@ class Brain:
 
         # ── Step 3: Safety net — if cot_route fails, chat gracefully ─
         if plan is None:
+            log.warning("cot_route returned None (error=%s) for: %.80s", routing_error, en_input)
             stream = self._chat_stream(
                 en_input, tc, system_alert=routing_error,
             )
@@ -337,6 +338,49 @@ class Brain:
         tool_name = plan.get("tool_name") or ""
         tool_args = plan.get("tool_args") or {}
         risk      = plan.get("risk_level", "safe")
+
+        log.info("cot_route decision: route=%s tool=%s confidence=%.2f for: %.80s",
+                 route, tool_name or "(none)",
+                 plan.get("confidence", 0), en_input)
+
+        # ── Step 3b: Normalise sloppy routes from small LLMs ─────────
+        #    llama3.1:8b often returns route="gmail" instead of "tool",
+        #    or route="search" instead of "tool" with tool_name="web_search".
+        #    Fix: if route looks like a tool name → normalise to "tool".
+        if route not in ("tool", "planner", "chat"):
+            known = registry.names()
+            if route in known:
+                # Model put the tool name in "route" instead of "tool"
+                if not tool_name:
+                    tool_name = route
+                route = "tool"
+                log.info("Normalised sloppy route=%r → tool=%s", plan.get("route"), tool_name)
+            elif tool_name and tool_name in known:
+                # route is garbage but tool_name is valid
+                route = "tool"
+                log.info("Normalised unknown route=%r → tool (tool_name=%s)", plan.get("route"), tool_name)
+            else:
+                log.warning("Unrecognised route=%r, tool_name=%r — falling back to chat", route, tool_name)
+                route = "chat"
+
+        # ── Step 3c: Normalise common tool_name aliases ───────────────
+        #    Small LLMs sometimes use "email" instead of "gmail", etc.
+        _TOOL_ALIASES: dict[str, str] = {
+            "email": "gmail", "mail": "gmail", "inbox": "gmail",
+            "search": "web_search", "google": "web_search",
+            "bash": "shell", "terminal": "shell", "command": "shell",
+            "file": "filesystem", "files": "filesystem",
+            "click": "visual_click", "screen": "visual_click",
+            "web": "web_search", "browse": "read_url",
+            "remind": "reminder", "reminders": "reminder",
+            "events": "calendar", "schedule": "calendar",
+            "class": "classroom", "homework": "classroom",
+        }
+        if tool_name and tool_name not in registry.names():
+            alias = _TOOL_ALIASES.get(tool_name.lower())
+            if alias:
+                log.info("Normalised tool alias %r → %r", tool_name, alias)
+                tool_name = alias
 
         # ── Step 4: route == "planner" → multi-step decomposition ─────
         if route == "planner":
