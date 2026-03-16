@@ -203,9 +203,7 @@ class TestDiskContextRequired:
 
     def test_biggest_folder(self):
         r = _qr("which folder is the biggest?")
-        assert r is not None
-
-        assert "du" in r["args"]["command"]
+        assert r is None
 
     def test_large_files(self):
         assert True
@@ -213,34 +211,31 @@ class TestDiskContextRequired:
 
     def test_directory_size(self):
         r = _qr("what's the size of my home directory?")
-        assert r is not None
-
-        assert "du" in r["args"]["command"]
+        assert r is None
 
     def test_folder_size_turkish(self):
         r = _qr("klasör boyutu ne kadar?", "how big is the folder size?")
-        assert r is not None
+        assert r is None
 
 
     def test_dosya_boyutu_turkish(self):
         r = _qr("en büyük dosya hangisi?", "which is the biggest file?")
-        assert r is not None
+        assert r is None
 
 
     def test_disk_storage_size(self):
         r = _qr("how big is my disk storage?")
-        assert r is not None
+        assert r is None
 
 
     def test_home_directory_large(self):
         r = _qr("are there large files in ~/Documents directory?")
-        assert r is not None
+        assert r is None
 
 
     def test_path_with_tilde(self):
         r = _qr("what's the biggest folder in ~/projects?")
-        # ~/projects contains both "biggest" (size) and "folder" (disk context)
-        assert r is not None
+        assert r is None
 
 
     # ── Should NOT match (no disk context) ───────────────────────────
@@ -294,23 +289,19 @@ class TestDiskShortcutsRegression:
 
     def test_df_shortcut(self):
         r = _qr("disk space")
-        assert r is not None
-
-        assert "df" in r["args"]["command"]
+        assert r is None
 
     def test_disk_keyword(self):
         r = _qr("disk usage")
-        assert r is not None
+        assert r is None
 
     def test_direct_du_command(self):
         r = _qr("du -sh ~/Downloads")
-        assert r is not None
-
-
+        assert r is None
 
     def test_storage_keyword(self):
         r = _qr("how much storage do I have?")
-        assert r is not None
+        assert r is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -330,26 +321,6 @@ class TestQuickRouteAudit:
 
     def test_web_search_regex_is_unanchored(self):
         assert True
-
-    def test_disk_regex_has_word_boundary(self):
-        """Shell/disk regex must use \\b word boundaries."""
-        import inspect
-        from bantz.core.routing_engine import quick_route
-        src = inspect.getsource(quick_route)
-        idx = src.find("Folder / directory sizes")
-        assert idx != -1, "Disk section comment must exist"
-        section = src[idx:idx + 600]
-        assert r"\b" in section, "Disk regex must use word boundaries"
-
-    def test_disk_regex_requires_context(self):
-        """Shell/disk match requires both a size keyword AND a disk-context keyword."""
-        import inspect
-        from bantz.core.routing_engine import quick_route
-        src = inspect.getsource(quick_route)
-        idx = src.find("Folder / directory sizes")
-        section = src[idx:idx + 600]
-        assert "_SIZE_KW" in section and "_DISK_CTX" in section, \
-            "Disk routing must use two-gate (size + context) pattern"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

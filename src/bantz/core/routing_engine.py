@@ -1,13 +1,13 @@
 """
-Bantz — Routing Engine (#228)
+Bantz — Routing Engine (#228, #272)
 
-Owns __all routing logic__ that decides *what* the brain should do for a
-given user utterance:
+Owns routing logic that decides *what* the brain should do for a given
+user utterance.
 
 1. **quick_route(orig, en)**
-   Regex-based fast-path:  shell commands, system metrics, TTS/wake-word
-   controls, ambient/proactive/health status, briefing, maintenance,
-   reflections, schedule, location, and clear-memory.
+   Regex fast-path for **hardware/UI controls ONLY**: TTS stop, wake-word
+   on/off, audio ducking, and clear-memory.  All natural-language tool
+   selection goes through ``cot_route()`` in ``intent.py`` (#272).
 
 2. **dispatch_internal(tool, args, user_input, en_input, tc, *, is_remote)**
    Handles every "internal" tool (``_tts_stop``, ``_briefing``, …) that
@@ -48,48 +48,14 @@ log = logging.getLogger("bantz.routing_engine")
 # ═══════════════════════════════════════════════════════════════════════════
 
 def quick_route(orig: str, en: str) -> dict | None:
-    """Regex-based instant routing.  Returns ``{tool, args}`` or ``None``."""
+    """Hardware/UI controls only — instant routing, no LLM needed (#272).
+
+    Everything else (shell, system metrics, weather, gmail, etc.) goes
+    through ``cot_route()`` so the LLM can reason about the request.
+    """
     o = orig.lower().strip()
     e = en.lower().strip()
     both = o + " " + e
-
-    # ── Direct shell commands typed literally ─────────────────────────
-    _DIRECT = ("ls", "cd ", "df", "free", "ps ", "cat ", "grep ",
-               "find ", "pwd", "uname", "whoami", "du ", "mount",
-               "ip ", "ping ", "top", "htop", "mkdir", "touch",
-               "echo ", "head ", "tail ", "chmod ", "cp ", "mv ")
-    for p in _DIRECT:
-        if o == p.rstrip() or o.startswith(p if p.endswith(" ") else p + " "):
-            if p == "find ":
-                _after_find = o[len("find "):].lstrip()
-                if not _after_find or not _after_find[0] in "/~.-":
-                    continue
-            return {"tool": "shell", "args": {"command": orig.strip()}}
-
-    # ── System metrics ────────────────────────────────────────────────
-    if any(k in both for k in ("disk", "df -", "storage", "disk space")):
-        return {"tool": "shell", "args": {"command": "df -h"}}
-    if any(k in both for k in ("memory", "free -", "ram usage", "how much ram")) or \
-       re.search(r"\bram\b", both):
-        return {"tool": "system", "args": {"metric": "ram"}}
-    if any(k in both for k in ("cpu", "processor", "uptime", "load average")):
-        return {"tool": "system", "args": {"metric": "all"}}
-    if re.search(r"system\s*(status|info|check)|check\s*(my\s*)?system", both):
-        return {"tool": "system", "args": {"metric": "all"}}
-
-    # ── Folder / directory sizes ──────────────────────────────────────
-    _SIZE_KW = re.search(
-        r"\b(big|large|size|bigger|largest|biggest|heaviest)\b", both,
-    )
-    _DISK_CTX = re.search(
-        r"\b(folder|directory|dir|file|disk|storage|path|home|~/)\b", both,
-    )
-    if _SIZE_KW and _DISK_CTX:
-        path_match = re.search(r"(?:in|under|of|check)\s+(~/?\S+|/\S+|home)", both)
-        target = path_match.group(1) if path_match else "~"
-        if target == "home":
-            target = "~"
-        return {"tool": "shell", "args": {"command": f"du -sh {target}/*/ 2>/dev/null | sort -rh | head -10"}}
 
     # ── TTS stop (#131) ───────────────────────────────────────────────
     if re.search(r"shut\s*up|be\s+quiet|stop\s+talk(?:ing)?", both):
@@ -115,60 +81,9 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"disable\s+duck|duck(?:ing)?\s+off|turn\s+off\s+duck|no\s+duck", both):
         return {"tool": "_audio_duck_off", "args": {}}
 
-    # ── Ambient status (#166) ─────────────────────────────────────────
-    if re.search(
-        r"ambient\s+(?:noise|sound|status|level|info)|environment\s+noise|"
-        r"how(?:'s|\s+is)\s+(?:the\s+)?(?:noise|environment|ambient)",
-        both,
-    ):
-        return {"tool": "_ambient_status", "args": {}}
-
-    # ── Proactive engagement status (#167) ────────────────────────────
-    if re.search(
-        r"proactive\s+(?:status|info|count|stats)|"
-        r"how\s+many\s+proactive|"
-        r"engagement\s+status|check.?in\s+(?:status|count)",
-        both,
-    ):
-        return {"tool": "_proactive_status", "args": {}}
-
-    # ── Health / break status (#168) ──────────────────────────────────
-    if re.search(
-        r"health\s+(?:status|info|stats|check)|"
-        r"break\s+(?:status|timer|count)|"
-        r"session\s+(?:time|timer|hours)",
-        both,
-    ):
-        return {"tool": "_health_status", "args": {}}
-
-    # ── Briefing ──────────────────────────────────────────────────────
-    if any(k in both for k in ("good morning", "morning briefing", "daily briefing",
-                                "what's today", "what do i have today")):
-        return {"tool": "_briefing", "args": {}}
-
-    # ── Maintenance (#129) ────────────────────────────────────────────
-    if re.search(
-        r"run\s+maintenance|system\s+cleanup|"
-        r"clean\s+(?:up\s+)?(?:the\s+)?system|maintenance\s+run",
-        both,
-    ):
-        return {"tool": "_maintenance", "args": {"dry_run": "dry" in both}}
-
-    # ── Reflection (#130) — run / show ────────────────────────────────
-    if re.search(
-        r"run\s+reflect|generate\s+reflect|reflect\s+(?:on\s+)?today",
-        both,
-    ):
-        return {"tool": "_run_reflection", "args": {"dry_run": "dry" in both}}
-    if re.search(r"show\s+reflect|list\s+reflect|past\s+reflect", both):
-        return {"tool": "_list_reflections", "args": {}}
-
     # ── Clear memory ──────────────────────────────────────────────────
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
-
-    # NOTE: visual_click is intentionally NOT quick-routed.
-    # The LLM picks the tool via its own tool-calling chain-of-thought.
 
     return None
 

@@ -254,33 +254,14 @@ class Brain:
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
 
-        # ── Plan-and-Solve: LLM-based multi-step decomposition (#187) ────
-        # Planner runs FIRST — it handles complex multi-tool requests via
-        # LLM heuristics.  Must be above workflow_engine to prevent the
-        # old regex-based engine from eagerly stealing autonomous commands.
-        #
-        # recent_history feeds coreference resolution (#212) so the
-        # planner can resolve pronouns like "him", "it", "that file".
         recent_history = data_layer.conversations.context(n=6)
-        planner_error: str | None = None
-        try:
-            from bantz.agent.planner import planner_agent
-            if planner_agent.is_complex(en_input, recent_history=recent_history):
-                plan_result = await _execute_plan_fn(
-                    user_input, en_input, tc, recent_history=recent_history,
-                )
-                if plan_result is not None:
-                    # Orchestrator owns persistence (hotfix #228)
-                    await self._graph_store(user_input, plan_result.response, "planner")
-                    self._fire_embeddings()
-                    return plan_result
-        except Exception as exc:
-            log.warning("Planner check failed: %s — propagating to LLM", exc)
-            planner_error = f"Multi-step planner failed: {exc}"
 
-        # ── Quick-route → internal dispatch (#228) ──────────────────────
+        # ═══════════════════════════════════════════════════════════════
+        # NEW PIPELINE (#272): quick_route → cot_route → branch
+        # ═══════════════════════════════════════════════════════════════
+
+        # ── Step 1: Quick-route — hardware/UI controls ONLY ──────────
         quick = self._quick_route(user_input, en_input)
-
         if quick:
             internal = await _dispatch_internal(
                 quick["tool"], quick["args"],
@@ -289,44 +270,66 @@ class Brain:
             )
             if internal is not None:
                 return internal
+            # If dispatch_internal returns None, the tool isn't internal.
+            # This shouldn't happen with the stripped quick_route, but
+            # fall through to cot_route as a safety net.
 
-            # Not an internal tool → build a plan for the registry
-            if quick["tool"] == "_generate":
-                cmd = await _generate_command_fn(user_input, en_input)
-                plan = {"route": "tool", "tool_name": "shell",
-                        "tool_args": {"command": cmd}, "risk_level": "moderate"}
-            else:
-                plan = {"route": "tool", "tool_name": quick["tool"],
-                        "tool_args": quick["args"], "risk_level": "safe"}
-        else:
-            plan, routing_error = await cot_route(
-                en_input, registry.all_schemas(),
-                recent_history=recent_history,
+        # ── Step 2: cot_route — LLM decides everything ───────────────
+        plan, routing_error = await cot_route(
+            en_input, registry.all_schemas(),
+            recent_history=recent_history,
+        )
+
+        # ── Step 3: Safety net — if cot_route fails, chat gracefully ─
+        if plan is None:
+            stream = self._chat_stream(
+                en_input, tc, system_alert=routing_error,
             )
-
-            # Merge planner_error if cot_route had no error of its own
-            if routing_error is None and planner_error is not None:
-                routing_error = planner_error
-
-            if plan is None:
-                # (#253) If routing_error is set, a tool was attempted
-                # but failed.  Inject a system alert so the LLM does NOT
-                # hallucinate tool success.
-                stream = self._chat_stream(
-                    en_input, tc, system_alert=routing_error,
-                )
-                return BrainResult(
-                    response="", tool_used=None, stream=stream,
-                )
+            return BrainResult(
+                response="", tool_used=None, stream=stream,
+            )
 
         route     = plan.get("route", "chat")
         tool_name = plan.get("tool_name") or ""
         tool_args = plan.get("tool_args") or {}
         risk      = plan.get("risk_level", "safe")
 
+        # ── Step 4: route == "planner" → multi-step decomposition ─────
+        if route == "planner":
+            try:
+                plan_result = await _execute_plan_fn(
+                    user_input, en_input, tc, recent_history=recent_history,
+                )
+                if plan_result is not None:
+                    await self._graph_store(user_input, plan_result.response, "planner")
+                    self._fire_embeddings()
+                    return plan_result
+            except Exception as exc:
+                log.warning("Planner execution failed: %s — falling back to chat", exc)
+            # Planner failed or returned None → fall through to chat
+            stream = self._chat_stream(
+                en_input, tc,
+                system_alert=f"Multi-step planner failed: {routing_error or 'decomposition returned no steps'}",
+            )
+            return BrainResult(response="", tool_used=None, stream=stream)
+
+        # ── Step 5: route == "chat" → streaming chat ──────────────────
         if route != "tool" or not tool_name:
             stream = self._chat_stream(en_input, tc)
             return BrainResult(response="", tool_used=None, stream=stream)
+
+        # ── Step 5b: Internal tools (prefixed with "_") → dispatch_internal
+        #    These were previously matched by quick_route regex; now the LLM
+        #    routes them via cot_route.  (#272)
+        if tool_name.startswith("_"):
+            internal = await _dispatch_internal(
+                tool_name, tool_args,
+                user_input, en_input, tc,
+                is_remote=is_remote,
+            )
+            if internal is not None:
+                return internal
+            # dispatch_internal didn't handle it — fall through to registry
 
         if risk == "destructive" and config.shell_confirm_destructive and not confirmed:
             cmd_str = tool_args.get("command", tool_name)

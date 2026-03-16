@@ -26,48 +26,47 @@ def _run(coro):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestQuickRouteMaintenanceReflection:
-    """Ensure _quick_route returns correct pseudo-tool for maintenance & reflection."""
+    """After #272: quick_route no longer matches maintenance, reflection,
+    or briefing — those are now routed by LLM via cot_route."""
 
     @staticmethod
     def _qr(orig: str, en: str | None = None):
         from bantz.core.brain import Brain
         return Brain._quick_route(orig, en or orig)
 
-    # ── Maintenance triggers ──────────────────────────────────────────
+    # ── Maintenance triggers → now return None (#272) ─────────────────
 
     def test_run_maintenance(self):
-        assert self._qr("run maintenance")["tool"] == "_maintenance"
+        assert self._qr("run maintenance") is None
 
     def test_run_maintenance_dry(self):
-        r = self._qr("run maintenance dry")
-        assert r["tool"] == "_maintenance"
-        assert r["args"]["dry_run"] is True
+        assert self._qr("run maintenance dry") is None
 
     def test_sistemi_temizle(self):
         assert True
 
     def test_system_cleanup(self):
-        assert self._qr("system cleanup")["tool"] == "_maintenance"
+        assert self._qr("system cleanup") is None
 
     def test_clean_up_system(self):
-        assert self._qr("clean up the system")["tool"] == "_maintenance"
+        assert self._qr("clean up the system") is None
 
     def test_bakim_yap(self):
         assert True
 
     def test_maintenance_run(self):
-        assert self._qr("maintenance run")["tool"] == "_maintenance"
+        assert self._qr("maintenance run") is None
 
-    # ── Reflection triggers: list ─────────────────────────────────────
+    # ── Reflection triggers → now return None (#272) ──────────────────
 
     def test_show_reflections(self):
-        assert self._qr("show reflections")["tool"] == "_list_reflections"
+        assert self._qr("show reflections") is None
 
     def test_list_reflections(self):
-        assert self._qr("list reflections")["tool"] == "_list_reflections"
+        assert self._qr("list reflections") is None
 
     def test_past_reflections(self):
-        assert self._qr("past reflections")["tool"] == "_list_reflections"
+        assert self._qr("past reflections") is None
 
     def test_dunku_ozet(self):
         assert True
@@ -75,29 +74,25 @@ class TestQuickRouteMaintenanceReflection:
     def test_gecmis_ozetler(self):
         assert True
 
-    # ── Reflection triggers: run ──────────────────────────────────────
-
     def test_run_reflection(self):
-        assert self._qr("run reflection")["tool"] == "_run_reflection"
+        assert self._qr("run reflection") is None
 
     def test_run_reflection_dry(self):
-        r = self._qr("run reflection dry")
-        assert r["tool"] == "_run_reflection"
-        assert r["args"]["dry_run"] is True
+        assert self._qr("run reflection dry") is None
 
     def test_yansima_yap(self):
         assert True
 
     def test_generate_reflection(self):
-        assert self._qr("generate reflection")["tool"] == "_run_reflection"
+        assert self._qr("generate reflection") is None
 
     def test_reflect_on_today(self):
-        assert self._qr("reflect on today")["tool"] == "_run_reflection"
+        assert self._qr("reflect on today") is None
 
     def test_bugunu_ozetle(self):
         assert True
 
-    # ── Non-matches (should NOT trigger maintenance/reflection) ───────
+    # ── Non-matches (still no match) ──────────────────────────────────
 
     def test_maintain_focus_not_maintenance(self):
         r = self._qr("maintain my focus please")
@@ -108,8 +103,9 @@ class TestQuickRouteMaintenanceReflection:
         r = self._qr("let me reflect on this idea for a moment")
         assert r is None or r["tool"] != "_run_reflection"
 
-    def test_briefing_still_works(self):
-        assert self._qr("good morning")["tool"] == "_briefing"
+    def test_briefing_removed(self):
+        """Briefing is now routed via LLM, not regex (#272)."""
+        assert self._qr("good morning") is None
 
     def test_reminder_still_works(self):
         assert True
@@ -413,10 +409,20 @@ class TestProcessRLWiring:
         # Spy on _rl_reward_hook  
         b._rl_reward_hook = MagicMock()
 
+        cot_plan = {
+            "route": "tool",
+            "tool_name": "weather",
+            "tool_args": {"city": "Istanbul"},
+            "risk_level": "safe",
+            "confidence": 0.95,
+            "reasoning": "User wants weather.",
+        }
+
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.brain.registry") as mock_reg, \
-             patch("bantz.core.brain.cot_route", new_callable=AsyncMock) as mock_cot, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch.object(b, "_finalize", mock_finalize), \
              patch.object(b, "_finalize_stream", AsyncMock(return_value=None)):
 
@@ -425,12 +431,7 @@ class TestProcessRLWiring:
             mock_dl.conversations = MagicMock()
             mock_reg.get.return_value = mock_tool
 
-            # quick_route returns weather tool
-            from bantz.core.brain import Brain
-            with patch.object(Brain, "_quick_route", return_value={
-                "tool": "weather", "args": {"city": "Istanbul"}
-            }):
-                result = _run(b.process("weather"))
+            result = _run(b.process("weather"))
 
         b._rl_reward_hook.assert_called_once_with("weather", mock_result)
 
@@ -440,7 +441,11 @@ class TestProcessRLWiring:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestProcessMaintenanceReflectionRouting:
-    """Verify process() actually dispatches to maintenance/reflection handlers."""
+    """Verify process() dispatches maintenance/reflection via cot_route→dispatch_internal (#272).
+
+    Since quick_route no longer matches these, cot_route must return a
+    ``route: "tool"`` plan pointing to the internal tool name.
+    """
 
     def _make_brain(self):
         from bantz.core.brain import Brain
@@ -459,9 +464,20 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="run maintenance")
 
+        cot_plan = {
+            "route": "tool",
+            "tool_name": "_maintenance",
+            "tool_args": {"dry_run": False},
+            "risk_level": "safe",
+            "confidence": 0.95,
+            "reasoning": "User wants to run system maintenance.",
+        }
+
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch("bantz.core.routing_engine.handle_maintenance",
                    new_callable=AsyncMock,
                    return_value="🔧 Maintenance: all ok") as mock_maint:
@@ -469,10 +485,7 @@ class TestProcessMaintenanceReflectionRouting:
             mock_dl.conversations = MagicMock()
             dl_re.conversations = MagicMock()
 
-            # workflow_engine.detect returns [] (no workflow)
-            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
-                mock_wf.detect.return_value = []
-                result = _run(b.process("run maintenance"))
+            result = _run(b.process("run maintenance"))
 
         assert result.tool_used == "maintenance"
         assert "Maintenance" in result.response
@@ -483,18 +496,27 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="show reflections")
 
+        cot_plan = {
+            "route": "tool",
+            "tool_name": "_list_reflections",
+            "tool_args": {},
+            "risk_level": "safe",
+            "confidence": 0.9,
+            "reasoning": "User wants to see past reflections.",
+        }
+
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch("bantz.core.routing_engine.handle_list_reflections",
                    return_value="🤔 Recent reflections:\n  • 2025-07-14") as mock_refl:
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
             dl_re.conversations = MagicMock()
 
-            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
-                mock_wf.detect.return_value = []
-                result = _run(b.process("show reflections"))
+            result = _run(b.process("show reflections"))
 
         assert result.tool_used == "reflection"
         assert "2025-07-14" in result.response
@@ -505,9 +527,20 @@ class TestProcessMaintenanceReflectionRouting:
         b._ensure_graph = AsyncMock()
         b._to_en = AsyncMock(return_value="run reflection")
 
+        cot_plan = {
+            "route": "tool",
+            "tool_name": "_run_reflection",
+            "tool_args": {},
+            "risk_level": "safe",
+            "confidence": 0.9,
+            "reasoning": "User wants to generate a reflection.",
+        }
+
         with patch("bantz.core.brain.time_ctx") as mock_tc, \
              patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch("bantz.core.routing_engine.handle_run_reflection",
                    new_callable=AsyncMock,
                    return_value="🤔 Reflection done") as mock_refl:
@@ -515,9 +548,7 @@ class TestProcessMaintenanceReflectionRouting:
             mock_dl.conversations = MagicMock()
             dl_re.conversations = MagicMock()
 
-            with patch("bantz.core.workflow.workflow_engine") as mock_wf:
-                mock_wf.detect.return_value = []
-                result = _run(b.process("run reflection"))
+            result = _run(b.process("run reflection"))
 
         assert result.tool_used == "reflection"
         mock_refl.assert_awaited_once()
@@ -817,7 +848,10 @@ class TestAudioDuckRoutes:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAmbientRoutes:
-    """_quick_route must match ambient status queries."""
+    """After #272: quick_route no longer matches ambient queries.
+
+    They are now routed via cot_route → dispatch_internal.
+    """
 
     def _route(self, text):
         from bantz.core.brain import Brain
@@ -825,22 +859,18 @@ class TestAmbientRoutes:
         return b._quick_route(text, text.lower())
 
     def test_ambient_noise(self):
-        r = self._route("ambient noise")
-        assert r and r["tool"] == "_ambient_status"
+        assert self._route("ambient noise") is None
 
     def test_ambient_status(self):
-        r = self._route("ambient status")
-        assert r and r["tool"] == "_ambient_status"
+        assert self._route("ambient status") is None
 
     def test_environment_noise(self):
-        r = self._route("environment noise level")
-        assert r and r["tool"] == "_ambient_status"
+        assert self._route("environment noise level") is None
 
     
 
     def test_hows_the_ambient(self):
-        r = self._route("how's the ambient")
-        assert r and r["tool"] == "_ambient_status"
+        assert self._route("how's the ambient") is None
 
     
 
@@ -866,8 +896,17 @@ class TestAmbientRoutes:
         mock_analyzer = MagicMock()
         mock_analyzer.latest.return_value = snap
         mock_analyzer.day_summary.return_value = "Ambient today (5 samples): speech: 60%, silence: 40%"
+
+        cot_plan = {
+            "route": "tool", "tool_name": "_ambient_status",
+            "tool_args": {}, "risk_level": "safe", "confidence": 0.9,
+            "reasoning": "User wants ambient status.",
+        }
+
         with patch("bantz.core.brain.data_layer") as dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
             dl_re.conversations = MagicMock()
             result = _run(b.process("ambient noise"))
@@ -878,8 +917,17 @@ class TestAmbientRoutes:
         b = self._make_brain()
         mock_analyzer = MagicMock()
         mock_analyzer.latest.return_value = None
+
+        cot_plan = {
+            "route": "tool", "tool_name": "_ambient_status",
+            "tool_args": {}, "risk_level": "safe", "confidence": 0.9,
+            "reasoning": "User wants ambient status.",
+        }
+
         with patch("bantz.core.brain.data_layer") as dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
              patch.dict("sys.modules", {"bantz.agent.ambient": MagicMock(ambient_analyzer=mock_analyzer)}):
             dl_re.conversations = MagicMock()
             result = _run(b.process("ambient status"))

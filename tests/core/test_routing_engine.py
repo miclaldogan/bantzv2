@@ -1,5 +1,5 @@
 """Tests for ``bantz.core.routing_engine`` — quick_route, dispatch_internal,
-generate_command, execute_plan, and workflow handlers (#228)."""
+generate_command, execute_plan, and workflow handlers (#228, #272)."""
 from __future__ import annotations
 
 import asyncio
@@ -13,41 +13,21 @@ def _run(coro):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. quick_route — regex fast-path
+# 1. quick_route — hardware/UI controls only (#272)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestQuickRoute:
-    """Exhaustive coverage of ``quick_route`` regex patterns."""
+    """quick_route now ONLY matches hardware/UI toggles.
+
+    All semantic routing (shell, system metrics, briefing, maintenance,
+    reflection, ambient, …) was purged in #272 — the LLM decides via
+    cot_route instead.
+    """
 
     @pytest.fixture(autouse=True)
     def _import(self):
         from bantz.core.routing_engine import quick_route
         self.qr = quick_route
-
-    # ── Shell (direct) ─────────────────────────────────────────────
-    @pytest.mark.parametrize("text", [
-        "ls -la",
-        "df -h",
-        "cat /etc/hosts",
-        "pwd",
-    ])
-    def test_shell_commands(self, text):
-        r = self.qr(text, text)
-        assert r is not None
-        assert r["tool"] == "shell"
-
-    # ── System metrics ────────────────────────────────────────────────
-    @pytest.mark.parametrize("text,expected_tool", [
-        ("system status", "system"),
-        ("cpu usage", "system"),
-        ("memory usage", "system"),
-        ("check disk space", "shell"),
-        ("how much RAM is free", "system"),
-    ])
-    def test_system_metrics(self, text, expected_tool):
-        r = self.qr(text, text)
-        assert r is not None
-        assert r["tool"] == expected_tool
 
     # ── TTS stop ──────────────────────────────────────────────────────
     @pytest.mark.parametrize("text", [
@@ -82,58 +62,42 @@ class TestQuickRoute:
         assert r is not None
         assert r["tool"] == expected
 
-    # ── Ambient / Proactive / Health ──────────────────────────────────
-    @pytest.mark.parametrize("text,expected", [
-        ("ambient status", "_ambient_status"),
-        ("proactive status", "_proactive_status"),
-        ("health status", "_health_status"),
-    ])
-    def test_status_queries(self, text, expected):
-        r = self.qr(text, text)
+    # ── Clear memory ──────────────────────────────────────────────────
+    def test_clear_memory(self):
+        r = self.qr("clear memory", "clear memory")
         assert r is not None
-        assert r["tool"] == expected
+        assert r["tool"] == "_clear_memory"
 
-    # ── Briefing ──────────────────────────────────────────────────────
+    # ── Previously regex-matched queries now go through LLM (#272) ────
     @pytest.mark.parametrize("text", [
+        # Shell commands — no longer regex-matched
+        "ls -la",
+        "df -h",
+        "cat /etc/hosts",
+        "pwd",
+        # System metrics
+        "system status",
+        "cpu usage",
+        "memory usage",
+        "check disk space",
+        "how much RAM is free",
+        # Status queries
+        "ambient status",
+        "proactive status",
+        "health status",
+        # Briefing
         "good morning",
         "morning briefing",
         "what's today",
+        # Maintenance / Reflection
+        "run maintenance",
+        "run maintenance dry",
+        "run reflection",
+        "show reflections",
     ])
-    def test_briefing(self, text):
-        r = self.qr(text, text)
-        assert r is not None
-        assert r["tool"] == "_briefing"
-
-    # ── Maintenance / Reflection ──────────────────────────────────────
-    def test_maintenance(self):
-        r = self.qr("run maintenance", "run maintenance")
-        assert r is not None
-        assert r["tool"] == "_maintenance"
-
-    def test_maintenance_dry_run(self):
-        r = self.qr("run maintenance dry", "run maintenance dry")
-        assert r is not None
-        assert r["args"]["dry_run"] is True
-
-    def test_run_reflection(self):
-        r = self.qr("run reflection", "run reflection")
-        assert r is not None
-        assert r["tool"] == "_run_reflection"
-
-    def test_list_reflections(self):
-        r = self.qr("show reflections", "show reflections")
-        assert r is not None
-        assert r["tool"] == "_list_reflections"
-
-    # ── Clear memory (note: "memory" keyword also triggers system route,
-    #     so clear_memory must appear before system in quick_route) ─────
-    def test_clear_memory(self):
-        # "clear memory" triggers the clear_memory branch ONLY if it
-        # appears before the system-metrics branch.  Verify actual output:
-        r = self.qr("clear memory", "clear memory")
-        assert r is not None
-        # Might be _clear_memory or system depending on regex order
-        assert r["tool"] in ("_clear_memory", "system")
+    def test_removed_regex_returns_none(self, text):
+        """Queries that were previously regex-matched must now return None."""
+        assert self.qr(text, text) is None
 
     # ── No match → None ──────────────────────────────────────────────
     @pytest.mark.parametrize("text", [
