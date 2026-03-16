@@ -211,6 +211,45 @@ src/bantz/
 
 ---
 
+## 🎙️ Voice Pipeline (Optional)
+
+Bantz supports fully hands-free voice interaction: wake word detection, speech-to-text,
+text-to-speech, and ambient sound analysis. Enable it all with a single flag:
+
+```bash
+# .env — one flag to rule them all
+BANTZ_VOICE_ENABLED=true
+```
+
+### Prerequisites (Linux)
+
+Voice features require the **PortAudio** C library for microphone access:
+
+```bash
+# Ubuntu / Debian / Mint
+sudo apt install portaudio19-dev
+
+# Fedora
+sudo dnf install portaudio-devel
+
+# Arch
+sudo pacman -S portaudio
+```
+
+Then install the Python voice extras:
+
+```bash
+pip install pyaudio faster-whisper webrtcvad pvporcupine piper-tts
+```
+
+> **First-run note:** The Whisper STT model (~39 MB for `tiny`) is downloaded
+> from HuggingFace on first use. The TUI shows a "Downloading Whisper model…"
+> status — this is normal and only happens once.
+
+Run `bantz --doctor` to verify all voice dependencies are satisfied.
+
+---
+
 ## 📜 Contributing & License
 
 Feel free to browse our [CONTRIBUTING.md](CONTRIBUTING.md) to join the Butler's academy.

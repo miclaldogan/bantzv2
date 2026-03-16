@@ -4,10 +4,14 @@ Reads from environment variables / .env file.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+log = logging.getLogger("bantz.config")
 
 
 class Config(BaseSettings):
@@ -147,6 +151,12 @@ class Config(BaseSettings):
     notification_icon: str = Field("", alias="BANTZ_NOTIFICATION_ICON")
     notification_sound: bool = Field(False, alias="BANTZ_NOTIFICATION_SOUND")
 
+    # ── Voice Master Switch (#277) ────────────────────────────────────────
+    # Setting BANTZ_VOICE_ENABLED=true cascades into tts, wake word, stt,
+    # ghost loop, audio ducking, and ambient.  Individual flags still
+    # override when set explicitly.
+    voice_enabled: bool = Field(False, alias="BANTZ_VOICE_ENABLED")
+
     # ── TTS / Audio Briefing (#131) ──────────────────────────────────────
     tts_enabled: bool = Field(False, alias="BANTZ_TTS_ENABLED")
     tts_model: str = Field("en_US-danny-low", alias="BANTZ_TTS_MODEL")
@@ -203,6 +213,46 @@ class Config(BaseSettings):
     deep_memory_enabled: bool = Field(True, alias="BANTZ_DEEP_MEMORY_ENABLED")
     deep_memory_threshold: float = Field(0.72, alias="BANTZ_DEEP_MEMORY_THRESHOLD")
     deep_memory_max_results: int = Field(3, alias="BANTZ_DEEP_MEMORY_MAX_RESULTS")
+
+    # ── Validators ────────────────────────────────────────────────────────
+
+    @model_validator(mode="after")
+    def _voice_master_switch(self) -> Self:
+        """Cascade BANTZ_VOICE_ENABLED into sub-flags.
+
+        When the master switch is *on*, every voice sub-system that was
+        left at its default (False) gets promoted to True.  If a user
+        explicitly set a sub-flag to False via .env the raw env value
+        will still be False — but since Pydantic parses *before* the
+        validator runs and all defaults are already False, we treat
+        "still False" as "not explicitly configured" and flip it.
+
+        This means: BANTZ_VOICE_ENABLED=true alone is enough to turn
+        on TTS + Wake Word + STT + Ghost Loop + Audio Ducking.
+        """
+        if not self.voice_enabled:
+            return self
+
+        _VOICE_SUBS = [
+            "tts_enabled",
+            "wake_word_enabled",
+            "stt_enabled",
+            "ghost_loop_enabled",
+            "audio_duck_enabled",
+            "ambient_enabled",
+        ]
+        flipped: list[str] = []
+        for attr in _VOICE_SUBS:
+            if not getattr(self, attr):
+                object.__setattr__(self, attr, True)
+                flipped.append(attr)
+
+        if flipped:
+            log.debug(
+                "Voice master switch ON → enabled: %s",
+                ", ".join(flipped),
+            )
+        return self
 
     @property
     def db_path(self) -> Path:

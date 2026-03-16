@@ -665,15 +665,41 @@ def _section_for(field_name: str) -> str:
         (("intervention_",), "Interventions"),
         (("app_detector_",), "App Detector"),
         (("desktop_notifications", "notification_",), "Notifications"),
+        (("voice_enabled",), "Voice"),
         (("tts_",), "TTS / Audio"),
         (("audio_duck_",), "Audio Ducking"),
         (("wake_word_", "picovoice_",), "Wake Word"),
+        (("stt_", "vad_", "ghost_loop_",), "Ghost Loop / STT"),
         (("ambient_",), "Ambient Sound"),
     ]
     for prefixes, label in _MAP:
         if any(field_name.startswith(p) or field_name == p for p in prefixes):
             return label
     return "General"
+
+
+def _check_whisper_model_cached(model_name: str) -> bool:
+    """Check if a faster-whisper / CTranslate2 model is already on disk."""
+    try:
+        from pathlib import Path
+        # HuggingFace hub cache: ~/.cache/huggingface/hub/models--*
+        hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+        if hf_cache.exists():
+            # Model repos follow pattern: models--Systran--faster-whisper-<name>
+            for d in hf_cache.iterdir():
+                if d.is_dir() and model_name in d.name.lower() and "whisper" in d.name.lower():
+                    return True
+        # Also check CTranslate2 default cache
+        ct2_cache = Path.home() / ".cache" / "huggingface" / "hub"
+        # faster-whisper may also download to a direct path
+        alt_cache = Path.home() / ".cache" / "faster_whisper"
+        if alt_cache.exists():
+            for d in alt_cache.iterdir():
+                if d.is_dir() and model_name in d.name.lower():
+                    return True
+    except Exception:
+        pass
+    return False
 
 
 async def _doctor() -> None:
@@ -878,18 +904,60 @@ async def _doctor() -> None:
     else:
         print(f"⚪ Notifications: disabled  → BANTZ_DESKTOP_NOTIFICATIONS=true")
 
+    # ── Voice Pipeline (#277 — consolidated diagnostics) ───────────────
+    print()
+    _voice_on = config.voice_enabled
+    if _voice_on:
+        print(f"🎙️  Voice Master Switch: ON  (BANTZ_VOICE_ENABLED=true)")
+    else:
+        _any_voice = any([
+            config.tts_enabled, config.wake_word_enabled,
+            config.stt_enabled, config.ghost_loop_enabled,
+            config.audio_duck_enabled, config.ambient_enabled,
+        ])
+        if _any_voice:
+            print(f"🎙️  Voice (individual flags active)")
+        else:
+            print(f"⚪ Voice: disabled  → BANTZ_VOICE_ENABLED=true")
+
+    # ── OS-level audio dependency (PortAudio) ────────────────────────
+    _portaudio_ok = False
+    try:
+        import ctypes.util
+        _pa_lib = ctypes.util.find_library("portaudio")
+        _portaudio_ok = _pa_lib is not None
+    except Exception:
+        pass
+    if config.wake_word_enabled or config.stt_enabled or config.ghost_loop_enabled:
+        if _portaudio_ok:
+            print(f"  ✅ PortAudio: found ({_pa_lib})")
+        else:
+            print(f"  ❌ PortAudio: NOT found  → sudo apt install portaudio19-dev")
+
+    # ── PyAudio stream test ──────────────────────────────────────────
+    _pyaudio_ok = False
+    if config.wake_word_enabled or config.stt_enabled:
+        try:
+            import pyaudio  # noqa: F401
+            _pyaudio_ok = True
+            print(f"  ✅ PyAudio: importable")
+        except ImportError:
+            print(f"  ❌ PyAudio: NOT installed  → pip install pyaudio  (requires portaudio19-dev)")
+
     # TTS / Audio Briefing (#131)
     if config.tts_enabled:
         try:
             from bantz.agent.tts import tts_engine as _tts
             if _tts.available():
-                print(f"✅ TTS: ready (model={config.tts_model}, auto_briefing={config.tts_auto_briefing})")
+                print(f"  ✅ TTS: ready (model={config.tts_model}, auto_briefing={config.tts_auto_briefing})")
             else:
-                print(f"❌ TTS: enabled but piper/aplay not found")
+                print(f"  ❌ TTS: enabled but piper/aplay not found")
         except Exception:
-            print(f"❌ TTS: enabled but init failed")
+            print(f"  ❌ TTS: enabled but init failed")
+    elif _voice_on:
+        print(f"  ⚪ TTS: master=ON but tts_enabled overridden to false")
     else:
-        print(f"⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
+        print(f"  ⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
 
     # Audio Ducking (#171)
     if config.audio_duck_enabled:
@@ -897,35 +965,36 @@ async def _doctor() -> None:
             from bantz.agent.audio_ducker import audio_ducker as _ducker
             diag = _ducker.diagnose()
             if diag["pactl_available"]:
-                print(f"✅ Audio Ducking: ready (duck to {config.audio_duck_pct}%)")
+                print(f"  ✅ Audio Ducking: ready (duck to {config.audio_duck_pct}%)")
             else:
-                print(f"❌ Audio Ducking: enabled but pactl not found")
+                print(f"  ❌ Audio Ducking: enabled but pactl not found")
         except Exception as exc:
-            print(f"❌ Audio Ducking: init failed — {exc}")
+            print(f"  ❌ Audio Ducking: init failed — {exc}")
     else:
-        print(f"⚪ Audio Ducking: disabled  → BANTZ_AUDIO_DUCK_ENABLED=true")
+        print(f"  ⚪ Audio Ducking: disabled  → BANTZ_AUDIO_DUCK_ENABLED=true")
 
     # Wake Word Detection (#165)
     if config.wake_word_enabled:
         if not config.picovoice_access_key:
-            print(f"❌ Wake Word: enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
+            print(f"  ❌ Wake Word: enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
+            print(f"       → Get free key: https://console.picovoice.ai/")
         else:
             try:
                 from bantz.agent.wake_word import wake_listener
                 diag = wake_listener.diagnose()
                 if diag["porcupine_available"]:
-                    if diag["pyaudio_available"]:
-                        print(f"✅ Wake Word: ready (sensitivity={config.wake_word_sensitivity})")
+                    if diag.get("pyaudio_available", _pyaudio_ok):
+                        print(f"  ✅ Wake Word: ready (sensitivity={config.wake_word_sensitivity})")
                     else:
-                        print(f"❌ Wake Word: pvporcupine OK but pyaudio not found")
+                        print(f"  ❌ Wake Word: pvporcupine OK but pyaudio not found")
                 else:
-                    print(f"❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
+                    print(f"  ❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
             except Exception as exc:
-                print(f"❌ Wake Word: init failed — {exc}")
+                print(f"  ❌ Wake Word: init failed — {exc}")
     else:
-        print(f"⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
+        print(f"  ⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
 
-    # Ghost Loop / STT (#36)
+    # Ghost Loop / STT (#36) — Whisper model check
     if config.ghost_loop_enabled and config.stt_enabled:
         try:
             from bantz.agent.ghost_loop import ghost_loop as _gl
@@ -933,34 +1002,41 @@ async def _doctor() -> None:
             stt_ok = diag["stt"].get("faster_whisper_available", False)
             vad_ok = diag["voice_capture"].get("webrtcvad_available", False)
             if stt_ok and vad_ok:
-                print(f"✅ Ghost Loop: ready (model={config.stt_model}, lang={config.stt_language}, vad_silence={config.vad_silence_ms}ms)")
+                # Check if Whisper model is already cached
+                _model_cached = _check_whisper_model_cached(config.stt_model)
+                _cache_note = "" if _model_cached else "  ⚠️  model not cached — will download on first run"
+                print(f"  ✅ Ghost Loop: ready (model={config.stt_model}, lang={config.stt_language}, vad_silence={config.vad_silence_ms}ms)")
+                if _cache_note:
+                    print(f"     {_cache_note}")
             else:
                 missing = []
                 if not stt_ok:
                     missing.append("faster-whisper")
                 if not vad_ok:
                     missing.append("webrtcvad")
-                print(f"❌ Ghost Loop: missing deps → pip install {' '.join(missing)}")
+                print(f"  ❌ Ghost Loop: missing deps → pip install {' '.join(missing)}")
         except Exception as exc:
-            print(f"❌ Ghost Loop: init failed — {exc}")
+            print(f"  ❌ Ghost Loop: init failed — {exc}")
     elif config.ghost_loop_enabled:
-        print(f"❌ Ghost Loop: enabled but BANTZ_STT_ENABLED=false")
+        print(f"  ❌ Ghost Loop: enabled but BANTZ_STT_ENABLED=false")
     else:
-        print(f"⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
+        print(f"  ⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
 
     # Ambient Sound Analysis (#166)
     if config.ambient_enabled:
         if not config.wake_word_enabled:
-            print(f"❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
+            print(f"  ❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
         else:
             try:
                 from bantz.agent.ambient import ambient_analyzer as _amb
                 diag = _amb.diagnose()
-                print(f"✅ Ambient: ready (interval={config.ambient_interval}s, window={config.ambient_window}s)")
+                print(f"  ✅ Ambient: ready (interval={config.ambient_interval}s, window={config.ambient_window}s)")
             except Exception as exc:
-                print(f"❌ Ambient: init failed — {exc}")
+                print(f"  ❌ Ambient: init failed — {exc}")
     else:
-        print(f"⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
+        print(f"  ⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
+
+    print()  # end voice section
 
     # Telegram
     if config.telegram_bot_token:
