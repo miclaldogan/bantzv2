@@ -39,7 +39,9 @@ class VisualClickTool(BaseTool):
         "'the Send button', 'File menu', 'Terminal tab'); the tool will "
         "find it automatically via accessibility tree and screen vision.  "
         "Optionally pass an 'app' hint (e.g. 'firefox') to narrow the "
-        "search.  Works on any visible application window."
+        "search.  Works on any visible application window.  "
+        "EXAMPLE: If user says 'click the terminal', call visual_click "
+        "with target='terminal'. Do NOT attempt this via bash or shell."
     )
     risk_level = "moderate"
 

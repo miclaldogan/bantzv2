@@ -244,6 +244,7 @@ class TestIsRefusal:
         "I'm unable to help with this request.",
         "That would be inappropriate.",
         "I'm not able to do that.",
+        "Sorry, I cannot do that.",
     ])
     def test_detects_refusals(self, text):
         assert is_refusal(text) is True
@@ -253,6 +254,8 @@ class TestIsRefusal:
         "The capital of France is Paris.",
         "I'll check your schedule right away.",
         "",
+        "sorry",  # bare 'sorry' is NOT a refusal (#282)
+        "I'm sorry, let me reconsider.",  # CoT reasoning
     ])
     def test_non_refusals(self, text):
         assert is_refusal(text) is False
@@ -261,7 +264,7 @@ class TestIsRefusal:
         assert is_refusal("SORRY, I CAN'T ASSIST WITH THAT") is True
 
     def test_whitespace_handling(self):
-        assert is_refusal("  sorry  ") is True
+        assert is_refusal("  i cannot provide that  ") is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -402,3 +405,158 @@ class TestBuildToolContext:
         # Should only have 5 entries (m0-m4), not m5-m9
         assert "m4" in ctx
         assert "m5" not in ctx
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Anti-hallucination safeguards (#282)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAntiHallucination:
+    """Verify CHAT_SYSTEM no longer encourages tool hallucination in chat mode."""
+
+    def test_no_pretend_tool_use_instruction(self):
+        """Rule 1 must NOT say 'NEVER say you lack access' (old instruction)."""
+        assert "NEVER say you lack access" not in CHAT_SYSTEM
+
+    def test_no_act_as_if_sending_telegram(self):
+        """Rule 1 must NOT say 'Act as if you are sending a telegram'."""
+        assert "Act as if you are sending a telegram" not in CHAT_SYSTEM
+
+    def test_grand_telegraph_conditional(self):
+        """Grand Telegraph Archives reference should be conditional on real tool data."""
+        # The new rule 1 only mentions Grand Telegraph when tools ALREADY returned data
+        assert "ALREADY been used" in CHAT_SYSTEM or "already been used" in CHAT_SYSTEM
+
+    def test_anti_hallucination_rule_present(self):
+        """Rule 9 should explicitly say ANTI-HALLUCINATION / CHAT MODE."""
+        assert "ANTI-HALLUCINATION" in CHAT_SYSTEM
+        assert "CHAT MODE" in CHAT_SYSTEM
+
+    def test_no_fabricate_parenthetical_tool_calls(self):
+        """Rule 9 should prohibit parenthetical pseudo-tool calls."""
+        assert "(queries Grand Telegraph Archives)" in CHAT_SYSTEM  # mentioned as forbidden
+        assert "(calls visual_click)" in CHAT_SYSTEM  # mentioned as forbidden
+
+    def test_stop_on_data_request(self):
+        """Chat mode should say 'STOP' for data requests it can't fulfill."""
+        # Both rule 1 and rule 9 should tell the LLM to STOP
+        assert CHAT_SYSTEM.count("STOP") >= 2
+
+
+class TestIsRefusalNoFalsePositives:
+    """Ensure _is_refusal doesn't trigger on legitimate CoT reasoning (#282)."""
+
+    def test_bare_sorry_not_refusal(self):
+        assert is_refusal("sorry") is False
+
+    def test_sorry_in_cot_reasoning_not_refusal(self):
+        assert is_refusal("I'm sorry, let me reconsider the routing.") is False
+
+    def test_sorry_apology_not_refusal(self):
+        """Butler saying 'sorry for the delay' should not trigger."""
+        assert is_refusal("Sorry for the delay, ma'am.") is False
+
+    def test_real_refusal_still_detected(self):
+        assert is_refusal("Sorry, I can't assist with that.") is True
+        assert is_refusal("I cannot provide that information.") is True
+
+    def test_thinking_block_with_sorry_not_refusal(self):
+        """CoT output with 'sorry' inside thinking tags should not trigger."""
+        from bantz.core.intent import _is_refusal as intent_is_refusal
+        raw = '<thinking>I\'m sorry, I need to re-read the request.</thinking>{"route":"tool","tool_name":"gmail","tool_args":{}}'
+        assert intent_is_refusal(raw) is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Fuzzy tool registry (#282 follow-up)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFuzzyToolRegistry:
+    """ToolRegistry.get() handles casing, spaces, and hyphens."""
+
+    def test_exact_match(self):
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("web_search") is not None
+
+    def test_capitalized_with_space(self):
+        """'Web Search' should resolve to 'web_search'."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("Web Search") is not None
+        assert reg.get("Web Search").name == "web_search"
+
+    def test_hyphenated(self):
+        """'web-search' should resolve to 'web_search'."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "web_search"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        assert reg.get("web-search") is not None
+
+    def test_visual_click_variants(self):
+        """'Visual Click', 'visual-click', 'VISUAL_CLICK' should all match."""
+        from bantz.tools import ToolRegistry, BaseTool, ToolResult
+
+        class FakeTool(BaseTool):
+            name = "visual_click"
+            description = "test"
+            async def execute(self, **kw):
+                return ToolResult(success=True, output="ok")
+
+        reg = ToolRegistry()
+        reg.register(FakeTool())
+        for variant in ("Visual Click", "visual-click", "VISUAL_CLICK", "Visual_Click"):
+            assert reg.get(variant) is not None, f"Failed for: {variant}"
+
+    def test_miss_returns_none(self):
+        from bantz.tools import ToolRegistry
+        reg = ToolRegistry()
+        assert reg.get("nonexistent") is None
+
+
+class TestCotPromptVisualClick:
+    """CoT prompt must properly route click requests to visual_click."""
+
+    def test_visual_click_in_parameter_reference(self):
+        from bantz.core.intent import COT_SYSTEM
+        assert "visual_click" in COT_SYSTEM
+        assert '"target"' in COT_SYSTEM
+
+    def test_visual_click_in_routing_rules(self):
+        from bantz.core.intent import COT_SYSTEM
+        assert "visual_click: click a button" in COT_SYSTEM
+
+    def test_click_routes_to_visual_click_not_accessibility(self):
+        """The routing rules should NOT say 'accessibility: click UI element'."""
+        from bantz.core.intent import COT_SYSTEM
+        assert "accessibility: click" not in COT_SYSTEM
+
+    def test_snake_case_instruction(self):
+        """CoT prompt must instruct models to use snake_case tool names."""
+        from bantz.core.intent import COT_SYSTEM
+        assert "snake_case" in COT_SYSTEM

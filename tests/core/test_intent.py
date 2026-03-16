@@ -694,3 +694,112 @@ class TestStripThinkingUnclosed:
         from bantz.core.intent import strip_thinking
         result = strip_thinking("<thinking>first<thinking>second</thinking> after")
         assert "after" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _is_refusal — thinking-aware refusal detection (#282)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestIsRefusalThinkingStrip:
+    """_is_refusal must strip <thinking> blocks before checking patterns (#282)."""
+
+    def test_sorry_in_thinking_not_refusal(self):
+        """'sorry' inside thinking reasoning must NOT trigger refusal."""
+        from bantz.core.intent import _is_refusal
+        raw = (
+            '<thinking>I\'m sorry, I need to re-read the request carefully. '
+            'The user wants to read emails.</thinking>'
+            '{"route":"tool","tool_name":"gmail","tool_args":{"action":"search","query":"erasmus"}}'
+        )
+        assert _is_refusal(raw) is False
+
+    def test_bare_sorry_not_refusal(self):
+        from bantz.core.intent import _is_refusal
+        assert _is_refusal("sorry") is False
+        assert _is_refusal("I'm sorry, let me try again.") is False
+
+    def test_real_refusal_detected(self):
+        from bantz.core.intent import _is_refusal
+        assert _is_refusal("Sorry, I can't assist with that request.") is True
+        assert _is_refusal("I cannot provide that information.") is True
+        assert _is_refusal("That would be inappropriate.") is True
+
+    def test_refusal_outside_thinking_detected(self):
+        """Refusal in the JSON/response area (after thinking) must still trigger."""
+        from bantz.core.intent import _is_refusal
+        raw = (
+            '<thinking>The user asked something harmful.</thinking>'
+            'Sorry, I cannot provide that information.'
+        )
+        assert _is_refusal(raw) is True
+
+    def test_cannot_alone_not_refusal(self):
+        """Bare 'i cannot' should NOT trigger — too broad.
+        Only specific refusal phrases like 'i cannot provide' or 'i cannot help'."""
+        from bantz.core.intent import _is_refusal
+        assert _is_refusal("I cannot believe it's raining!") is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# cot_route — sloppy route normalisation (#282)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCotRouteNormalisation:
+    """cot_route should handle models that put tool names in the route field."""
+
+    @pytest.mark.asyncio
+    async def test_route_is_tool_name_normalised(self):
+        """If model returns route='gmail' instead of 'tool', it should be normalised."""
+        from bantz.core.intent import cot_route
+
+        llm_response = json.dumps({
+            "route": "gmail",
+            "tool_name": "email",
+            "tool_args": {"action": "search", "query": "erasmus"},
+            "risk_level": "safe",
+            "confidence": 0.95,
+        })
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
+            plan, error = await cot_route("read my emails about erasmus", [
+                {"name": "gmail", "description": "Email", "risk_level": "safe"},
+            ])
+
+        assert plan is not None
+        # The route is "gmail" — brain.py normalises this; cot_route just returns the plan
+        assert plan["route"] == "gmail"  # cot_route doesn't normalise, brain.py does
+        assert plan["tool_name"] == "email"
+
+    @pytest.mark.asyncio
+    async def test_thinking_with_sorry_still_routes(self):
+        """Model that says 'sorry' in thinking should still return a valid plan."""
+        from bantz.core.intent import cot_route
+
+        llm_response = (
+            '<thinking>I\'m sorry, I initially thought this was chat. '
+            'But the user clearly wants to check email.</thinking>'
+            + json.dumps({
+                "route": "tool",
+                "tool_name": "gmail",
+                "tool_args": {"action": "search", "query": "erasmus"},
+                "risk_level": "safe",
+                "confidence": 0.92,
+            })
+        )
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
+            plan, error = await cot_route("read my last emails about erasmus", [
+                {"name": "gmail", "description": "Email", "risk_level": "safe"},
+            ])
+
+        assert error is None
+        assert plan is not None
+        assert plan["tool_name"] == "gmail"

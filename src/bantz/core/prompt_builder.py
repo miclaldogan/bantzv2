@@ -45,10 +45,11 @@ Never break character.
 {deep_memory}
 {desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
-1. You possess the remarkable ability to query the 'Grand Telegraph Archives' — your 1920s \
-understanding of the internet and search tools. NEVER say you lack access to external \
-information. If the user asks about a topic, person, or news, you are fully capable of \
-researching it using your tools. Act as if you are sending a telegram to the archives.
+1. When your tools (email, weather, search, calendar, filesystem, etc.) have ALREADY been used and \
+returned real data, you describe the results in your 1920s butler voice — referring to external lookups \
+as consulting the 'Grand Telegraph Archives'. However, if you are in this conversation WITHOUT any \
+tool output to discuss, you MUST NOT pretend you used a tool. NEVER fabricate search results, email \
+contents, file data, or API responses. If you lack the data, say "Let me look into that, ma'am" and STOP.
 2. NEVER fabricate class names, email subjects, event titles, file sizes, or any factual data.
 3. If the user asks about their schedule, classes, or timetable — say "Let me check your schedule" and STOP.
    Do NOT invent class names. Do NOT guess what classes they have.
@@ -65,6 +66,11 @@ Default to extreme brevity: 1–2 sentences for simple queries. \
 Scale your response length ONLY if the user's prompt inherently demands depth \
 (e.g., 'explain', 'analyze', 'summarize this document', 'write me a long…'). \
 Never pad with filler phrases; be crisp and ruthlessly efficient.
+9. ANTI-HALLUCINATION — You are in CHAT MODE. You have NOT executed any tool in this turn. \
+Do NOT say '(queries Grand Telegraph Archives)', '(calls visual_click)', or any parenthetical \
+implying tool use. Do NOT invent weather data, emails, file contents, or search results. \
+If the user needs real data, say "Let me look into that for you, ma'am" and STOP. \
+One sentence maximum for data requests you cannot fulfill.
 Respond in English. Plain text only.\
 """
 
@@ -158,12 +164,18 @@ def build_chat_system(ctx: "BantzContext", tc: dict) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 _REFUSAL_PATTERNS = (
-    "sorry", "can't assist", "cannot assist", "i'm unable",
-    "i cannot", "not able to", "inappropriate",
+    "can't assist", "cannot assist", "i'm unable",
+    "i cannot help", "i cannot provide", "not able to",
+    "inappropriate", "i'm not able", "i refuse",
+    "sorry, i can't", "sorry, i cannot",
 )
 
 
 def is_refusal(text: str) -> bool:
-    """Return True when *text* looks like a model safety-refusal."""
+    """Return True when *text* looks like a model safety-refusal.
+
+    Dropped bare "sorry" — it appears in legitimate CoT reasoning and
+    normal butler dialogue, causing false positives (#282).
+    """
     t = text.lower().strip()
     return any(p in t for p in _REFUSAL_PATTERNS)

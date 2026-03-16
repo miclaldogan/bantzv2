@@ -49,6 +49,7 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - filesystem: {{"path": "<file path>", "action": "read|write|create_folder_and_file", "folder_path": "~/path/to/folder", "file_name": "file.txt", "content": "..."}}
 - document: {{"path": "<file path>", "action": "summarize|read|ask", "question": "..."}}
 - input_control: {{"action": "type_text|scroll|hotkey|double_click|right_click|drag|move_to|get_position", "text": "...", "keys": "...", "x": 0, "y": 0, "direction": "down", "amount": 3}}
+- visual_click: {{"target": "<UI element description>", "app": "<optional app name>"}} — click or interact with visible UI elements on screen
 - accessibility: {{"action": "screenshot|describe|focus|list_apps|tree|find|info", "app": "...", "label": "..."}}
 - read_url: {{"url": "https://..."}} — fetch and read the full text of a webpage
 
@@ -75,8 +76,10 @@ ROUTING RULES:
 - classroom:  assignments, homework, deadlines, courses
 - filesystem: read/write a specific file, or create a folder+file atomically (use create_folder_and_file when user wants both)
 - document:   summarize or analyze PDF/TXT/MD/DOCX
-- input_control: type text, scroll, press keys, click mouse, move cursor
-- accessibility: click UI element, focus window, screen analysis, screenshot
+- input_control: type text, scroll, press keys, move cursor, drag
+- visual_click: click a button, menu, link, icon, tab, or any visible UI element on screen.
+              "click X", "open X menu", "press the Y button" → visual_click
+- accessibility: focus window, screen analysis, screenshot, describe UI, list apps
 - read_url:   fetch and read full content of a specific URL
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
 - planner:    When the request requires TWO OR MORE different tools in sequence
@@ -90,8 +93,10 @@ CRITICAL:
 - Literal bash commands (ls, df -h, etc.) → shell with the command as-is.
 - If the user asks about ANY person, place, thing, concept, movie character,
   historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
-- "do your search", "can you find", "look it up" → web_search.
+- "do your search", "can you find", "look it up", "research it on the internet" → web_search.
+- "click X", "open X menu", "press the Y button" → visual_click (NOT shell, NOT accessibility).
 - If the request clearly needs multiple DIFFERENT tools in sequence, use route "planner".
+- IMPORTANT: tool_name must be the exact registered name (e.g. "web_search" not "Web Search", "visual_click" not "Visual Click"). Always use snake_case.
 
 ANTI-FALSE-POSITIVE RULES (critical — read carefully):
 - If the user uses slang, idioms, conversational filler, or if you are NOT 100%%
@@ -145,13 +150,20 @@ def strip_thinking(text: str) -> str:
 
 
 _REFUSAL_PATTERNS = (
-    "sorry", "can't assist", "cannot assist", "i'm unable",
-    "i cannot", "not able to", "inappropriate",
+    "can't assist", "cannot assist", "i'm unable",
+    "i cannot help", "i cannot provide", "not able to",
+    "inappropriate", "i'm not able", "i refuse",
+    "sorry, i can't", "sorry, i cannot",
 )
 
 
 def _is_refusal(text: str) -> bool:
-    t = text.lower().strip()
+    """Detect model safety-refusal.
+
+    Strips ``<thinking>`` blocks first so that CoT reasoning containing
+    stray words like 'sorry' doesn't falsely abort tool routing (#282).
+    """
+    t = strip_thinking(text).lower().strip()
     return any(p in t for p in _REFUSAL_PATTERNS)
 
 
@@ -359,6 +371,9 @@ async def cot_route(
 
         _log_thinking(raw)
         plan = _extract_json(raw)
+
+        log.info("CoT parsed: route=%s tool=%s conf=%.2f",
+                 plan.get("route"), plan.get("tool_name"), plan.get("confidence", 0))
 
         if plan.get("confidence", 0.8) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])
