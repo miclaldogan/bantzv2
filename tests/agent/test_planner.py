@@ -27,72 +27,8 @@ from bantz.tools import ToolResult
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. PlannerAgent — complexity detection
+# 1. (Removed — complexity detection was purged in #272; LLM decides via cot_route)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestComplexityDetection:
-    """PlannerAgent.is_complex must detect multi-step requests."""
-
-    def _agent(self):
-        from bantz.agent.planner import PlannerAgent
-        return PlannerAgent()
-
-    def test_search_and_save_is_complex(self):
-        """'Search X and then save to a file' → complex."""
-        assert self._agent().is_complex(
-            "search for quantum computing articles and then save to a file"
-        ) is True
-
-    def test_email_then_calendar_is_complex(self):
-        """'Check email then check my calendar' → complex."""
-        assert self._agent().is_complex(
-            "check my email then check my calendar for today"
-        ) is True
-
-    def test_search_and_write_file(self):
-        """'Find articles about X and save a summary file' → complex."""
-        assert self._agent().is_complex(
-            "find articles about machine learning and save a summary to a file"
-        ) is True
-
-    def test_numbered_steps_complex(self):
-        """'First search X, then save to file' → complex."""
-        assert self._agent().is_complex(
-            "first search for AI news, then write the results to a file"
-        ) is True
-
-    def test_simple_greeting_not_complex(self):
-        """'Hello, how are you?' → NOT complex."""
-        assert self._agent().is_complex("hello how are you") is False
-
-    def test_single_tool_not_complex(self):
-        """'What's the weather in Istanbul?' → NOT complex."""
-        assert self._agent().is_complex("what is the weather in istanbul") is False
-
-    def test_simple_email_not_complex(self):
-        """'Check my email' → NOT complex."""
-        assert self._agent().is_complex("check my email") is False
-
-    def test_simple_file_op_not_complex(self):
-        """'Create a folder named test' → NOT complex."""
-        assert self._agent().is_complex("create a folder named test") is False
-
-    def test_short_ambiguous_not_complex(self):
-        """'Tell me about it' → NOT complex."""
-        assert self._agent().is_complex("tell me about it") is False
-
-    def test_summarize_and_save_is_complex(self):
-        """'Search X, summarize it, and save' → complex (process_text keyword)."""
-        assert self._agent().is_complex(
-            "search for AI news, summarize it, and save to a file"
-        ) is True
-
-    def test_translate_and_write_is_complex(self):
-        """'Translate this text and write to a file' → complex."""
-        assert self._agent().is_complex(
-            "translate the document results and write to a file"
-        ) is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -619,7 +555,7 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.routing_engine.ollama") as ollama_re, \
              patch("bantz.core.brain.cot_route") as mock_cot:
 
-            mock_planner.is_complex = MagicMock(return_value=True)
+            mock_cot.return_value = ({"route": "planner", "tool_name": None, "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "Multi-step request."}, None)
             mock_planner.decompose = AsyncMock(return_value=plan_steps)
             mock_planner.format_itinerary = MagicMock(
                 return_value="Allow me a moment...\n1. Search\n2. Save")
@@ -655,11 +591,37 @@ class TestBrainPlannerIntegration:
 
     @pytest.mark.asyncio
     async def test_simple_request_bypasses_planner(self):
-        """Simple single-tool request should NOT trigger planner."""
-        from bantz.agent.planner import PlannerAgent
+        """Simple single-tool request should NOT trigger planner (cot_route returns 'tool')."""
+        with patch("bantz.core.brain.cot_route") as mock_cot, \
+             patch("bantz.core.brain.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.data_layer") as dal_re, \
+             patch("bantz.core.brain.ollama") as mock_ollama, \
+             patch("bantz.core.routing_engine.ollama") as ollama_re:
 
-        agent = PlannerAgent()
-        assert agent.is_complex("what is the weather in istanbul") is False
+            mock_cot.return_value = ({"route": "tool", "tool_name": "weather", "tool_args": {"city": "istanbul"}, "risk_level": "safe", "confidence": 0.95, "reasoning": "Single tool."}, None)
+            mock_dal.conversations = MagicMock()
+            dal_re.conversations = MagicMock()
+            mock_ollama.chat = AsyncMock(return_value="")
+            ollama_re.chat = AsyncMock(return_value="")
+
+            from bantz.core.brain import Brain
+            brain = Brain.__new__(Brain)
+            brain._memory_ready = True
+            brain._graph_ready = True
+            brain._feedback_ctx = ""
+            brain._last_messages = []
+            brain._last_events = []
+            brain._last_draft = None
+            brain._is_remote = False
+            brain._bridge = None
+            brain._to_en = AsyncMock(return_value="what is the weather in istanbul")
+            brain._graph_store = AsyncMock()
+            brain._fire_embeddings = MagicMock()
+
+            result = await brain.process("what is the weather in istanbul")
+
+        # Should NOT route to planner
+        assert result.tool_used != "planner"
 
     @pytest.mark.asyncio
     async def test_planner_takes_priority_over_workflow_engine(self):
@@ -688,9 +650,10 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.routing_engine.data_layer") as dal_re, \
              patch("bantz.core.brain.ollama") as mock_ollama, \
              patch("bantz.core.routing_engine.ollama") as ollama_re, \
-             patch("bantz.core.workflow.workflow_engine") as mock_wf:
+             patch("bantz.core.workflow.workflow_engine") as mock_wf, \
+             patch("bantz.core.brain.cot_route") as mock_cot:
 
-            mock_planner.is_complex = MagicMock(return_value=True)
+            mock_cot.return_value = ({"route": "planner", "tool_name": None, "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "Multi-step request."}, None)
             mock_planner.decompose = AsyncMock(return_value=plan_steps)
             mock_planner.format_itinerary = MagicMock(return_value="Plan...")
             mock_executor.run = AsyncMock(return_value=exec_result)
@@ -1355,27 +1318,8 @@ class TestProcessTextCitation:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 13. read_url in _TOOL_KEYWORDS
+# 13. (Removed — _TOOL_KEYWORDS purged in #272; LLM decides via cot_route)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestReadUrlKeywords:
-    """read_url keywords for complexity detection."""
-
-    def _agent(self):
-        from bantz.agent.planner import PlannerAgent
-        return PlannerAgent()
-
-    def test_read_url_keywords_in_dict(self):
-        from bantz.agent.planner import _TOOL_KEYWORDS
-        assert "read_url" in _TOOL_KEYWORDS
-        assert any("read" in kw for kw in _TOOL_KEYWORDS["read_url"])
-
-    def test_open_link_and_save_is_complex(self):
-        """'open link and save' → complex (read_url + filesystem)."""
-        assert self._agent().is_complex(
-            "open link https://example.com and save the full article to a file"
-        ) is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1508,14 +1452,4 @@ class TestFormatRecentHistoryPlanner:
         user_line = [l for l in lines if "user:" in l][0]
         assert len(user_line) <= 210  # "  user: " + 200 chars
 
-    def test_is_complex_accepts_recent_history_kwarg(self):
-        """is_complex() accepts recent_history keyword without error."""
-        from bantz.agent.planner import PlannerAgent
 
-        agent = PlannerAgent()
-        history = [{"role": "user", "content": "Send email to John"}]
-        # Should not raise — result doesn't matter, just kwarg acceptance
-        agent.is_complex(
-            "search for articles and then save to a file",
-            recent_history=history,
-        )

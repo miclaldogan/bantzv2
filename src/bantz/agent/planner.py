@@ -148,34 +148,6 @@ Step 3: Double-Check: I have the city "Istanbul". I don't need any complex varia
 ]\
 """
 
-# ── Complexity detection heuristics ──────────────────────────────────────────
-
-# Conjunctions / sequence markers that hint at multi-step intent
-_MULTI_STEP_MARKERS = re.compile(
-    r"""
-    \b(?:then|after\s+that|next|also|additionally|finally|afterwards)\b
-    | \b(?:and\s+(?:then|also|afterwards))\b
-    | \b(?:first|second|third)\b.*\b(?:then|next|after)\b
-    """,
-    re.VERBOSE | re.IGNORECASE,
-)
-
-# Tool-indicating keywords — grouped by tool for counting distinct tools
-_TOOL_KEYWORDS: dict[str, list[str]] = {
-    "web_search": ["search", "find", "look up", "google", "articles", "research"],
-    "gmail": ["email", "mail", "inbox", "compose", "send mail"],
-    "calendar": ["calendar", "event", "meeting", "schedule", "appointment"],
-    "filesystem": ["save", "file", "folder", "write to", "create file", "create folder"],
-    "weather": ["weather", "temperature", "forecast"],
-    "news": ["news", "headlines"],
-    "system": ["cpu", "ram", "memory", "disk", "system status"],
-    "shell": ["run command", "terminal", "bash"],
-    "document": ["pdf", "document"],
-    "read_url": ["read url", "read page", "open link", "fetch page", "full article", "full text"],
-    "process_text": ["summarize", "analyze", "rewrite", "translate", "transform"],
-}
-
-
 @dataclass
 class PlanStep:
     """A single step in the butler's itinerary."""
@@ -188,55 +160,6 @@ class PlanStep:
 
 class PlannerAgent:
     """Decomposes complex user requests into structured step arrays."""
-
-    def is_complex(
-        self,
-        en_input: str,
-        *,
-        recent_history: list[dict] | None = None,
-    ) -> bool:
-        """Heuristic check: does this input likely need multi-step planning?
-
-        Returns True if:
-        - Input has sequence markers (then, after that, next...)
-        - Input references 2+ distinct tool categories
-        - Input is long (>15 words) with multiple verb phrases
-
-        The optional *recent_history* is reserved for future heuristic
-        expansion (e.g. detecting implicit multi-step across turns).
-        """
-        text = en_input.lower()
-
-        # Check for explicit sequence markers
-        if _MULTI_STEP_MARKERS.search(text):
-            # Also needs at least 2 different tool intents
-            distinct = self._count_distinct_tools(text)
-            if distinct >= 2:
-                return True
-
-        # Even without markers, 2+ distinct tool intents in a long sentence
-        distinct = self._count_distinct_tools(text)
-        word_count = len(text.split())
-        if distinct >= 2 and word_count >= 8:
-            return True
-
-        # Very explicit multi-step: numbered instructions
-        if re.search(r"\b(?:1\.|step\s*1|first)\b", text) and \
-           re.search(r"\b(?:2\.|step\s*2|second|then)\b", text):
-            return True
-
-        return False
-
-    @staticmethod
-    def _count_distinct_tools(text: str) -> int:
-        """Count how many distinct tool categories are mentioned."""
-        found: set[str] = set()
-        for tool_name, keywords in _TOOL_KEYWORDS.items():
-            for kw in keywords:
-                if kw in text:
-                    found.add(tool_name)
-                    break
-        return len(found)
 
     @staticmethod
     def _format_recent_history(recent_history: list[dict] | None) -> str:

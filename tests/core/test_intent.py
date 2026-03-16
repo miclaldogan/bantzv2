@@ -391,3 +391,62 @@ class TestPeoplePleaser:
         assert plan is None
         assert error is not None
         assert "Ollama is down" in error
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. Planner route support (#272)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPlannerRoute:
+    """cot_route can return route='planner' for multi-step requests (#272)."""
+
+    @pytest.mark.asyncio
+    async def test_planner_route_returned(self):
+        from bantz.core.intent import cot_route
+
+        llm_response = json.dumps({
+            "route": "planner",
+            "tool_name": None,
+            "tool_args": {},
+            "risk_level": "safe",
+            "confidence": 0.9,
+            "reasoning": "User wants weather then email — requires two tools.",
+        })
+
+        with patch("bantz.core.intent.ollama") as mock_llm:
+            mock_llm.chat = AsyncMock(return_value=llm_response)
+            plan, error = await cot_route(
+                "Check the weather in Istanbul then email it to John", [
+                    {"name": "weather", "description": "Check weather", "risk_level": "safe"},
+                    {"name": "gmail", "description": "Send email", "risk_level": "safe"},
+                ],
+            )
+
+        assert plan is not None
+        assert error is None
+        assert plan["route"] == "planner"
+        assert plan["reasoning"] == "User wants weather then email — requires two tools."
+
+    @pytest.mark.asyncio
+    async def test_planner_route_with_reasoning_field(self):
+        """Reasoning field is preserved in parsed output."""
+        from bantz.core.intent import cot_route
+
+        llm_response = json.dumps({
+            "route": "tool",
+            "tool_name": "weather",
+            "tool_args": {"city": "London"},
+            "risk_level": "safe",
+            "confidence": 0.95,
+            "reasoning": "Single tool needed — just weather lookup.",
+        })
+
+        with patch("bantz.core.intent.ollama") as mock_llm:
+            mock_llm.chat = AsyncMock(return_value=llm_response)
+            plan, error = await cot_route("weather in London", [
+                {"name": "weather", "description": "Check weather", "risk_level": "safe"},
+            ])
+
+        assert plan is not None
+        assert "reasoning" in plan

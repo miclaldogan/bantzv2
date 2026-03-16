@@ -597,8 +597,8 @@ class TestBrainTTSRoutes:
         assert True
 
     def test_briefing_still_works(self):
-        """Ensure briefing route still works."""
-        assert self._qr("good morning")["tool"] == "_briefing"
+        """Briefing removed from quick_route (#272), now routed via cot_route."""
+        assert self._qr("good morning") is None
 
     def test_unrelated_not_tts(self):
         """Normal conversation should not trigger TTS stop."""
@@ -706,6 +706,8 @@ class TestBrainBriefingWithTTS:
 
         mock_conv = MagicMock()
 
+        cot_return = ({"route": "tool", "tool_name": "_briefing", "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "User wants morning briefing."}, None)
+
         with patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.briefing.briefing", mock_briefing), \
@@ -713,7 +715,8 @@ class TestBrainBriefingWithTTS:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch("bantz.core.brain.time_ctx") as mock_tc:
+             patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=cot_return):
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
             dl_re.conversations = MagicMock()
@@ -735,6 +738,8 @@ class TestBrainBriefingWithTTS:
 
         mock_conv = MagicMock()
 
+        cot_return = ({"route": "tool", "tool_name": "_briefing", "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "User wants morning briefing."}, None)
+
         with patch("bantz.core.brain.data_layer") as mock_dl, \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.briefing.briefing", mock_briefing), \
@@ -742,7 +747,8 @@ class TestBrainBriefingWithTTS:
              patch.object(b, "_to_en", new_callable=AsyncMock, return_value="good morning"), \
              patch.object(b, "_ensure_memory"), \
              patch.object(b, "_ensure_graph", new_callable=AsyncMock), \
-             patch("bantz.core.brain.time_ctx") as mock_tc:
+             patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=cot_return):
             mock_tc.snapshot.return_value = MagicMock()
             mock_dl.conversations = mock_conv
             dl_re.conversations = MagicMock()

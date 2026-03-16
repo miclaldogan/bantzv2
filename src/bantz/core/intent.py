@@ -75,6 +75,8 @@ ROUTING RULES:
 - accessibility: click UI element, focus window, screen analysis, screenshot
 - read_url:   fetch and read full content of a specific URL
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
+- planner:    When the request requires TWO OR MORE different tools in sequence
+              (e.g. "find articles, summarize them, and save to a file")
 
 CRITICAL:
 - If the user's request contains ambiguous pronouns (e.g., 'him', 'her') or refers to unspecified files/reports ('that report'), you MUST ask for clarification. Do NOT invent a fake report, do NOT roleplay sending a message to a fake person, and do not route to a tool until the ambiguity is resolved. Route to "chat" to ask for clarification.
@@ -85,6 +87,7 @@ CRITICAL:
 - If the user asks about ANY person, place, thing, concept, movie character,
   historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
 - "do your search", "can you find", "look it up" → web_search.
+- If the request clearly needs multiple DIFFERENT tools in sequence, use route "planner".
 
 ANTI-FALSE-POSITIVE RULES (critical — read carefully):
 - If the user uses slang, idioms, conversational filler, or if you are NOT 100%%
@@ -102,12 +105,15 @@ Return your response in exactly two parts:
 1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit using these exact steps:
    - Step 1: Information Extraction: What exactly does the user want? What hard data (file paths, names, cities) did they provide?
    - Step 2: Tool Matching: Is there a tool meant exactly for this? (e.g. if reading a file, I need 'document' or 'filesystem').
-   - Step 3: Double-Check / Self-Correction: Am I about to invent an answer without using a tool? I am a digital entity; I cannot see files, weather, or websites without using my tools. If I lack information to use a tool, my tool is 'chat' to ask for clarification.
+   - Step 3: Multi-Step Check: Does this need 2+ DIFFERENT tools in sequence? If yes → route "planner".
+   - Step 4: Double-Check / Self-Correction: Am I about to invent an answer without using a tool? I am a digital entity; I cannot see files, weather, or websites without using my tools. If I lack information to use a tool, my tool is 'chat' to ask for clarification.
 2. After the thinking block, output ONLY the valid JSON object exactly as specified below.
 
-{{"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95}}
+For single tool: {{"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95,"reasoning":"Brief explanation"}}
 
-For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9}}\
+For multi-step: {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Needs X then Y then Z"}}
+
+For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting/small talk"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -245,7 +251,8 @@ async def cot_route(
             "content": (
                 "That was not valid JSON. Ensure you include the <thinking> tags FIRST, "
                 "then output ONLY a single JSON object "
-                "with keys: route, tool_name, tool_args, risk_level, confidence. "
+                "with keys: route, tool_name, tool_args, risk_level, confidence, reasoning. "
+                "route must be one of: tool, planner, chat. "
                 "No markdown. No explanation."
             ),
         })

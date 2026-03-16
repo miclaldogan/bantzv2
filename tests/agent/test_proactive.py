@@ -406,26 +406,26 @@ class TestProactiveBrainRoutes:
 
     def test_proactive_status(self):
         r = self._route("proactive status")
-        assert r and r["tool"] == "_proactive_status"
+        assert r is None
 
     def test_proactive_count(self):
         r = self._route("proactive count")
-        assert r and r["tool"] == "_proactive_status"
+        assert r is None
 
     def test_engagement_status(self):
         r = self._route("engagement status")
-        assert r and r["tool"] == "_proactive_status"
+        assert r is None
 
     def test_proaktif_durum(self):
         assert True
 
     def test_how_many_proactive(self):
         r = self._route("how many proactive messages today")
-        assert r and r["tool"] == "_proactive_status"
+        assert r is None
 
     def test_check_in_status(self):
         r = self._route("check-in status")
-        assert r and r["tool"] == "_proactive_status"
+        assert r is None
 
 
 class TestProactiveBrainHandler:
@@ -461,11 +461,14 @@ class TestProactiveBrainHandler:
         mock_dl = MagicMock()
         mock_dl.kv = mock_kv
 
+        cot_return = ({"route": "tool", "tool_name": "_proactive_status", "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "User wants proactive status."}, None)
+
         with patch("bantz.core.brain.data_layer", mock_dl), \
              patch("bantz.core.routing_engine.data_layer", mock_dl), \
              patch("bantz.core.brain.config") as cfg, \
              patch("bantz.core.routing_engine.config") as cfg_re, \
-             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
+             patch("bantz.agent.affinity_engine.affinity_engine", mock_rl), \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock, return_value=cot_return):
             cfg.proactive_enabled = True
             cfg.proactive_max_daily = 1
             cfg.proactive_interval_hours = 3.0
