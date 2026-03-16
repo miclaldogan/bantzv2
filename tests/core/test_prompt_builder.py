@@ -73,6 +73,51 @@ class TestTemplates:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Brevity rules (#274)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestBrevityRules:
+    """Verify that all system prompts enforce brevity constraints."""
+
+    def test_chat_system_has_brevity_rule(self):
+        """CHAT_SYSTEM must contain a brevity directive."""
+        lower = CHAT_SYSTEM.lower()
+        assert "brevity" in lower or "concise" in lower or "brief" in lower
+
+    def test_chat_system_preserves_persona_through_tone(self):
+        """Brevity rule allows persona via word choice, not length."""
+        assert "vocabulary" in CHAT_SYSTEM or "word choice" in CHAT_SYSTEM \
+            or "elegant" in CHAT_SYSTEM
+
+    def test_chat_system_has_escape_hatch(self):
+        """Users can still get long answers when they ask for depth."""
+        lower = CHAT_SYSTEM.lower()
+        assert "explain" in lower or "analyze" in lower or "demands depth" in lower
+
+    def test_finalizer_system_has_dynamic_limit(self):
+        """FINALIZER_SYSTEM uses a flexible sentence limit, not a fixed 5."""
+        from bantz.core.finalizer import FINALIZER_SYSTEM
+        assert "3–5" in FINALIZER_SYSTEM or "3-5" in FINALIZER_SYSTEM
+
+    def test_bantz_chat_has_brevity(self):
+        """BANTZ_CHAT persona template must include brevity instruction."""
+        from bantz.personality.system_prompt import BANTZ_CHAT
+        lower = BANTZ_CHAT.lower()
+        assert "crisp" in lower or "brevity" in lower or "brief" in lower
+
+    def test_bantz_chat_persona_through_word_choice(self):
+        """BANTZ_CHAT must express persona through word choice, not length."""
+        from bantz.personality.system_prompt import BANTZ_CHAT
+        assert "word choice" in BANTZ_CHAT or "elegant" in BANTZ_CHAT
+
+    def test_bantz_finalizer_has_dynamic_limit(self):
+        """BANTZ_FINALIZER uses flexible sentence limit."""
+        from bantz.personality.system_prompt import BANTZ_FINALIZER
+        assert "3–5" in BANTZ_FINALIZER or "3-5" in BANTZ_FINALIZER
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # build_chat_system
 # ═══════════════════════════════════════════════════════════════════════════
 
