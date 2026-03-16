@@ -567,6 +567,12 @@ class TestBrainPlannerIntegration:
             brain._last_messages = []
             brain._last_events = []
             brain._last_draft = None
+            brain._last_tool_output = ""
+            brain._last_tool_name = ""
+            brain._feedback_ctx = ""
+            brain._turn_counter = 0
+            brain._context_turn = 0
+            brain._CONTEXT_TTL = 3
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="search for AI news and save to a file")
@@ -605,6 +611,12 @@ class TestBrainPlannerIntegration:
             brain._last_messages = []
             brain._last_events = []
             brain._last_draft = None
+            brain._last_tool_output = ""
+            brain._last_tool_name = ""
+            brain._feedback_ctx = ""
+            brain._turn_counter = 0
+            brain._context_turn = 0
+            brain._CONTEXT_TTL = 3
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="what is the weather in istanbul")
@@ -663,6 +675,12 @@ class TestBrainPlannerIntegration:
             brain._last_messages = []
             brain._last_events = []
             brain._last_draft = None
+            brain._last_tool_output = ""
+            brain._last_tool_name = ""
+            brain._feedback_ctx = ""
+            brain._turn_counter = 0
+            brain._context_turn = 0
+            brain._CONTEXT_TTL = 3
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="search then save to file")

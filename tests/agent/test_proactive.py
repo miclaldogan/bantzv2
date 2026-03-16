@@ -444,6 +444,12 @@ class TestProactiveBrainHandler:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_process_proactive_status(self):

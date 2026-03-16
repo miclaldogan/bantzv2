@@ -108,7 +108,13 @@ class Brain:
         self._last_messages: list[dict] = []   # last listed emails [{id, from, subject, ...}]
         self._last_events: list[dict] = []     # last listed calendar events
         self._last_draft: dict | None = None   # last email draft {to, subject, body}
+        self._last_tool_output: str = ""     # last tool output snippet (generic)
+        self._last_tool_name: str = ""       # which tool produced it
         self._feedback_ctx: str = ""  # one-shot RLHF context (#180)
+        # Turn-based TTL (#276): context expires after N process() calls
+        self._turn_counter: int = 0
+        self._context_turn: int = 0  # turn when context was last stored
+        self._CONTEXT_TTL: int = 3   # expire after 3 turns of no related queries
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
@@ -184,12 +190,81 @@ class Brain:
         "today", "tomorrow", "week", "upcoming",
     })
 
+    def _is_context_expired(self) -> bool:
+        """Check if stored tool context has expired (turn-based TTL #276)."""
+        return (self._turn_counter - self._context_turn) > self._CONTEXT_TTL
+
+    def _clear_stale_context(self) -> None:
+        """Wipe tool context that has exceeded its TTL (#276)."""
+        if self._is_context_expired():
+            if self._last_messages or self._last_events or self._last_tool_output:
+                log.debug("TTL expired (turn %d vs stored %d) — clearing tool context",
+                          self._turn_counter, self._context_turn)
+            self._last_messages = []
+            self._last_events = []
+            self._last_tool_output = ""
+            self._last_tool_name = ""
+
+    def _store_tool_context(self, tool_name: str, result: ToolResult) -> None:
+        """Persist tool results for contextual follow-ups (#276).
+
+        Stores structured data (email IDs, event IDs) plus a truncated
+        generic output snippet.  Resets the TTL turn counter.
+        """
+        self._context_turn = self._turn_counter  # reset TTL
+        if result.data:
+            if result.data.get("messages"):
+                self._last_messages = result.data["messages"]
+            if result.data.get("events"):
+                self._last_events = result.data["events"]
+        # Always store a generic snippet for non-email/calendar tools
+        self._last_tool_output = (result.output or "")[:500]
+        self._last_tool_name = tool_name
+
+    @staticmethod
+    def _embed_metadata(output: str, tool_name: str, data: dict | None) -> str:
+        """Embed essential IDs into tool output text (#276).
+
+        Appends a [CONTEXT: ...] block with IDs so the LLM can see them
+        in conversation history without schema changes to the DB.
+        """
+        if not data:
+            return output
+        import json as _json
+        meta: dict = {}
+        # Email: embed message IDs
+        if data.get("messages"):
+            meta["message_ids"] = [
+                {"id": m.get("id", ""), "from": m.get("from", ""), "subject": m.get("subject", "")}
+                for m in data["messages"][:5]
+            ]
+        # Calendar: embed event IDs
+        if data.get("events"):
+            meta["event_ids"] = [
+                {"id": e.get("id", ""), "summary": e.get("summary", "")}
+                for e in data["events"][:5]
+            ]
+        # Single-item results (read_message, create_event, etc.)
+        if data.get("message_id"):
+            meta["message_id"] = data["message_id"]
+        if data.get("event_id"):
+            meta["event_id"] = data["event_id"]
+        if data.get("thread_id"):
+            meta["thread_id"] = data["thread_id"]
+        if data.get("path"):
+            meta["path"] = data["path"]
+        if not meta:
+            return output
+        return f"{output}\n[CONTEXT: {_json.dumps(meta, ensure_ascii=False)}]"
+
     def _build_tool_context(self, en_input: str) -> str:
         """Build dynamic tool context — injected only when relevant.
 
         Avoids bloating the CoT prompt with stale email/event data
         when the user asks about weather, shell commands, etc.
+        Expires after ``_CONTEXT_TTL`` turns of unrelated queries (#276).
         """
+        self._clear_stale_context()
         parts: list[str] = []
         lower = en_input.lower()
 
@@ -202,6 +277,7 @@ class Brain:
                 subj = m.get("subject", "(no subject)")
                 lines.append(f"  - ID: {mid} | From: {frm} | Subject: \"{subj}\"")
             parts.append("\n".join(lines))
+            self._context_turn = self._turn_counter  # refresh TTL on use
 
         # Inject recent calendar events only if query relates to calendar
         if self._last_events and any(h in lower for h in self._CALENDAR_HINTS):
@@ -209,9 +285,27 @@ class Brain:
             for ev in self._last_events[:5]:
                 eid = ev.get("id", "?")
                 title = ev.get("summary", ev.get("title", "?"))
-                when = ev.get("start", ev.get("date", "?"))
+                when = ev.get("start_local", ev.get("start", ev.get("date", "?")))
                 lines.append(f"  - ID: {eid} | Title: \"{title}\" | When: {when}")
             parts.append("\n".join(lines))
+            self._context_turn = self._turn_counter  # refresh TTL on use
+
+        # Generic: inject last tool output for any follow-up referencing it
+        if self._last_tool_output and not parts:
+            # Check if user is asking a follow-up about the previous result
+            followup_hints = {
+                "that", "this", "it", "those", "these", "the result",
+                "the output", "what about", "more", "details", "explain",
+                "tell me more", "summarize", "summary", "again",
+                "read", "open", "reply", "forward", "delete",
+                "first", "second", "third", "last", "next",
+            }
+            if any(h in lower for h in followup_hints):
+                parts.append(
+                    f"PREVIOUS TOOL RESULT (from {self._last_tool_name}):\n"
+                    f"{self._last_tool_output[:300]}"
+                )
+                self._context_turn = self._turn_counter  # refresh TTL on use
 
         return "\n\n".join(parts)
 
@@ -263,6 +357,7 @@ class Brain:
         await self._ensure_graph()
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
+        self._turn_counter += 1  # (#276) advance TTL clock
 
         # ── Sentiment RLHF intercept (#180) ──────────────────────────
         # Uses RAW user_input (not en_input) to catch Turkish keywords
@@ -398,6 +493,10 @@ class Brain:
                     user_input, en_input, tc, recent_history=recent_history,
                 )
                 if plan_result is not None:
+                    # (#276) Store planner output for contextual follow-ups
+                    self._last_tool_output = (plan_result.response or "")[:500]
+                    self._last_tool_name = "planner"
+                    self._context_turn = self._turn_counter
                     await self._graph_store(user_input, plan_result.response, "planner")
                     self._fire_embeddings()
                     return plan_result
@@ -455,12 +554,9 @@ class Brain:
         # ── RL reward: positive signal on successful tool use (#125) ──
         self._rl_reward_hook(tool_name, result)
 
-        # ── Store tool results for contextual follow-ups (#56) ──
-        if result.success and result.data:
-            if result.data.get("messages"):
-                self._last_messages = result.data["messages"]
-            if result.data.get("events"):
-                self._last_events = result.data["events"]
+        # ── Store tool results for contextual follow-ups (#56, #276) ──
+        if result.success:
+            self._store_tool_context(tool_name, result)
 
         # ── Compose/reply draft → confirmation flow ──
         if result.success and result.data and result.data.get("draft"):
@@ -483,6 +579,15 @@ class Brain:
                     "subject": d.get("subject", ""),
                     "body": d["body"],
                 },
+            )
+
+        # ── Embed metadata in output for conversation history (#276) ──
+        if result.success and result.data:
+            result = ToolResult(
+                success=result.success,
+                output=self._embed_metadata(result.output, tool_name, result.data),
+                data=result.data,
+                error=result.error,
             )
 
         # Try streaming finalize for long tool output (#67)

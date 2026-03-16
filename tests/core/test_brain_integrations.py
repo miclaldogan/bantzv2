@@ -126,6 +126,12 @@ class TestRLRewardHook:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_reward_positive_on_success(self):
@@ -256,6 +262,12 @@ class TestMaintenanceHandler:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_handle_maintenance_returns_summary(self):
@@ -308,6 +320,12 @@ class TestReflectionHandlers:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_list_reflections_empty(self):
@@ -385,6 +403,12 @@ class TestProcessRLWiring:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_process_calls_rl_hook_on_tool(self):
@@ -456,6 +480,12 @@ class TestProcessMaintenanceReflectionRouting:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_process_routes_maintenance(self):
@@ -807,6 +837,12 @@ class TestAudioDuckRoutes:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_process_duck_on_available(self):
@@ -887,6 +923,12 @@ class TestAmbientRoutes:
         b._last_messages = []
         b._last_events = []
         b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
         return b
 
     def test_process_ambient_with_data(self):
