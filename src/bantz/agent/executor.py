@@ -1,11 +1,14 @@
 """
-Bantz v3 — Plan-and-Solve Executor (#187)
+Bantz v3 — Plan-and-Solve Executor (#187, #273)
 
 "The Butler Carries Out His Itinerary"
 
 Executes a list of PlanSteps sequentially, passing context from one step
 to the next.  If a step fails, the executor **short-circuits**: remaining
 steps are marked as aborted (circuit breaker, #255).
+
+#273: Emits ``planner_step`` events on the EventBus so the TUI can
+display real-time step progress (e.g. "⚙ Step 1/3: Searching emails...").
 
 Usage:
     from bantz.agent.executor import plan_executor
@@ -18,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
+from bantz.core.event_bus import bus
 from bantz.tools import registry, ToolResult
 
 log = logging.getLogger("bantz.executor")
@@ -118,6 +122,7 @@ class PlanExecutor:
         result = PlanExecutionResult()
         # Rich context store: step_number → {"params": {...}, "output": "..."}
         context_store: dict[int, dict[str, Any]] = {}
+        total_steps = len(steps)
 
         for step_idx, plan_step in enumerate(steps):
             step_num = plan_step.step
@@ -131,6 +136,19 @@ class PlanExecutor:
                     await on_step_start(step_num, description)
                 except Exception:
                     pass
+
+            # (#273) Emit planner_step start event to TUI
+            try:
+                await bus.emit(
+                    "planner_step",
+                    step=step_num,
+                    total=total_steps,
+                    tool=tool_name,
+                    description=description,
+                    status="start",
+                )
+            except Exception:
+                pass
 
             # Always inject context — _inject_context is a no-op when
             # the params contain no {step_N_*} placeholders.
@@ -146,6 +164,8 @@ class PlanExecutor:
                     "output": sr.output[:2000] if sr.success else "",
                 }
                 result.step_results.append(sr)
+                # (#273) Emit step completion event
+                await self._emit_step_result(sr, total_steps)
                 # ── Circuit breaker: abort remaining steps on failure ──
                 if self._is_step_failure(sr):
                     log.warning(
@@ -176,6 +196,8 @@ class PlanExecutor:
                     "output": "",
                 }
                 result.step_results.append(sr)
+                # (#273) Emit step failure event
+                await self._emit_step_result(sr, total_steps)
                 log.warning(
                     "Circuit breaker tripped at step %d: tool '%s' not found "
                     "— aborting %d remaining step(s)",
@@ -225,6 +247,9 @@ class PlanExecutor:
 
             result.step_results.append(sr)
 
+            # (#273) Emit step completion event
+            await self._emit_step_result(sr, total_steps)
+
             # ── Circuit breaker: abort remaining steps on failure ──
             if self._is_step_failure(sr):
                 log.warning(
@@ -239,6 +264,24 @@ class PlanExecutor:
                 break
 
         return result
+
+    @staticmethod
+    async def _emit_step_result(sr: StepResult, total: int) -> None:
+        """Emit a planner_step done/failed event (#273)."""
+        try:
+            status = "done" if sr.success else "failed"
+            await bus.emit(
+                "planner_step",
+                step=sr.step_number,
+                total=total,
+                tool=sr.tool,
+                description=sr.description,
+                status=status,
+                result=sr.output[:200] if sr.success else "",
+                error=sr.error if not sr.success else "",
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _abort_remaining(

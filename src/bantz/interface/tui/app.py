@@ -21,7 +21,7 @@ from bantz.core.types import BrainResult
 from bantz.core.event_bus import bus, Event
 from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
-from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel
+from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel, ThinkingPanel
 from bantz.interface.tui.panels.header import (
     OperationsHeader,
     ServiceHealthChanged,
@@ -87,6 +87,7 @@ class BantzApp(App):
         with Horizontal(id="main-layout"):
             with Vertical(id="chat-panel"):
                 yield ChatLog(id="chat-log", highlight=True, markup=True)
+                yield ThinkingPanel(id="thinking-panel")
                 yield Static("", id="thinking-area")
                 with Horizontal(id="input-row"):
                     yield Input(
@@ -709,10 +710,37 @@ class BantzApp(App):
             chat.stream_start()
 
             accumulated = ""
+            # (#273) Paragraph-buffered TTS: speak on \n\n boundaries
+            tts_buffer = ""
+            tts_active = False
+            try:
+                from bantz.config import config as _cfg
+                if _cfg.tts_speak_all_responses:
+                    from bantz.agent.tts import tts_engine, strip_markdown_for_tts
+                    if tts_engine.available():
+                        tts_active = True
+                        tts_engine.stop()
+            except Exception:
+                pass
+
             try:
                 async for token in result.stream:
                     accumulated += token
                     chat.stream_token(token)
+
+                    # (#273) Paragraph-buffered TTS: fire on \n\n
+                    if tts_active:
+                        tts_buffer += token
+                        if "\n\n" in tts_buffer:
+                            # Split on paragraph breaks, speak completed paragraphs
+                            parts = tts_buffer.split("\n\n")
+                            for para in parts[:-1]:
+                                para_clean = strip_markdown_for_tts(para.strip())
+                                if para_clean:
+                                    asyncio.create_task(
+                                        tts_engine.speak_background(para_clean)
+                                    )
+                            tts_buffer = parts[-1]  # keep incomplete tail
             except Exception as exc:
                 chat.stream_end()
                 self._busy = False
@@ -733,18 +761,14 @@ class BantzApp(App):
             except Exception:
                 pass
 
-            # TTS: speak completed streaming response (#247)
-            try:
-                from bantz.config import config as _cfg
-                if _cfg.tts_speak_all_responses:
-                    from bantz.agent.tts import tts_engine, strip_markdown_for_tts
-                    if tts_engine.available():
-                        tts_engine.stop()
-                        tts_text = strip_markdown_for_tts(full_text)
-                        if tts_text:
-                            asyncio.create_task(tts_engine.speak_background(tts_text))
-            except Exception:
-                pass
+            # (#273) TTS: speak any remaining buffered text
+            if tts_active and tts_buffer.strip():
+                try:
+                    remaining = strip_markdown_for_tts(tts_buffer.strip())
+                    if remaining:
+                        asyncio.create_task(tts_engine.speak_background(remaining))
+                except Exception:
+                    pass
 
             self._update_header_counts()
             return
@@ -820,6 +844,12 @@ class BantzApp(App):
             area.update("[dim cyan]  ⟳ thinking...[/]")
         else:
             area.update("")
+            # Also hide the thinking panel when processing is done
+            try:
+                panel = self.query_one("#thinking-panel", ThinkingPanel)
+                panel.finish()
+            except Exception:
+                pass
 
     # ── Actions ────────────────────────────────────────────────────────────
 
@@ -1001,6 +1031,10 @@ class BantzApp(App):
           - ``wake_word_detected``  → focus input + "Yes boss? 🎤"
           - ``ambient_change``      → update system status ambient label
           - ``health_alert``        → push warning toast
+          - ``thinking_start``      → show ThinkingPanel (#273)
+          - ``thinking_token``      → stream token to ThinkingPanel (#273)
+          - ``thinking_done``       → hide ThinkingPanel (#273)
+          - ``planner_step``        → show step progress in chat (#273)
         """
         bus.bind_loop()  # idempotent — ensures dispatcher task exists
 
@@ -1014,8 +1048,12 @@ class BantzApp(App):
         bus.on("ghost_loop_listening", self._bus_relay)
         bus.on("ghost_loop_transcribing", self._bus_relay)
         bus.on("ghost_loop_idle", self._bus_relay)
+        bus.on("thinking_start", self._bus_relay)
+        bus.on("thinking_token", self._bus_relay)
+        bus.on("thinking_done", self._bus_relay)
+        bus.on("planner_step", self._bus_relay)
 
-        log.debug("EventBus → TUI bridge active (7 subscriptions)")
+        log.debug("EventBus → TUI bridge active (11 subscriptions)")
 
     def _relay_bus_event(self, event: Event) -> None:
         """Relay a single bus Event into the Textual message loop.
@@ -1041,6 +1079,10 @@ class BantzApp(App):
             bus.off("ghost_loop_listening", relay)
             bus.off("ghost_loop_transcribing", relay)
             bus.off("ghost_loop_idle", relay)
+            bus.off("thinking_start", relay)
+            bus.off("thinking_token", relay)
+            bus.off("thinking_done", relay)
+            bus.off("planner_step", relay)
 
     def on_bantz_event_message(self, msg: BantzEventMessage) -> None:
         """Dispatch bus events to the appropriate TUI handler.
@@ -1064,6 +1106,14 @@ class BantzApp(App):
                 self._on_bus_ghost_transcribing(event)
             elif name == "ghost_loop_idle":
                 self._on_bus_ghost_idle(event)
+            elif name == "thinking_start":
+                self._on_bus_thinking_start(event)
+            elif name == "thinking_token":
+                self._on_bus_thinking_token(event)
+            elif name == "thinking_done":
+                self._on_bus_thinking_done(event)
+            elif name == "planner_step":
+                self._on_bus_planner_step(event)
         except Exception:
             log.debug("on_bantz_event_message(%s) error", name, exc_info=True)
 
@@ -1093,6 +1143,55 @@ class BantzApp(App):
         title = event.data.get("title", "Health Alert")
         reason = event.data.get("reason", "")
         self.push_toast(title, reason, "warning")
+
+    # ── Thinking stream handlers (#273) ───────────────────────────────
+
+    def _on_bus_thinking_start(self, event: Event) -> None:
+        """LLM started generating <thinking> block → show panel."""
+        try:
+            panel = self.query_one("#thinking-panel", ThinkingPanel)
+            panel.start()
+        except Exception:
+            pass
+
+    def _on_bus_thinking_token(self, event: Event) -> None:
+        """A thinking token arrived → append to panel."""
+        token = event.data.get("token", "")
+        if not token:
+            return
+        try:
+            panel = self.query_one("#thinking-panel", ThinkingPanel)
+            panel.append_token(token)
+        except Exception:
+            pass
+
+    def _on_bus_thinking_done(self, event: Event) -> None:
+        """Thinking block completed → finish panel."""
+        try:
+            panel = self.query_one("#thinking-panel", ThinkingPanel)
+            panel.finish()
+        except Exception:
+            pass
+
+    def _on_bus_planner_step(self, event: Event) -> None:
+        """Planner step progress → display in chat (#273)."""
+        step = event.data.get("step", 0)
+        total = event.data.get("total", 0)
+        description = event.data.get("description", "")
+        status = event.data.get("status", "start")
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            if status == "start":
+                chat.add_system(f"⚙ Step {step}/{total}: {description}...")
+            elif status == "done":
+                result_preview = event.data.get("result", "")[:100]
+                chat.add_system(f"  ✓ Step {step}: {result_preview}")
+            elif status == "failed":
+                error = event.data.get("error", "unknown error")
+                chat.add_error(f"  ✗ Step {step}: {error}")
+            chat.scroll_end()
+        except Exception:
+            pass
 
     # ── Ghost Loop handlers (#36) ─────────────────────────────────────
 

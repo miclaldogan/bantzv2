@@ -1,17 +1,35 @@
-"""Tests for ``bantz.core.intent`` — CoT intent parser (#78, #212).
+"""Tests for ``bantz.core.intent`` — CoT intent parser (#78, #212, #273).
 
 Covers:
-  1. cot_route — basic routing (mocked Ollama)
+  1. cot_route — basic routing (mocked Ollama streaming)
   2. cot_route — recent_history injection for pronoun resolution (#212)
   3. _format_recent_history — formatting helper
   4. _is_refusal / _extract_json / _log_thinking — helpers
+  5. _stream_and_collect — streaming + thinking event emission (#273)
+  6. _clean_thinking_text — tag stripping (#273)
 """
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
+
+
+# ── Helper: make an async iterator from a string ────────────────────────────
+
+async def _aiter_tokens(text: str):
+    """Yield a string token-by-token (simulates ollama.chat_stream)."""
+    for char in text:
+        yield char
+
+
+def _mock_stream(text: str):
+    """Return a callable that produces an async iterator of tokens."""
+    async def _stream(messages):
+        async for tok in _aiter_tokens(text):
+            yield tok
+    return _stream
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -20,7 +38,7 @@ import pytest
 
 
 class TestCotRouteBasic:
-    """cot_route returns routing plans from mocked LLM responses."""
+    """cot_route returns routing plans from mocked LLM streaming responses."""
 
     @pytest.mark.asyncio
     async def test_routes_weather_request(self):
@@ -34,8 +52,10 @@ class TestCotRouteBasic:
             "confidence": 0.95,
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("What is the weather in Istanbul?", [
                 {"name": "weather", "description": "Check weather", "risk_level": "safe"},
             ])
@@ -57,8 +77,10 @@ class TestCotRouteBasic:
             "confidence": 0.9,
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("Hello there!", [])
 
         assert plan is not None
@@ -69,8 +91,10 @@ class TestCotRouteBasic:
     async def test_returns_none_on_refusal(self):
         from bantz.core.intent import cot_route
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value="Sorry, I can't assist with that.")
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream("Sorry, I can't assist with that.")
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("do something bad", [])
 
         assert plan is None
@@ -88,8 +112,10 @@ class TestCotRouteBasic:
             "confidence": 0.1,
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("maybe delete everything", [],
                                    confidence_threshold=0.4)
 
@@ -112,8 +138,10 @@ class TestCotRouteBasic:
             })
         )
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("weather in London", [
                 {"name": "weather", "description": "Check weather", "risk_level": "safe"},
             ])
@@ -138,9 +166,9 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_chat(messages):
+        async def capture_stream(messages):
             captured_messages.extend(messages)
-            return json.dumps({
+            response = json.dumps({
                 "route": "tool",
                 "tool_name": "gmail",
                 "tool_args": {"action": "compose", "to": "john@example.com",
@@ -148,6 +176,8 @@ class TestCotRouteWithHistory:
                 "risk_level": "safe",
                 "confidence": 0.9,
             })
+            for ch in response:
+                yield ch
 
         history = [
             {"role": "user", "content": "Who is John?"},
@@ -155,8 +185,10 @@ class TestCotRouteWithHistory:
             {"role": "user", "content": "Can you send him the report?"},
         ]
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = capture_chat
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = capture_stream
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route(
                 "Yes, send it to him",
                 [{"name": "gmail", "description": "Send email", "risk_level": "safe"}],
@@ -176,18 +208,22 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_chat(messages):
+        async def capture_stream(messages):
             captured_messages.extend(messages)
-            return json.dumps({
+            response = json.dumps({
                 "route": "chat",
                 "tool_name": None,
                 "tool_args": {},
                 "risk_level": "safe",
                 "confidence": 0.9,
             })
+            for ch in response:
+                yield ch
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = capture_chat
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = capture_stream
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("hello", [], recent_history=None)
 
         system_content = captured_messages[0]["content"]
@@ -200,18 +236,22 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_chat(messages):
+        async def capture_stream(messages):
             captured_messages.extend(messages)
-            return json.dumps({
+            response = json.dumps({
                 "route": "chat",
                 "tool_name": None,
                 "tool_args": {},
                 "risk_level": "safe",
                 "confidence": 0.9,
             })
+            for ch in response:
+                yield ch
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = capture_chat
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = capture_stream
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("hello", [], recent_history=[])
 
         system_content = captured_messages[0]["content"]
@@ -316,8 +356,10 @@ class TestBackwardCompat:
             "confidence": 0.9,
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             # Old call signature — no recent_history
             plan, error = await cot_route("hello", [])
 
@@ -338,9 +380,11 @@ class TestPeoplePleaser:
         """When both LLM attempts return garbage, (None, error_string) is returned."""
         from bantz.core.intent import cot_route
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
             # Both attempts return non-JSON garbage
-            mock_llm.chat = AsyncMock(return_value="Sure! I'll send that email right away!")
+            mock_llm.chat_stream = _mock_stream("Sure! I'll send that email right away!")
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("send email to john", [
                 {"name": "gmail", "description": "Send email", "risk_level": "safe"},
             ])
@@ -356,21 +400,26 @@ class TestPeoplePleaser:
 
         call_count = 0
 
-        async def flaky_chat(messages):
+        async def flaky_stream(messages):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return "Hmm, let me think about that..."  # garbage
-            return json.dumps({
-                "route": "tool",
-                "tool_name": "gmail",
-                "tool_args": {"action": "compose", "to": "john"},
-                "risk_level": "safe",
-                "confidence": 0.9,
-            })
+                text = "Hmm, let me think about that..."  # garbage
+            else:
+                text = json.dumps({
+                    "route": "tool",
+                    "tool_name": "gmail",
+                    "tool_args": {"action": "compose", "to": "john"},
+                    "risk_level": "safe",
+                    "confidence": 0.9,
+                })
+            for ch in text:
+                yield ch
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = flaky_chat
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = flaky_stream
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("send email to john", [
                 {"name": "gmail", "description": "Send email", "risk_level": "safe"},
             ])
@@ -384,8 +433,14 @@ class TestPeoplePleaser:
         """Non-JSON exceptions (e.g. network) return error string."""
         from bantz.core.intent import cot_route
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(side_effect=ConnectionError("Ollama is down"))
+        async def error_stream(messages):
+            raise ConnectionError("Ollama is down")
+            yield  # make it an async generator  # noqa: unreachable
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = error_stream
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("check weather", [])
 
         assert plan is None
@@ -414,8 +469,10 @@ class TestPlannerRoute:
             "reasoning": "User wants weather then email — requires two tools.",
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route(
                 "Check the weather in Istanbul then email it to John", [
                     {"name": "weather", "description": "Check weather", "risk_level": "safe"},
@@ -442,11 +499,139 @@ class TestPlannerRoute:
             "reasoning": "Single tool needed — just weather lookup.",
         })
 
-        with patch("bantz.core.intent.ollama") as mock_llm:
-            mock_llm.chat = AsyncMock(return_value=llm_response)
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(llm_response)
+            mock_bus.emit = AsyncMock()
             plan, error = await cot_route("weather in London", [
                 {"name": "weather", "description": "Check weather", "risk_level": "safe"},
             ])
 
         assert plan is not None
         assert "reasoning" in plan
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. Streaming thinking events (#273)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestStreamThinking:
+    """_stream_and_collect emits thinking_token/thinking_done events (#273)."""
+
+    @pytest.mark.asyncio
+    async def test_thinking_events_emitted(self):
+        """Tokens inside <thinking> are emitted as thinking_token events."""
+        from bantz.core.intent import _stream_and_collect
+
+        response = "<thinking>I should use the weather tool.</thinking>\n" + json.dumps({"route": "tool"})
+
+        emitted: list = []
+
+        async def capture_emit(name, **kwargs):
+            emitted.append((name, kwargs))
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(response)
+            mock_bus.emit = capture_emit
+
+            result = await _stream_and_collect(
+                [{"role": "user", "content": "test"}],
+                emit_thinking=True, source="test",
+            )
+
+        event_names = [e[0] for e in emitted]
+        assert "thinking_start" in event_names
+        assert "thinking_done" in event_names
+        # At least one thinking_token should have been emitted
+        token_events = [e for e in emitted if e[0] == "thinking_token"]
+        assert len(token_events) > 0
+
+    @pytest.mark.asyncio
+    async def test_no_thinking_events_when_disabled(self):
+        """With emit_thinking=False, no events are emitted."""
+        from bantz.core.intent import _stream_and_collect
+
+        response = "<thinking>secret</thinking>\n{}"
+
+        emitted: list = []
+
+        async def capture_emit(name, **kwargs):
+            emitted.append((name, kwargs))
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(response)
+            mock_bus.emit = capture_emit
+
+            await _stream_and_collect(
+                [{"role": "user", "content": "test"}],
+                emit_thinking=False, source="test",
+            )
+
+        assert len(emitted) == 0
+
+    @pytest.mark.asyncio
+    async def test_full_response_returned(self):
+        """_stream_and_collect returns the raw full response string."""
+        from bantz.core.intent import _stream_and_collect
+
+        response = "<thinking>think</thinking>\n{\"route\": \"chat\"}"
+
+        with patch("bantz.core.intent.ollama") as mock_llm, \
+             patch("bantz.core.intent.bus") as mock_bus:
+            mock_llm.chat_stream = _mock_stream(response)
+            mock_bus.emit = AsyncMock()
+
+            result = await _stream_and_collect(
+                [{"role": "user", "content": "test"}],
+                emit_thinking=True, source="test",
+            )
+
+        assert "<thinking>" in result
+        assert '{"route": "chat"}' in result
+
+
+class TestCleanThinkingText:
+    """_clean_thinking_text strips literal XML tags (#273 Critique 2)."""
+
+    def test_strips_open_tag(self):
+        from bantz.core.intent import _clean_thinking_text
+        assert _clean_thinking_text("<thinking>hello") == "hello"
+
+    def test_strips_close_tag(self):
+        from bantz.core.intent import _clean_thinking_text
+        assert _clean_thinking_text("world</thinking>") == "world"
+
+    def test_strips_both_tags(self):
+        from bantz.core.intent import _clean_thinking_text
+        assert _clean_thinking_text("<thinking>content</thinking>") == "content"
+
+    def test_empty_string(self):
+        from bantz.core.intent import _clean_thinking_text
+        assert _clean_thinking_text("") == ""
+
+    def test_no_tags(self):
+        from bantz.core.intent import _clean_thinking_text
+        assert _clean_thinking_text("just text") == "just text"
+
+
+class TestStripThinkingUnclosed:
+    """strip_thinking handles unclosed tags (#273 Critique 2)."""
+
+    def test_unclosed_thinking_stripped(self):
+        from bantz.core.intent import strip_thinking
+        result = strip_thinking("<thinking>This never closes")
+        assert result.strip() == ""
+
+    def test_normal_thinking_stripped(self):
+        from bantz.core.intent import strip_thinking
+        result = strip_thinking("<thinking>inner</thinking> after")
+        assert "inner" not in result
+        assert "after" in result
+
+    def test_double_open_stripped(self):
+        from bantz.core.intent import strip_thinking
+        result = strip_thinking("<thinking>first<thinking>second</thinking> after")
+        assert "after" in result

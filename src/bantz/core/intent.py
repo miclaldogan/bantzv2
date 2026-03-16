@@ -1,5 +1,5 @@
 """
-Bantz v2 — Chain-of-Thought Intent Parser (#78)
+Bantz v2 — Chain-of-Thought Intent Parser (#78, #273)
 
 Replaces the one-shot router with structured multi-step reasoning:
 
@@ -9,6 +9,9 @@ Replaces the one-shot router with structured multi-step reasoning:
 
 The reasoning chain is logged for debugging and returned alongside the
 routing decision so downstream code can inspect *why* a route was chosen.
+
+#273: cot_route now uses ``ollama.chat_stream()`` to stream the LLM's
+``<thinking>`` process in real-time to the TUI via EventBus events.
 
 Usage:
     from bantz.core.intent import cot_route
@@ -21,6 +24,7 @@ import logging
 import re
 
 from bantz.llm.ollama import ollama
+from bantz.core.event_bus import bus
 
 log = logging.getLogger("bantz.intent")
 
@@ -120,6 +124,11 @@ For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe"
 
 _THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.DOTALL)
 
+# Matches a single <thinking> open tag (with optional whitespace / nesting)
+_THINKING_OPEN = re.compile(r"<thinking\s*>", re.IGNORECASE)
+# Matches a single </thinking> close tag
+_THINKING_CLOSE = re.compile(r"</thinking\s*>", re.IGNORECASE)
+
 
 def strip_thinking(text: str) -> str:
     """Aggressively remove ``<thinking>…</thinking>`` internal monologues.
@@ -127,8 +136,12 @@ def strip_thinking(text: str) -> str:
     Applied at the **earliest** point where raw LLM output is received so
     that downstream JSON parsers never choke on leaked reasoning tags.
     Handles nested/multiline blocks and trailing whitespace (#214).
+    Also strips orphaned/unclosed ``<thinking>`` blocks (#273).
     """
-    return _THINKING_RE.sub("", text)
+    result = _THINKING_RE.sub("", text)
+    # Handle unclosed tags — remove from <thinking> to end of string
+    result = re.sub(r"<thinking\s*>.*", "", result, flags=re.DOTALL | re.IGNORECASE)
+    return result
 
 
 _REFUSAL_PATTERNS = (
@@ -173,6 +186,110 @@ def _format_recent_history(recent_history: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# Maximum tokens to wait for a </thinking> close tag before force-closing.
+# Prevents unbounded buffering from models that never emit the close tag.
+_THINKING_MAX_TOKENS = 2000
+
+
+async def _stream_and_collect(
+    messages: list[dict],
+    *,
+    emit_thinking: bool = True,
+    source: str = "cot_route",
+) -> str:
+    """Stream an Ollama chat call, emitting ``thinking_*`` events.
+
+    Accumulates the full response and returns it.  While inside a
+    ``<thinking>`` block, each token's inner text (tags stripped) is
+    emitted as ``thinking_token`` on the EventBus.  When the block
+    closes (or is force-closed after ``_THINKING_MAX_TOKENS``), a
+    ``thinking_done`` event is emitted.
+
+    Args:
+        messages: Chat messages to send to Ollama.
+        emit_thinking: Whether to emit thinking events to the bus.
+        source: Label for the ``thinking_done`` event data.
+
+    Returns:
+        The complete raw response string (with ``<thinking>`` tags intact
+        for downstream JSON extraction).
+    """
+    buf = ""
+    in_thinking = False
+    thinking_tokens = 0
+    thinking_started = False
+
+    if emit_thinking:
+        await bus.emit("thinking_start", source=source)
+
+    try:
+        async for token in ollama.chat_stream(messages):
+            buf += token
+
+            if not emit_thinking:
+                continue
+
+            # ── Detect <thinking> open ────────────────────────────────
+            if not in_thinking:
+                if _THINKING_OPEN.search(buf):
+                    in_thinking = True
+                    thinking_tokens = 0
+                    thinking_started = True
+                    # Emit any text *after* the opening tag so far
+                    m = _THINKING_OPEN.search(buf)
+                    if m:
+                        after = buf[m.end():]
+                        inner = _clean_thinking_text(after)
+                        if inner:
+                            await bus.emit("thinking_token", token=inner, source=source)
+                    continue
+
+            # ── Inside <thinking> block ───────────────────────────────
+            if in_thinking:
+                thinking_tokens += 1
+                # Check for close tag
+                if _THINKING_CLOSE.search(buf):
+                    in_thinking = False
+                    await bus.emit("thinking_done", source=source)
+                    continue
+
+                # Force-close if model never emits </thinking> (#273 Critique 2)
+                if thinking_tokens > _THINKING_MAX_TOKENS:
+                    in_thinking = False
+                    log.warning("Force-closing <thinking> after %d tokens (no close tag)", thinking_tokens)
+                    await bus.emit("thinking_done", source=source)
+                    continue
+
+                # Emit the clean inner token
+                inner = _clean_thinking_text(token)
+                if inner:
+                    await bus.emit("thinking_token", token=inner, source=source)
+
+    except Exception as exc:
+        log.warning("Stream error during %s: %s", source, exc)
+        # If we were mid-thinking, close it
+        if in_thinking and emit_thinking:
+            await bus.emit("thinking_done", source=source)
+        raise
+
+    # If thinking never closed, emit done
+    if thinking_started and in_thinking and emit_thinking:
+        await bus.emit("thinking_done", source=source)
+
+    return buf
+
+
+def _clean_thinking_text(text: str) -> str:
+    """Strip literal ``<thinking>``/``</thinking>`` tags from token text.
+
+    Only the *inner content* should reach the TUI — raw XML tags must
+    never appear on screen (#273 Critique 2).
+    """
+    text = _THINKING_OPEN.sub("", text)
+    text = _THINKING_CLOSE.sub("", text)
+    return text.strip()
+
+
 async def cot_route(
     en_input: str,
     tool_schemas: list[dict],
@@ -181,7 +298,7 @@ async def cot_route(
     confidence_threshold: float = 0.4,
 ) -> tuple[dict | None, str | None]:
     """
-    Chain-of-Thought routing via Ollama.
+    Chain-of-Thought routing via Ollama **streaming** (#273).
 
     Returns ``(plan, routing_error)``:
 
@@ -194,9 +311,9 @@ async def cot_route(
                                   to chat — it should inform the user
                                   (#253 People-Pleaser fix).
 
-    Args:
-        recent_history: Last few conversation turns (user/assistant dicts)
-            so the classifier can resolve pronouns like "him", "it", etc.
+    Now streams via ``ollama.chat_stream()`` and emits ``thinking_token``
+    events on the EventBus so the TUI can display the chain-of-thought
+    in real-time.
     """
     schema_str = "\n".join(
         f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
@@ -219,9 +336,9 @@ async def cot_route(
 
     raw: str = ""
 
-    # ── Attempt 1 ──────────────────────────────────────────────────────────
+    # ── Attempt 1 (streaming) ──────────────────────────────────────────
     try:
-        raw = await ollama.chat(messages)
+        raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
@@ -243,7 +360,7 @@ async def cot_route(
         log.warning("CoT error (attempt 1): %s", exc)
         return None, f"CoT routing error: {exc}"
 
-    # ── Attempt 2: retry with correction ───────────────────────────────────
+    # ── Attempt 2: retry with correction (streaming, no thinking events) ──
     try:
         messages.append({"role": "assistant", "content": raw})
         messages.append({
@@ -257,7 +374,9 @@ async def cot_route(
             ),
         })
 
-        raw2 = await ollama.chat(messages)
+        raw2 = await _stream_and_collect(
+            messages, emit_thinking=False, source="cot_route_retry",
+        )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)
         return plan, None

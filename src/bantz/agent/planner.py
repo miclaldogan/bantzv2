@@ -1,5 +1,5 @@
 """
-Bantz v3 — Plan-and-Solve Multi-Step Decomposition (#187)
+Bantz v3 — Plan-and-Solve Multi-Step Decomposition (#187, #273)
 
 "The Butler's Itinerary"
 
@@ -7,6 +7,9 @@ When the user gives a complex, multi-step command (e.g. "Find 3 articles
 about AI, summarize them, and save to a file in the Research folder"),
 the PlannerAgent uses the LLM to break it down into a structured JSON
 array of steps — an "itinerary" — that the Executor runs sequentially.
+
+#273: decompose() now uses streaming via ``_stream_and_collect()`` to
+emit ``<thinking>`` tokens to the TUI in real-time.
 
 Usage:
     from bantz.agent.planner import planner_agent
@@ -19,8 +22,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
-
-from bantz.llm.ollama import ollama
 
 log = logging.getLogger("bantz.planner")
 
@@ -182,6 +183,9 @@ class PlannerAgent:
     ) -> list[PlanStep]:
         """Use the LLM to decompose a complex request into plan steps.
 
+        #273: Now uses streaming via ``_stream_and_collect()`` so the
+        ``<thinking>`` block is emitted to the TUI in real-time.
+
         Args:
             en_input: User request (in English).
             tool_names: Available tool names from the registry.
@@ -191,32 +195,37 @@ class PlannerAgent:
         Returns:
             List of PlanStep objects. Empty list if decomposition fails.
         """
+        from bantz.core.intent import _stream_and_collect
+
         history_block = self._format_recent_history(recent_history)
         prompt = PLANNER_SYSTEM.format(
             tool_names=", ".join(tool_names),
             recent_history_block=history_block,
         )
 
-        raw = await ollama.chat([
+        messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": en_input},
-        ])
+        ]
+
+        raw = await _stream_and_collect(
+            messages, emit_thinking=True, source="planner",
+        )
 
         try:
             steps_data = self._parse_steps(raw)
         except (json.JSONDecodeError, ValueError) as exc:
             log.warning("Planner decomposition failed (attempt 1): %s", exc)
-            # Retry with correction
+            # Retry with correction (no thinking events for retry)
             try:
-                raw2 = await ollama.chat([
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": en_input},
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": (
-                        "That was not valid JSON. Return ONLY a JSON array of step "
-                        "objects. No markdown. No explanation."
-                    )},
-                ])
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": (
+                    "That was not valid JSON. Return ONLY a JSON array of step "
+                    "objects. No markdown. No explanation."
+                )})
+                raw2 = await _stream_and_collect(
+                    messages, emit_thinking=False, source="planner_retry",
+                )
                 steps_data = self._parse_steps(raw2)
             except Exception as exc2:
                 log.warning("Planner decomposition failed (attempt 2): %s", exc2)
