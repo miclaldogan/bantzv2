@@ -161,7 +161,7 @@ class GhostLoop:
                 from bantz.agent.wake_word import wake_listener
                 wake_listener.pause()
                 import time
-                time.sleep(0.15)  # give ALSA a moment to release the device
+                time.sleep(0.30)  # give ALSA time to fully release the device
             except Exception as exc:
                 log.debug("Ghost Loop: could not pause wake word — %s", exc)
 
@@ -174,7 +174,10 @@ class GhostLoop:
 
             if not pcm_bytes:
                 log.info("Ghost Loop: no audio captured")
-                bus.emit_threadsafe("ghost_loop_idle")
+                bus.emit_threadsafe(
+                    "voice_no_speech",
+                    reason="no_audio",
+                )
                 return
 
             # 3. Emit "transcribing" event
@@ -186,7 +189,10 @@ class GhostLoop:
 
             if not text:
                 log.info("Ghost Loop: STT returned empty")
-                bus.emit_threadsafe("ghost_loop_idle")
+                bus.emit_threadsafe(
+                    "voice_no_speech",
+                    reason="empty_transcription",
+                )
                 return
 
             self._total_transcriptions += 1
@@ -199,6 +205,10 @@ class GhostLoop:
 
         except Exception as exc:
             log.error("Ghost Loop: pipeline error — %s", exc)
+            bus.emit_threadsafe(
+                "voice_no_speech",
+                reason=f"pipeline_error: {exc}",
+            )
         finally:
             self._busy = False
             # Resume wake word listener so it re-acquires the mic

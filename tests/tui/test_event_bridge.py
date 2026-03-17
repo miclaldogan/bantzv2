@@ -62,18 +62,19 @@ class TestBantzEventMessage:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. WakeWordDetected (legacy, backward compat)
+# 2. WakeWordDetected (removed — legacy dead code cleaned up)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestWakeWordDetectedLegacy:
-    def test_still_importable(self):
-        from bantz.interface.tui.app import WakeWordDetected
-        assert WakeWordDetected is not None
+    def test_legacy_class_removed(self):
+        """WakeWordDetected was dead code — verify it's been removed."""
+        from bantz.interface.tui import app as tui_app
+        assert not hasattr(tui_app, "WakeWordDetected")
 
-    def test_is_message(self):
-        from bantz.interface.tui.app import WakeWordDetected
-        from textual.message import Message
-        assert issubclass(WakeWordDetected, Message)
+    def test_bus_wake_handler_exists(self):
+        """The canonical wake word handler is via EventBus bridge."""
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "_on_bus_wake_word")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -103,6 +104,10 @@ class TestSubscribeEventBus:
             assert test_bus.subscriber_count("ghost_loop_listening") == 1
             assert test_bus.subscriber_count("ghost_loop_transcribing") == 1
             assert test_bus.subscriber_count("ghost_loop_idle") == 1
+            assert test_bus.subscriber_count("voice_no_speech") == 1
+            assert test_bus.subscriber_count("stt_model_loading") == 1
+            assert test_bus.subscriber_count("stt_model_ready") == 1
+            assert test_bus.subscriber_count("stt_model_failed") == 1
 
     def test_calls_bind_loop(self):
         app = self._make_app()
@@ -140,7 +145,7 @@ class TestUnsubscribeEventBus:
         test_bus.bind_loop = MagicMock()
         with patch("bantz.interface.tui.app.bus", test_bus):
             app._subscribe_event_bus()
-            assert test_bus.subscriber_count() == 11
+            assert test_bus.subscriber_count() == 15
             app._unsubscribe_event_bus()
             assert test_bus.subscriber_count("wake_word_detected") == 0
             assert test_bus.subscriber_count("ambient_change") == 0
@@ -149,6 +154,10 @@ class TestUnsubscribeEventBus:
             assert test_bus.subscriber_count("ghost_loop_listening") == 0
             assert test_bus.subscriber_count("ghost_loop_transcribing") == 0
             assert test_bus.subscriber_count("ghost_loop_idle") == 0
+            assert test_bus.subscriber_count("voice_no_speech") == 0
+            assert test_bus.subscriber_count("stt_model_loading") == 0
+            assert test_bus.subscriber_count("stt_model_ready") == 0
+            assert test_bus.subscriber_count("stt_model_failed") == 0
             assert test_bus.subscriber_count("thinking_start") == 0
             assert test_bus.subscriber_count("thinking_token") == 0
             assert test_bus.subscriber_count("thinking_done") == 0
@@ -479,19 +488,17 @@ class TestSourceAudit:
 
     def test_no_on_wake_closure_in_start_listener(self):
         """The legacy _on_wake closure must be gone from _start_wake_word_listener."""
-        # Find the method body
-        start = self.src.index("def _start_wake_word_listener")
-        # Find next def at same indent
-        next_def = self.src.index("\n    def ", start + 1)
-        method_body = self.src[start:next_def]
+        import inspect
+        from bantz.interface.tui.app import BantzApp
+        method_body = inspect.getsource(BantzApp._start_wake_word_listener)
         assert "def _on_wake()" not in method_body
         assert "on_wake=_on_wake" not in method_body
 
     def test_wake_listener_start_no_callback(self):
         """wake_listener.start() should be called without on_wake arg."""
-        start = self.src.index("def _start_wake_word_listener")
-        next_def = self.src.index("\n    def ", start + 1)
-        method_body = self.src[start:next_def]
+        import inspect
+        from bantz.interface.tui.app import BantzApp
+        method_body = inspect.getsource(BantzApp._start_wake_word_listener)
         assert "wake_listener.start()" in method_body
 
     def test_three_bus_subscriptions(self):

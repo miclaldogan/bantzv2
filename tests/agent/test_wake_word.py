@@ -431,14 +431,15 @@ class TestDoctorSection:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestTUIMessage:
-    def test_wake_word_detected_message_exists(self):
-        from bantz.interface.tui.app import WakeWordDetected
-        msg = WakeWordDetected()
-        assert msg is not None
+    def test_wake_word_detected_legacy_removed(self):
+        """WakeWordDetected legacy Message was removed — bus path is canonical."""
+        from bantz.interface.tui import app as tui_app
+        assert not hasattr(tui_app, "WakeWordDetected")
 
-    def test_app_has_handler(self):
+    def test_app_has_bus_wake_handler(self):
+        """BantzApp should handle wake_word via the EventBus bridge."""
         from bantz.interface.tui.app import BantzApp
-        assert hasattr(BantzApp, "on_wake_word_detected")
+        assert hasattr(BantzApp, "_on_bus_wake_word")
 
     def test_app_has_start_wake_word(self):
         from bantz.interface.tui.app import BantzApp
