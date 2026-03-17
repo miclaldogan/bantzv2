@@ -56,6 +56,7 @@ class BantzContext:
     graph_context: str = ""          # graph memory context string
     vector_context: str = ""         # semantic-search past messages
     deep_memory: str = ""            # spontaneous deep memory recall
+    memory_combined: str = ""        # budget-trimmed unified memory (#211)
     desktop_context: str = ""        # AppDetector workspace snapshot
     persona_state: str = ""          # persona builder output
     formality_hint: str = ""         # bonding-meter hint
@@ -96,7 +97,10 @@ class BantzContext:
     @property
     def has_memory(self) -> bool:
         """True when any memory context was injected."""
-        return bool(self.graph_context or self.vector_context or self.deep_memory)
+        return bool(
+            self.memory_combined
+            or self.graph_context or self.vector_context or self.deep_memory
+        )
 
     @property
     def elapsed_ms(self) -> float | None:

@@ -39,8 +39,6 @@ from bantz.core.memory_injector import (
     style_hint as _style_hint,
     persona_hint as _persona_hint,
     formality_hint as _formality_hint,
-    graph_context as _graph_ctx_fn,
-    deep_memory_context as _deep_memory_ctx_fn,
 )
 from bantz.core.prompt_builder import (
     CHAT_SYSTEM,      # noqa: F401  — re-export for backward compat
@@ -709,26 +707,28 @@ class Brain:
             yield f"(Ollama error: {exc})"
 
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
-        """Delegate to core.finalizer module (#227: use memory_injector)."""
+        """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
+        from bantz.memory.omni_memory import omni_memory
+        recall = await omni_memory.recall(en_input)
         return await _finalize_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
-            graph_hint=await _graph_ctx_fn(en_input),
-            deep_memory=await _deep_memory_ctx_fn(en_input),
+            memory_context=recall.combined,
             formality_hint=_formality_hint(),
         )
 
     async def _finalize_stream(
         self, en_input: str, result: ToolResult, tc: dict,
     ) -> AsyncIterator[str] | None:
-        """Delegate to core.finalizer module (#227: use memory_injector)."""
+        """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
+        from bantz.memory.omni_memory import omni_memory
+        recall = await omni_memory.recall(en_input)
         return await _finalize_stream_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
             profile_hint=profile.prompt_hint(),
-            graph_hint=await _graph_ctx_fn(en_input),
-            deep_memory=await _deep_memory_ctx_fn(en_input),
+            memory_context=recall.combined,
             formality_hint=_formality_hint(),
         )
 

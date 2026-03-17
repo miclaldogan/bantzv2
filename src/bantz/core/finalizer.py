@@ -45,8 +45,7 @@ MAX 3–5 sentences for complex summaries or searches. English only. Plain text,
 link formatting (no [Text](URL), no [URL], no <URL>). Just output the bare link as plain text.
 - Always address the user as 'ma'am'. Stay in character as a 1920s butler.{persona_state}{style_hint}{formality_hint}{time_hint}
 {profile_hint}
-{graph_hint}
-{deep_memory}\
+{memory_context}\
 """
 
 
@@ -77,6 +76,7 @@ async def finalize(
     profile_hint: str = "",
     graph_hint: str = "",
     deep_memory: str = "",
+    memory_context: str = "",
     formality_hint: str = "",
 ) -> str:
     """
@@ -92,14 +92,18 @@ async def finalize(
     if len(output) < 800:
         return output
 
+    # Build memory block: prefer combined (#211), fall back to legacy fields
+    _mem = memory_context or "\n".join(
+        p for p in (graph_hint, deep_memory) if p
+    )
+
     messages = [
         {"role": "system", "content": FINALIZER_SYSTEM.format(
             time_hint=tc["prompt_hint"],
             profile_hint=profile_hint,
             style_hint=style_hint,
-            graph_hint=graph_hint,
+            memory_context=_mem,
             persona_state=_persona_hint(),
-            deep_memory=deep_memory,
             formality_hint=formality_hint,
         )},
         {"role": "user", "content": (
@@ -149,6 +153,7 @@ async def finalize_stream(
     profile_hint: str = "",
     graph_hint: str = "",
     deep_memory: str = "",
+    memory_context: str = "",
     formality_hint: str = "",
 ) -> AsyncIterator[str] | None:
     """
@@ -163,14 +168,18 @@ async def finalize_stream(
     if len(output) < 800:
         return None
 
+    # Build memory block: prefer combined (#211), fall back to legacy fields
+    _mem = memory_context or "\n".join(
+        p for p in (graph_hint, deep_memory) if p
+    )
+
     messages = [
         {"role": "system", "content": FINALIZER_SYSTEM.format(
             time_hint=tc["prompt_hint"],
             profile_hint=profile_hint,
             style_hint=style_hint,
-            graph_hint=graph_hint,
+            memory_context=_mem,
             persona_state=_persona_hint(),
-            deep_memory=deep_memory,
             formality_hint=formality_hint,
         )},
         {"role": "user", "content": (

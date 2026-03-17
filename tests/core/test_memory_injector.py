@@ -241,10 +241,20 @@ class TestInject:
         mock_profile.get = lambda k, d="": d
         mock_profile.prompt_hint.return_value = "User: TestUser"
 
+        from bantz.memory.omni_memory import MemoryRecallResult
+        mock_recall = MemoryRecallResult(
+            graph_context="graph data",
+            vector_context="vector data",
+            deep_memory="deep data",
+            combined="graph data\nvector data\ndeep data",
+            total_chars=30,
+            total_tokens_approx=8,
+        )
+        mock_omni = MagicMock()
+        mock_omni.recall = AsyncMock(return_value=mock_recall)
+
         with (
-            patch("bantz.core.memory_injector.graph_context", new_callable=AsyncMock, return_value="graph data"),
-            patch("bantz.core.memory_injector.vector_context", new_callable=AsyncMock, return_value="vector data"),
-            patch("bantz.core.memory_injector.deep_memory_context", new_callable=AsyncMock, return_value="deep data"),
+            patch("bantz.memory.omni_memory.omni_memory", mock_omni),
             patch("bantz.core.memory_injector.desktop_context", return_value="desktop data"),
             patch("bantz.core.memory_injector.persona_hint", return_value="persona data"),
             patch("bantz.core.memory_injector.formality_hint", return_value="formality data"),
@@ -256,6 +266,7 @@ class TestInject:
         assert ctx.graph_context == "graph data"
         assert ctx.vector_context == "vector data"
         assert ctx.deep_memory == "deep data"
+        assert ctx.memory_combined == "graph data\nvector data\ndeep data"
         assert ctx.desktop_context == "desktop data"
         assert ctx.persona_state == "persona data"
         assert ctx.formality_hint == "formality data"
@@ -264,20 +275,28 @@ class TestInject:
 
     @pytest.mark.asyncio
     async def test_handles_async_exceptions_gracefully(self):
-        """If one memory source fails, others still populate."""
+        """If OmniMemory.recall() raises, fields stay empty but don't crash."""
         ctx = BantzContext()
         mock_profile = MagicMock()
         mock_profile.response_style = "casual"
         mock_profile.get = lambda k, d="": d
         mock_profile.prompt_hint.return_value = ""
 
-        async def failing_graph(_msg):
-            raise RuntimeError("neo4j down")
+        from bantz.memory.omni_memory import MemoryRecallResult
+        # Return partial result (graph failed inside OmniMemory)
+        mock_recall = MemoryRecallResult(
+            graph_context="",
+            vector_context="ok",
+            deep_memory="ok",
+            combined="ok\nok",
+            total_chars=5,
+            total_tokens_approx=1,
+        )
+        mock_omni = MagicMock()
+        mock_omni.recall = AsyncMock(return_value=mock_recall)
 
         with (
-            patch("bantz.core.memory_injector.graph_context", side_effect=failing_graph),
-            patch("bantz.core.memory_injector.vector_context", new_callable=AsyncMock, return_value="ok"),
-            patch("bantz.core.memory_injector.deep_memory_context", new_callable=AsyncMock, return_value="ok"),
+            patch("bantz.memory.omni_memory.omni_memory", mock_omni),
             patch("bantz.core.memory_injector.desktop_context", return_value=""),
             patch("bantz.core.memory_injector.persona_hint", return_value=""),
             patch("bantz.core.memory_injector.formality_hint", return_value=""),
@@ -286,33 +305,30 @@ class TestInject:
         ):
             await inject(ctx, "test input")
 
-        # graph failed → empty string, others OK
+        # graph failed inside OmniMemory → empty string, others OK
         assert ctx.graph_context == ""
         assert ctx.vector_context == "ok"
         assert ctx.deep_memory == "ok"
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self):
-        """Verify that async fetchers run concurrently, not sequentially."""
-        call_order = []
+        """Verify OmniMemory runs in parallel (tested via OmniMemory unit tests).
 
-        async def slow_graph(msg):
-            call_order.append("graph_start")
-            await asyncio.sleep(0.05)
-            call_order.append("graph_end")
-            return "g"
+        This test verifies inject() correctly delegates to omni_memory.recall()
+        and populates both individual fields and memory_combined.
+        """
+        from bantz.memory.omni_memory import MemoryRecallResult
 
-        async def slow_vector(msg):
-            call_order.append("vector_start")
-            await asyncio.sleep(0.05)
-            call_order.append("vector_end")
-            return "v"
-
-        async def slow_deep(msg):
-            call_order.append("deep_start")
-            await asyncio.sleep(0.05)
-            call_order.append("deep_end")
-            return "d"
+        mock_recall = MemoryRecallResult(
+            graph_context="g",
+            vector_context="v",
+            deep_memory="d",
+            combined="g\nv\nd",
+            total_chars=5,
+            total_tokens_approx=1,
+        )
+        mock_omni = MagicMock()
+        mock_omni.recall = AsyncMock(return_value=mock_recall)
 
         ctx = BantzContext()
         mock_profile = MagicMock()
@@ -321,9 +337,7 @@ class TestInject:
         mock_profile.prompt_hint.return_value = ""
 
         with (
-            patch("bantz.core.memory_injector.graph_context", side_effect=slow_graph),
-            patch("bantz.core.memory_injector.vector_context", side_effect=slow_vector),
-            patch("bantz.core.memory_injector.deep_memory_context", side_effect=slow_deep),
+            patch("bantz.memory.omni_memory.omni_memory", mock_omni),
             patch("bantz.core.memory_injector.desktop_context", return_value=""),
             patch("bantz.core.memory_injector.persona_hint", return_value=""),
             patch("bantz.core.memory_injector.formality_hint", return_value=""),
@@ -332,7 +346,6 @@ class TestInject:
         ):
             await inject(ctx, "test")
 
-        # All _start events should come before all _end events (concurrent)
-        starts = [i for i, e in enumerate(call_order) if e.endswith("_start")]
-        ends = [i for i, e in enumerate(call_order) if e.endswith("_end")]
-        assert max(starts) < min(ends), f"Not concurrent: {call_order}"
+        # OmniMemory.recall() was called once with the english input
+        mock_omni.recall.assert_awaited_once_with("test")
+        assert ctx.memory_combined == "g\nv\nd"

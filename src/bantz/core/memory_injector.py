@@ -1,15 +1,41 @@
 """
-Bantz — Memory Injector (#227)
+Bantz — Memory Injector (#227, refactored for #211)
 
-Gathers all **context signals** (vector search, graph memory, deep-memory
-recall, desktop snapshot, persona, bonding, style) into a single
-``BantzContext`` object ready for ``prompt_builder``.
+Gathers all **context signals** into a single ``BantzContext`` object
+ready for ``prompt_builder``.
 
-Every DB/memory read is wrapped in ``asyncio.to_thread`` so the
-event-loop is never blocked by vector-DB or Neo4j I/O.
+Architecture split (Issue #211 — Architect's Revision):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  OmniMemoryManager.recall()  [HISTORICAL — budget-trimmed]     │
+  │    ├─ Graph search   ─┐                                        │
+  │    ├─ Vector search   ├─ Parallel → Merge → Re-rank → Trim    │
+  │    └─ Deep memory    ─┘                                        │
+  ├─────────────────────────────────────────────────────────────────┤
+  │  Real-Time Status    [ALWAYS INCLUDED — never filtered]         │
+  │    ├─ desktop_context()  (AppDetector snapshot)                 │
+  │    ├─ persona_hint()     (dynamic persona)                     │
+  │    ├─ formality_hint()   (bonding meter)                       │
+  │    ├─ style_hint()       (response style)                      │
+  │    └─ profile.prompt_hint()                                    │
+  └─────────────────────────────────────────────────────────────────┘
 
-Public API
-----------
+Key design decisions:
+  💡1: Real-time context is NEVER filtered.  Desktop + persona are
+       short, ephemeral, and represent the "present moment".  Routing
+       them through GraphRAG would cause "blind assistant" syndrome.
+
+  💡2: Historical memory uses async parallel hybrid search via
+       OmniMemoryManager.  Graph + Vector fire simultaneously.
+       If Graph finds entities → vector results are re-ranked.
+       If Graph is empty → pure vector results are returned.
+       This prevents "Amnesia by Over-Filtering".
+
+  💡3: Total memory budget is ~400 tokens (~1600 chars), enforced
+       by OmniMemoryManager.  Real-time hints are excluded from
+       the budget (they're short and essential).
+
+Public API (unchanged)
+----------------------
 - ``inject(ctx, en_input)`` → populate ``BantzContext`` memory fields
 - Individual helpers also exported for fine-grained use.
 """
@@ -200,25 +226,24 @@ async def deep_memory_context(user_msg: str) -> str:
 async def inject(ctx: "BantzContext", en_input: str) -> None:
     """Populate all memory/persona fields on *ctx* concurrently.
 
-    Runs async memory fetchers in parallel via ``asyncio.gather``,
-    and fills pure-CPU hints synchronously.
+    Historical memory (graph, vector, deep) is gathered via
+    ``OmniMemoryManager.recall()`` which enforces a token budget
+    and runs all searches in parallel (#211).
+
+    Real-time context (desktop, persona, style, formality, profile)
+    is injected directly — never filtered or budget-trimmed.
     """
-    # Fire all async fetchers concurrently
-    graph_coro = graph_context(en_input)
-    vector_coro = vector_context(en_input)
-    deep_coro = deep_memory_context(en_input)
+    # ── Historical memory via OmniMemoryManager (#211) ────────────
+    from bantz.memory.omni_memory import omni_memory
+    recall_result = await omni_memory.recall(en_input)
 
-    graph_res, vector_res, deep_res = await asyncio.gather(
-        graph_coro, vector_coro, deep_coro,
-        return_exceptions=True,
-    )
+    # Populate individual fields (for backward compat / logging)
+    ctx.graph_context = recall_result.graph_context
+    ctx.vector_context = recall_result.vector_context
+    ctx.deep_memory = recall_result.deep_memory
+    ctx.memory_combined = recall_result.combined
 
-    # Assign results (empty string on exception)
-    ctx.graph_context = graph_res if isinstance(graph_res, str) else ""
-    ctx.vector_context = vector_res if isinstance(vector_res, str) else ""
-    ctx.deep_memory = deep_res if isinstance(deep_res, str) else ""
-
-    # Sync helpers (cheap, no I/O)
+    # ── Real-time context (always included, never filtered) ───────
     ctx.desktop_context = desktop_context()
     ctx.persona_state = persona_hint()
     ctx.formality_hint = formality_hint()

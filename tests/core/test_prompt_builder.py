@@ -51,8 +51,8 @@ class TestTemplates:
         """All expected {name} placeholders must be present in CHAT_SYSTEM."""
         required = [
             "persona_state", "style_hint", "formality_hint",
-            "time_hint", "profile_hint", "graph_hint",
-            "vector_hint", "deep_memory", "desktop_hint",
+            "time_hint", "profile_hint", "memory_context",
+            "desktop_hint",
         ]
         for name in required:
             assert f"{{{name}}}" in CHAT_SYSTEM, f"Missing placeholder: {name}"
