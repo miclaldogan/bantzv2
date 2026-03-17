@@ -100,6 +100,7 @@ class Brain:
             import bantz.tools.visual_click  # noqa: F401  (#185)
         except (ImportError, ModuleNotFoundError):
             pass
+        import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
         self._memory_ready = False
         self._graph_ready = False
         # Session state: stores last tool results for contextual follow-ups

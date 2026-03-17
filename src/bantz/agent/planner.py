@@ -47,20 +47,21 @@ TOOL REFERENCE:
 - system: check CPU/RAM/disk. Params: {{"metric": "all|cpu|ram|disk"}}
 - document: summarize/read a document. Params: {{"path": "...", "action": "summarize|read|ask", "question": "..."}}
 - read_url: fetch and read the full text content of a specific URL/webpage. Params: {{"url": "https://..."}}
-- process_text: summarize, analyze, rewrite, or transform text from a previous step. Params: {{"instruction": "Summarize the following: {{step_N_output}}"}}
+- summarizer: summarize, analyze, rewrite, or transform text from a previous step. Params: {{"instruction": "Summarize the following: $REF_STEP_N"}}
+  (Legacy alias: "process_text" also accepted by the executor.)
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
-- If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `process_text` tool. Put your exact instructions (e.g., "Summarize the following: {{step_1_output}}") in the "instruction" param.
-- When the user wants a THOROUGH research report (not just snippets), use `web_search` first, then `read_url` to fetch the full article text from the best URL, then `process_text` to summarize.
+- If a step requires summarizing, analyzing, or modifying text from a previous step, you MUST use the `summarizer` tool. Put your exact instructions (e.g., "Summarize the following: $REF_STEP_1") in the "instruction" param.
+- When the user wants a THOROUGH research report (not just snippets), use `web_search` first, then `read_url` to fetch the full article text from the best URL, then `summarizer` to summarize.
 - NEVER use the `news` tool for specific research, reading full articles, or when you need a URL. The `news` tool provides a text-only summary of today's headlines without source links. It is ONLY for general "What's in the news today?" questions.
 - For finding specific articles, news, or topics to read, you MUST use `web_search`. `web_search` returns the raw URLs required for the `read_url` tool.
-- Do NOT invent intermediate steps like "Extract URL from results". Just pass `{{step_N_output}}` from `web_search` directly to `read_url` — the executor handles extraction automatically.
+- Do NOT invent intermediate steps like "Extract URL from results". Just pass `$REF_STEP_N` from `web_search` directly to `read_url` — the executor handles extraction automatically.
 
 TOOL USAGE BEST PRACTICES:
 - For `web_search`: Keep queries SHORT and broad (e.g., "Google quantum computer study", NOT "Search for the article titled Google Quantum Computer Makes Breakthrough in Quantum Error Correction"). The search engine works best with concise keywords.
-- For `read_url`: The `read_url` tool strictly requires ONLY a valid 'http' URL. Do NOT pass natural language to it. However, `{{step_N_output}}` from `web_search` contains full text snippets. Therefore it is heavily recommended to instruct the system accurately. Actually, the rule is: ALWAYS use `{{step_N_output}}` from `web_search` as the `url` parameter for `read_url`. The system will automatically extract the best URL from the search results text.
-- Keep plans as SHORT as possible. A complete deep reading workflow should only be 3 or 4 steps: `web_search` -> `read_url` -> `process_text` -> `filesystem`.
+- For `read_url`: The `read_url` tool strictly requires ONLY a valid 'http' URL. Do NOT pass natural language to it. However, `$REF_STEP_N` from `web_search` contains full text snippets. Therefore it is heavily recommended to instruct the system accurately. Actually, the rule is: ALWAYS use `$REF_STEP_N` from `web_search` as the `url` parameter for `read_url`. The system will automatically extract the best URL from the search results text.
+- Keep plans as SHORT as possible. A complete deep reading workflow should only be 3 or 4 steps: `web_search` -> `read_url` -> `summarizer` -> `filesystem`.
 
 STANDARD OPERATING PROCEDURES (SOP) & FALLBACKS:
 - Rule 1 (Strict Path Selection): NEVER create conditional steps (e.g., 'If Step 1 fails...'). The executor runs ALL steps sequentially. You must choose ONE path before planning: EITHER use the simple specialist tool (like `weather`) OR use the deep research flow (`web_search` -> `read_url` -> `process_text`). Do NOT mix them in the same plan.
@@ -90,17 +91,17 @@ RULES:
       - Step 2: Path Selection & Tool Matching: Which seq of tools achieves this? If reading an article, do I have the URL or do I need to search first?
       - Step 3: Double-Check / Self-Correction: Have I skipped any required tools? Am I faking variables? Are my params correct and based on real input?
    b. After the thinking block, output ONLY a valid JSON array. No markdown fences. No explanation.
-7. CRITICAL: When referencing output from a previous step, you MUST use the EXACT format `{{step_N_output}}` (e.g. `{{step_1_output}}`, `{{step_2_output}}`). Do NOT invent custom variable names like `{{step_1_url}}`, `{{step_1_best_article_url}}`, or `{{step_1_summary}}`. The ONLY valid placeholder is `{{step_N_output}}`.
-8. PATH CHAINING: When a later step needs the file path or folder path from an earlier step, use `{{step_N_params_KEY}}` where KEY is the exact param name from that step. For example:
-   - If Step 1 used `filesystem` with `"folder_path": "~/Desktop/research"`, Step 2 can reference that folder as `{{step_1_params_folder_path}}/summary.txt`.
-   - If Step 1 used `filesystem` with `"path": "~/report.txt"`, Step 2 can use `{{step_1_params_path}}` to read the same file.
-   - NEVER use `{{step_N_output}}` to construct file paths. Tool output is human-readable text like "Folder created successfully", NOT a path. Always use `{{step_N_params_path}}` or `{{step_N_params_folder_path}}` for paths.
+7. CRITICAL: When referencing output from a previous step, use `$REF_STEP_N` (e.g. `$REF_STEP_1`, `$REF_STEP_2`). Do NOT invent custom variable names like `$REF_STEP_1_url` or `$REF_STEP_1_summary`. The ONLY valid output reference is `$REF_STEP_N`. (Legacy format `{{step_N_output}}` is also accepted but deprecated.)
+8. PATH CHAINING: When a later step needs the file path or folder path from an earlier step, use `$REF_STEP_N_PARAMS_KEY` where KEY is the exact param name from that step. For example:
+   - If Step 1 used `filesystem` with `"folder_path": "~/Desktop/research"`, Step 2 can reference that folder as `$REF_STEP_1_PARAMS_folder_path/summary.txt`.
+   - If Step 1 used `filesystem` with `"path": "~/report.txt"`, Step 2 can use `$REF_STEP_1_PARAMS_path` to read the same file.
+   - NEVER use `$REF_STEP_N` to construct file paths. Tool output is human-readable text like "Folder created successfully", NOT a path. Always use `$REF_STEP_N_PARAMS_path` or `$REF_STEP_N_PARAMS_folder_path` for paths.
 
 OUTPUT FORMAT (return a JSON array of objects):
 <thinking>
 Step 1: The user wants to [objective here]. Key entities observed: [x, y].
 Step 2: The optimal chain of tools is tool_A -> tool_B.
-Step 3: Double-Check: I must not hallucinate the output of tool_A. I will use {{step_1_output}}.
+Step 3: Double-Check: I must not hallucinate the output of tool_A. I will use $REF_STEP_1.
 </thinking>
 [
   {{"step": 1, "tool": "<tool_name>", "params": {{...}}, "description": "Brief description", "depends_on": null}},
@@ -114,26 +115,26 @@ User: "Search for articles about quantum computing, summarize the best one, and 
 <thinking>
 Step 1: Goal is to find, read, summarize, and save an article. Entities: Query="quantum computing breakthrough", Target File=Quantum summary.
 Step 2: Needs deep research flow: web_search -> read_url -> process_text -> filesystem.
-Step 3: Double-Check: read_url needs a URL, which I will dynamically get from {{step_1_output}}. process_text will summarize {{step_2_output}}. Correct.
+Step 3: Double-Check: read_url needs a URL, which I will dynamically get from $REF_STEP_1. summarizer will summarize $REF_STEP_2. Correct.
 </thinking>
 [
   {{"step": 1, "tool": "web_search", "params": {{"query": "quantum computing breakthrough"}}, "description": "Search for quantum computing articles — returns a list of URLs", "depends_on": null}},
-  {{"step": 2, "tool": "read_url", "params": {{"url": "{{step_1_output}}"}}, "description": "Read the full article from the URL returned by step 1", "depends_on": 1}},
-  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize this article in detail, preserving source URLs at the bottom: {{step_2_output}}"}}, "description": "Summarize the article text from step 2", "depends_on": 2}},
-  {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save the summary to a file", "depends_on": 3}}
+  {{"step": 2, "tool": "read_url", "params": {{"url": "$REF_STEP_1"}}, "description": "Read the full article from the URL returned by step 1", "depends_on": 1}},
+  {{"step": 3, "tool": "summarizer", "params": {{"instruction": "Summarize this article in detail, preserving source URLs at the bottom: $REF_STEP_2"}}, "description": "Summarize the article text from step 2", "depends_on": 2}},
+  {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
 
 User: "Create a research folder and save a summary of quantum computing into it"
 <thinking>
 Step 1: Goal is to create a folder, then search, summarize, and save into that folder.
 Step 2: filesystem -> web_search -> process_text -> filesystem.
-Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use {{step_1_params_folder_path}} NOT {{step_1_output}} (which would be "Folder created" text).
+Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use $REF_STEP_1_PARAMS_folder_path NOT $REF_STEP_1 (which would be "Folder created" text).
 </thinking>
 [
   {{"step": 1, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": ".gitkeep", "content": ""}}, "description": "Create the research folder", "depends_on": null}},
   {{"step": 2, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs 2025"}}, "description": "Search for articles", "depends_on": null}},
-  {{"step": 3, "tool": "process_text", "params": {{"instruction": "Summarize this article in detail: {{step_2_output}}"}}, "description": "Summarize the search results", "depends_on": 2}},
-  {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "{{step_1_params_folder_path}}/quantum_summary.txt", "content": "{{step_3_output}}"}}, "description": "Save summary into the research folder", "depends_on": 3}}
+  {{"step": 3, "tool": "summarizer", "params": {{"instruction": "Summarize this article in detail: $REF_STEP_2"}}, "description": "Summarize the search results", "depends_on": 2}},
+  {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "$REF_STEP_1_PARAMS_folder_path/quantum_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save summary into the research folder", "depends_on": 3}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -243,7 +244,7 @@ class PlannerAgent:
             ))
 
         # Validate: each step must reference a known tool or virtual tool
-        _virtual_tools = {"process_text", "read_url"}
+        _virtual_tools = {"process_text", "summarizer", "read_url"}
         allowed = set(tool_names) | _virtual_tools
         valid_steps = [s for s in steps if s.tool in allowed]
         if len(valid_steps) < len(steps):

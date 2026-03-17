@@ -1,11 +1,18 @@
-"""
-Bantz v3 — Plan-and-Solve Executor (#187, #273)
+"""Bantz v3 — Plan-and-Solve Executor (#187, #273, Architect's Revision)
 
 "The Butler Carries Out His Itinerary"
 
 Executes a list of PlanSteps sequentially, passing context from one step
 to the next.  If a step fails, the executor **short-circuits**: remaining
 steps are marked as aborted (circuit breaker, #255).
+
+Architect's Revision:
+  - **$REF binding** — ``$REF_STEP_N`` resolved at Python dict level,
+    preventing JSON corruption from special characters in step outputs.
+    Legacy ``{step_N_output}`` still supported for backward compat.
+  - **Summarizer routing** — ``process_text`` aliased to the registered
+    ``summarizer`` BaseTool.  Falls back to raw LLM if not registered.
+  - **Butler Lore toasts** — per-step toast via notification_manager.
 
 #273: Emits ``planner_step`` events on the EventBus so the TUI can
 display real-time step progress (e.g. "⚙ Step 1/3: Searching emails...").
@@ -22,9 +29,19 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
 from bantz.core.event_bus import bus
+from bantz.core.notification_manager import notify_toast
 from bantz.tools import registry, ToolResult
 
 log = logging.getLogger("bantz.executor")
+
+# ── $REF variable resolution (Architect's Revision) ─────────────────────
+# New syntax: $REF_STEP_N (output), $REF_STEP_N_PARAMS_KEY (param access)
+# Whole-value refs resolved at Python dict level — no JSON corruption risk.
+_REF_FULL = re.compile(r"^\$REF_STEP_(\d+)$")
+_REF_FULL_PARAM = re.compile(r"^\$REF_STEP_(\d+)_PARAMS_([a-zA-Z_]+)$")
+_REF_INLINE = re.compile(r"\$REF_STEP_(\d+)(?:_PARAMS_([a-zA-Z_]+))?")
+# Legacy {step_N_output} / {step_N_params_KEY} (backward compat)
+_LEGACY_PH = re.compile(r"\{(step_(\d+)_([a-zA-Z_]+))\}")
 
 
 @dataclass
@@ -151,14 +168,61 @@ class PlanExecutor:
                 pass
 
             # Always inject context — _inject_context is a no-op when
-            # the params contain no {step_N_*} placeholders.
+            # the params contain no $REF_STEP_N / {step_N_*} placeholders.
             params = self._inject_context(params, context_store, tool_name)
 
-            # ── Virtual tool: process_text ──────────────────────────────
-            if tool_name == "process_text":
-                sr = await self._handle_process_text(
-                    step_num, params, description, llm_fn,
-                )
+            # Butler Lore toast (Architect's Revision)
+            notify_toast(
+                f"📋 Step {step_num}/{total_steps}",
+                description[:80],
+            )
+
+            # ── Route process_text / summarizer ─────────────────────────
+            if tool_name in ("process_text", "summarizer"):
+                # Try registered summarizer tool first (Architect's Revision)
+                _summarizer_tool = registry.get("summarizer")
+                if _summarizer_tool is not None:
+                    try:
+                        tool_result: ToolResult = await _summarizer_tool.execute(**params)
+                        sr = StepResult(
+                            step_number=step_num,
+                            tool=tool_name,
+                            description=description,
+                            success=tool_result.success,
+                            output=tool_result.output,
+                            error=tool_result.error,
+                        )
+                        if tool_result.success:
+                            log.info("Plan step %d [%s→summarizer]: success",
+                                     step_num, tool_name)
+                        else:
+                            log.warning("Plan step %d [%s→summarizer]: failed — %s",
+                                        step_num, tool_name, tool_result.error)
+                    except Exception as exc:
+                        sr = StepResult(
+                            step_number=step_num,
+                            tool=tool_name,
+                            description=description,
+                            success=False,
+                            output=f"Error: {exc}",
+                            error=str(exc),
+                        )
+                        log.warning("Plan step %d [%s→summarizer]: exception — %s",
+                                    step_num, tool_name, exc)
+                elif llm_fn is not None:
+                    # Fallback: old virtual handler (backward compat)
+                    sr = await self._handle_process_text(
+                        step_num, params, description, llm_fn,
+                    )
+                else:
+                    sr = StepResult(
+                        step_number=step_num,
+                        tool=tool_name,
+                        description=description,
+                        success=False,
+                        output="",
+                        error="No LLM function provided for process_text.",
+                    )
                 context_store[step_num] = {
                     "params": dict(plan_step.params),
                     "output": sr.output[:2000] if sr.success else "",
@@ -392,67 +456,116 @@ class PlanExecutor:
         context_store: dict[int, dict[str, Any]],
         tool_name: str = "",
     ) -> dict:
-        """Recursively replace ``{step_N_*}`` placeholders in *params*.
+        """Resolve ``$REF_STEP_N`` and legacy ``{step_N_*}`` placeholders.
 
-        Supported placeholder syntax (#215):
-          - ``{step_N_output}``       → output text of step N
-          - ``{step_N_params_KEY}``   → params[KEY] of step N
-          - ``{step_N_ANYTHING}``     → fallback to output (LLM hallucination)
+        Architect's Revision — two-phase resolution:
 
-        The function recursively walks nested dicts and lists so deeply
-        nested tool arguments are also resolved.
+        Phase 1 (object-level):
+          If the *entire* value equals ``$REF_STEP_N``, the Python dict
+          value is replaced with the raw step output — no string mangling,
+          no JSON corruption risk from special characters.
+
+        Phase 2 (inline string):
+          ``$REF_STEP_N`` embedded among other text → safe string
+          substitution (capped at 2 000 chars per reference).
+
+        Legacy:
+          ``{step_N_output}`` / ``{step_N_params_KEY}`` still resolved
+          via regex for backward compatibility.
 
         For the ``read_url`` tool the resolved output is further refined
         to extract the first HTTP URL (web_search returns prose text).
         """
-        # Build a flat replacement map from the rich context_store
-        replacements: dict[str, str] = {}
-        for step_num, state in context_store.items():
-            output = state.get("output", "")
-            step_params = state.get("params", {})
-            # Canonical: {step_N_output}
-            replacements[f"step_{step_num}_output"] = output
-            # Param access: {step_N_params_KEY}
-            for pk, pv in step_params.items():
-                replacements[f"step_{step_num}_params_{pk}"] = str(pv)
+
+        def _lookup_output(step_num: int) -> str:
+            if step_num in context_store:
+                return context_store[step_num].get("output", "")
+            return ""
+
+        def _lookup_param(step_num: int, key: str) -> str:
+            if step_num in context_store:
+                p = context_store[step_num].get("params", {})
+                return str(p.get(key, ""))
+            return ""
+
+        def _url_extract(val: str) -> str:
+            """For read_url, extract first HTTP URL from prose."""
+            if tool_name == "read_url" and val and not val.startswith("http"):
+                hit = re.search(r"https?://[^\s\"'>]+", val)
+                if hit:
+                    return hit.group(0).rstrip(".:;")
+            return val
 
         def _resolve(val: Any) -> Any:
-            """Recursively resolve placeholders in a value."""
             if isinstance(val, str):
-                return _replace_placeholders(val, replacements, context_store, tool_name)
+                return _resolve_string(val)
             if isinstance(val, dict):
                 return {k: _resolve(v) for k, v in val.items()}
             if isinstance(val, list):
                 return [_resolve(item) for item in val]
             return val
 
+        def _resolve_string(text: str) -> Any:
+            # Phase 1a: exact $REF_STEP_N → object-level replacement
+            m = _REF_FULL.match(text)
+            if m:
+                output = _lookup_output(int(m.group(1)))
+                return _url_extract(output) if isinstance(output, str) else output
+
+            # Phase 1b: exact $REF_STEP_N_PARAMS_KEY → object-level
+            m = _REF_FULL_PARAM.match(text)
+            if m:
+                return _lookup_param(int(m.group(1)), m.group(2))
+
+            # Phase 2: inline $REF → string substitution
+            if "$REF_STEP_" in text:
+                def _ref_sub(m: re.Match) -> str:
+                    sn = int(m.group(1))
+                    pk = m.group(2)
+                    if pk:
+                        return _lookup_param(sn, pk)[:2000]
+                    v = _lookup_output(sn)
+                    return _url_extract(v)[:2000] if isinstance(v, str) else str(v)[:2000]
+                text = _REF_INLINE.sub(_ref_sub, text)
+
+            # Phase 3: legacy {step_N_*} (backward compat)
+            if "{step_" in text:
+                text = _resolve_legacy(text, context_store, tool_name)
+
+            return text
+
         return _resolve(params)
 
 
-def _replace_placeholders(
+def _resolve_legacy(
     text: str,
-    replacements: dict[str, str],
     context_store: dict[int, dict[str, Any]],
     tool_name: str,
 ) -> str:
-    """Replace all ``{step_N_*}`` placeholders in *text*.
-
-    Falls back to the step's output when the specific key is not found
-    (handles LLM-hallucinated placeholder names gracefully).
-    """
-    _PH = re.compile(r"\{(step_(\d+)_([a-zA-Z_]+))\}")
+    """Legacy ``{step_N_*}`` placeholder resolution (backward compat)."""
 
     def _sub(m: re.Match) -> str:
-        full_key = m.group(1)   # e.g. "step_1_output"
         step_num = int(m.group(2))
-        # Exact match first
-        if full_key in replacements:
-            replacement = replacements[full_key]
-        elif step_num in context_store:
-            # Fallback: use output of that step (LLM hallucinated a key)
-            replacement = context_store[step_num].get("output", "")
-        else:
+        suffix = m.group(3)
+
+        if step_num not in context_store:
             return m.group(0)  # leave unresolved
+
+        state = context_store[step_num]
+
+        if suffix == "output":
+            replacement = state.get("output", "")
+        elif suffix.startswith("params_"):
+            param_key = suffix[len("params_"):]
+            pdict = state.get("params", {})
+            if param_key in pdict:
+                replacement = str(pdict[param_key])
+            else:
+                # Param not found — fall back to step output (hallucinated key)
+                replacement = state.get("output", "")
+        else:
+            # Fallback: use output (LLM hallucinated a key name)
+            replacement = state.get("output", "")
 
         # Special handling for read_url: extract first HTTP URL from prose
         if tool_name == "read_url" and replacement and not replacement.startswith("http"):
@@ -462,7 +575,21 @@ def _replace_placeholders(
 
         return replacement[:2000]
 
-    return _PH.sub(_sub, text)
+    return _LEGACY_PH.sub(_sub, text)
+
+
+def _replace_placeholders(
+    text: str,
+    _replacements: dict[str, str],
+    context_store: dict[int, dict[str, Any]],
+    tool_name: str,
+) -> str:
+    """Backward-compat wrapper — ``_replacements`` is ignored.
+
+    Old callers passed a pre-built ``replacements`` dict; the new
+    ``_resolve_legacy()`` builds lookups directly from *context_store*.
+    """
+    return _resolve_legacy(text, context_store, tool_name)
 
 
 # ── Singleton ────────────────────────────────────────────────────────────────
