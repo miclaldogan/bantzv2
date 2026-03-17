@@ -335,7 +335,7 @@ async def execute_plan(
     from bantz.agent.planner import planner_agent
     from bantz.agent.executor import plan_executor
 
-    tool_names = registry.names() + ["process_text"]
+    tool_names = registry.names() + ["process_text", "summarizer"]
     steps = await planner_agent.decompose(
         en_input, tool_names, recent_history=recent_history,
     )
@@ -345,7 +345,28 @@ async def execute_plan(
     itinerary = planner_agent.format_itinerary(steps)
     log.info("Plan-and-Solve itinerary:\n%s", itinerary)
 
+    # Butler Lore toast — plan start (Architect's Revision)
+    try:
+        from bantz.core.notification_manager import notify_toast
+        notify_toast(
+            "📋 Drafting an itinerary...",
+            f"{len(steps)} steps planned",
+        )
+    except Exception:
+        pass
+
     exec_result = await plan_executor.run(steps, llm_fn=ollama.chat)
+
+    # Butler Lore toast — plan complete
+    try:
+        from bantz.core.notification_manager import notify_toast as _toast
+        if exec_result.all_success:
+            _toast("✓ Itinerary complete", f"All {exec_result.total} tasks finished.")
+        else:
+            _toast("⚠ Itinerary concluded", f"{exec_result.succeeded}/{exec_result.total} succeeded.")
+    except Exception:
+        pass
+
     resp = itinerary + "\n\n" + exec_result.summary()
 
     data_layer.conversations.add("assistant", resp, tool_used="planner")

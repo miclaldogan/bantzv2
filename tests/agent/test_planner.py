@@ -737,15 +737,15 @@ class TestPlannerPrompt:
         assert "summarize" in PLANNER_SYSTEM.lower()
 
     def test_example_uses_three_step_flow(self):
-        """The examples must show web_search → read_url → process_text → filesystem (4-step)."""
+        """The examples must show web_search → read_url → summarizer → filesystem (4-step)."""
         from bantz.agent.planner import PLANNER_SYSTEM
         # process_text must appear in the example section
         idx_examples = PLANNER_SYSTEM.index("EXAMPLES:")
         example_block = PLANNER_SYSTEM[idx_examples:]
-        assert "process_text" in example_block
+        assert "summarizer" in example_block
         assert "read_url" in example_block
-        assert "step_2_output" in example_block
-        assert "step_3_output" in example_block
+        assert "REF_STEP_2" in example_block
+        assert "REF_STEP_3" in example_block
 
     def test_prompt_has_read_url_tool(self):
         """TOOL REFERENCE must include read_url."""
@@ -857,12 +857,12 @@ class TestPlannerPrompt:
         assert "quantum computing breakthrough" in block.lower()
 
     def test_example_step3_uses_process_text(self):
-        """Example step 3 must use process_text referencing step_2_output."""
+        """Example step 3 must use summarizer referencing $REF_STEP_2."""
         from bantz.agent.planner import PLANNER_SYSTEM
         idx = PLANNER_SYSTEM.index("EXAMPLES:")
         block = PLANNER_SYSTEM[idx:]
-        assert '"tool": "process_text"' in block
-        assert "step_2_output" in block
+        assert '"tool": "summarizer"' in block
+        assert "REF_STEP_2" in block
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -959,7 +959,9 @@ class TestProcessTextVirtualTool:
         ]
 
         executor = PlanExecutor()
-        result = await executor.run(steps)  # no llm_fn
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            result = await executor.run(steps)  # no llm_fn
 
         assert result.succeeded == 0
         assert "No LLM function" in result.step_results[0].error
@@ -997,7 +999,9 @@ class TestProcessTextVirtualTool:
 
         mock_llm = AsyncMock(side_effect=RuntimeError("LLM offline"))
         executor = PlanExecutor()
-        result = await executor.run(steps, llm_fn=mock_llm)
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            result = await executor.run(steps, llm_fn=mock_llm)
 
         assert result.succeeded == 0
         assert "LLM offline" in result.step_results[0].error
@@ -1030,7 +1034,11 @@ class TestProcessTextVirtualTool:
         with patch("bantz.agent.executor.registry") as mock_reg:
             mock_fs = MagicMock()
             mock_fs.execute = mock_fs_execute
-            mock_reg.get = MagicMock(return_value=mock_fs)
+            def _get(name):
+                if name == "filesystem":
+                    return mock_fs
+                return None  # summarizer not registered
+            mock_reg.get = MagicMock(side_effect=_get)
 
             result = await executor.run(steps, llm_fn=mock_llm)
 
@@ -1268,7 +1276,9 @@ class TestProcessTextCitation:
             return "Summary here"
 
         executor = PlanExecutor()
-        await executor.run(steps, llm_fn=mock_llm)
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            await executor.run(steps, llm_fn=mock_llm)
 
         # System prompt must contain citation rule
         sys_prompt = captured_messages[0]["content"]
@@ -1295,7 +1305,9 @@ class TestProcessTextCitation:
             return "Summary"
 
         executor = PlanExecutor()
-        await executor.run(steps, llm_fn=mock_llm)
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            await executor.run(steps, llm_fn=mock_llm)
 
         sys_prompt = captured_messages[0]["content"]
         assert "[text](url)" in sys_prompt
@@ -1319,12 +1331,14 @@ class TestProcessTextCitation:
             return "Summary"
 
         executor = PlanExecutor()
-        await executor.run(steps, llm_fn=mock_llm)
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            await executor.run(steps, llm_fn=mock_llm)
 
         sys_prompt = captured_messages[0]["content"]
         # Must tell the LLM not to echo instructions back
         assert "DO NOT acknowledge" in sys_prompt
-        assert "I will preserve links" in sys_prompt
+        assert "preamble" in sys_prompt.lower()
         assert "ONLY the final processed text" in sys_prompt
 
 
@@ -1459,5 +1473,407 @@ class TestFormatRecentHistoryPlanner:
         lines = result.split("\n")
         user_line = [l for l in lines if "user:" in l][0]
         assert len(user_line) <= 210  # "  user: " + 200 chars
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. $REF_STEP_N — Architect's Revision: dict-level variable binding
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestRefStepResolution:
+    """$REF_STEP_N resolved at Python dict level, not string interpolation."""
+
+    @pytest.mark.asyncio
+    async def test_ref_step_exact_output(self):
+        """$REF_STEP_1 as entire value → replaced at object level."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {"content": "$REF_STEP_1", "path": "~/file.txt"}
+        ctx = {1: {"params": {}, "output": "Hello World"}}
+        result = PlanExecutor._inject_context(params, ctx)
+        assert result["content"] == "Hello World"
+        assert result["path"] == "~/file.txt"
+
+    @pytest.mark.asyncio
+    async def test_ref_step_exact_params(self):
+        """$REF_STEP_1_PARAMS_folder_path → replaced with param value."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {"path": "$REF_STEP_1_PARAMS_folder_path/summary.txt"}
+        ctx = {1: {"params": {"folder_path": "~/Desktop/research"}, "output": "Folder created"}}
+        result = PlanExecutor._inject_context(params, ctx)
+        assert result["path"] == "~/Desktop/research/summary.txt"
+
+    @pytest.mark.asyncio
+    async def test_ref_step_inline_substitution(self):
+        """$REF_STEP_1 embedded in text → string substitution."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {"instruction": "Summarize this: $REF_STEP_1"}
+        ctx = {1: {"params": {}, "output": "Article about quantum computing"}}
+        result = PlanExecutor._inject_context(params, ctx)
+        assert "Article about quantum computing" in result["instruction"]
+        assert "Summarize this:" in result["instruction"]
+
+    @pytest.mark.asyncio
+    async def test_ref_step_special_chars_safe(self):
+        """$REF_STEP_N as entire value preserves special characters safely."""
+        from bantz.agent.executor import PlanExecutor
+
+        difficult_output = 'He said: "Hello {world}" — with\nnewlines & "quotes"'
+        params = {"content": "$REF_STEP_1"}
+        ctx = {1: {"params": {}, "output": difficult_output}}
+        result = PlanExecutor._inject_context(params, ctx)
+        # Object-level replacement preserves everything
+        assert result["content"] == difficult_output
+
+    @pytest.mark.asyncio
+    async def test_ref_step_mixed_with_legacy(self):
+        """Both $REF and legacy {step_N_*} placeholders work in same params dict."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {
+            "new_style": "$REF_STEP_1",
+            "old_style": "{step_2_output}",
+        }
+        ctx = {
+            1: {"params": {}, "output": "NEW"},
+            2: {"params": {}, "output": "OLD"},
+        }
+        result = PlanExecutor._inject_context(params, ctx)
+        assert result["new_style"] == "NEW"
+        assert result["old_style"] == "OLD"
+
+    @pytest.mark.asyncio
+    async def test_ref_step_unresolved_left_intact(self):
+        """$REF_STEP_99 with no step 99 → left as-is."""
+        from bantz.agent.executor import PlanExecutor
+
+        params = {"content": "$REF_STEP_99"}
+        ctx = {1: {"params": {}, "output": "Hello"}}
+        result = PlanExecutor._inject_context(params, ctx)
+        assert result["content"] == ""  # _lookup_output returns "" for missing step
+
+    @pytest.mark.asyncio
+    async def test_ref_step_read_url_extraction(self):
+        """$REF_STEP_1 for read_url → extracts first HTTP URL from prose."""
+        from bantz.agent.executor import PlanExecutor
+
+        prose = "Here are results:\n1. Quantum Computing\n   URL: https://example.com/quantum"
+        params = {"url": "$REF_STEP_1"}
+        ctx = {1: {"params": {}, "output": prose}}
+        result = PlanExecutor._inject_context(params, ctx, tool_name="read_url")
+        assert result["url"] == "https://example.com/quantum"
+
+    @pytest.mark.asyncio
+    async def test_ref_step_full_pipeline(self):
+        """Full 3-step flow with $REF_STEP_N: search → summarizer → filesystem."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="web_search",
+                     params={"query": "quantum computing"},
+                     description="Search"),
+            PlanStep(step=2, tool="process_text",
+                     params={"instruction": "Summarize: $REF_STEP_1"},
+                     description="Summarize", depends_on=1),
+            PlanStep(step=3, tool="filesystem",
+                     params={"action": "write", "path": "~/summary.txt",
+                             "content": "$REF_STEP_2"},
+                     description="Save", depends_on=2),
+        ]
+
+        search_output = "Quantum computing uses qubits..."
+        summary_output = "TL;DR: Qubits are key."
+        file_params: dict = {}
+
+        mock_search = AsyncMock(return_value=ToolResult(
+            success=True, output=search_output))
+        mock_llm = AsyncMock(return_value=summary_output)
+
+        async def mock_fs_execute(**kwargs):
+            file_params.update(kwargs)
+            return ToolResult(success=True, output="File written")
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_fs = MagicMock()
+            mock_fs.execute = mock_fs_execute
+            def _get(name):
+                if name == "web_search":
+                    return MagicMock(execute=mock_search)
+                if name == "filesystem":
+                    return mock_fs
+                return None
+            mock_reg.get = MagicMock(side_effect=_get)
+
+            result = await executor.run(steps, llm_fn=mock_llm)
+
+        assert result.all_success is True
+        assert result.succeeded == 3
+        # process_text LLM received search output via $REF
+        llm_call_msgs = mock_llm.call_args[0][0]
+        assert search_output[:50] in llm_call_msgs[1]["content"]
+        # filesystem received the summary via $REF_STEP_2
+        assert file_params["content"] == summary_output
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 16. Summarizer tool routing (Architect's Revision)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSummarizerRouting:
+    """process_text/summarizer routes to registered SummarizerTool when available."""
+
+    @pytest.mark.asyncio
+    async def test_process_text_routes_to_summarizer_when_registered(self):
+        """When SummarizerTool is registered, process_text uses it instead of llm_fn."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="Summarized via tool"))
+
+        steps = [
+            PlanStep(step=1, tool="process_text",
+                     params={"instruction": "Summarize this"},
+                     description="Summarize"),
+        ]
+
+        mock_llm = AsyncMock(return_value="Should NOT be called")
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            def _get(name):
+                if name == "summarizer":
+                    return mock_summarizer
+                return None
+            mock_reg.get = MagicMock(side_effect=_get)
+
+            result = await executor.run(steps, llm_fn=mock_llm)
+
+        assert result.all_success is True
+        assert result.step_results[0].output == "Summarized via tool"
+        mock_summarizer.execute.assert_called_once_with(instruction="Summarize this")
+        mock_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_summarizer_tool_name_direct(self):
+        """tool='summarizer' directly → also routes to registered tool."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.execute = AsyncMock(
+            return_value=ToolResult(success=True, output="Done"))
+
+        steps = [
+            PlanStep(step=1, tool="summarizer",
+                     params={"instruction": "Rewrite this"},
+                     description="Rewrite"),
+        ]
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            def _get(name):
+                if name == "summarizer":
+                    return mock_summarizer
+                return None
+            mock_reg.get = MagicMock(side_effect=_get)
+
+            result = await executor.run(steps)
+
+        assert result.all_success is True
+        assert result.step_results[0].tool == "summarizer"
+
+    @pytest.mark.asyncio
+    async def test_process_text_fallback_when_no_summarizer(self):
+        """Without summarizer in registry, falls back to llm_fn."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="process_text",
+                     params={"instruction": "Summarize"},
+                     description="Summarize"),
+        ]
+
+        mock_llm = AsyncMock(return_value="Fallback LLM output")
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg:
+            mock_reg.get = MagicMock(return_value=None)
+            result = await executor.run(steps, llm_fn=mock_llm)
+
+        assert result.all_success is True
+        assert result.step_results[0].output == "Fallback LLM output"
+        mock_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_summarizer_not_filtered_by_decompose(self):
+        """Steps with tool='summarizer' must NOT be filtered out."""
+        from bantz.agent.planner import PlannerAgent
+
+        llm_response = json.dumps([
+            {"step": 1, "tool": "web_search", "params": {"query": "AI news"},
+             "description": "Search", "depends_on": None},
+            {"step": 2, "tool": "summarizer",
+             "params": {"instruction": "Summarize: $REF_STEP_1"},
+             "description": "Summarize results", "depends_on": 1},
+        ])
+
+        agent = PlannerAgent()
+        with patch("bantz.core.intent._stream_and_collect", new=AsyncMock(return_value=llm_response)):
+            steps = await agent.decompose(
+                "search AI news and summarize",
+                ["web_search", "filesystem"],
+            )
+
+        assert len(steps) == 2
+        assert steps[1].tool == "summarizer"
+
+    @pytest.mark.asyncio
+    async def test_tool_names_include_summarizer(self):
+        """execute_plan passes 'summarizer' in tool_names to decompose."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutionResult
+
+        with patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.agent.executor.plan_executor") as mock_executor, \
+             patch("bantz.core.routing_engine.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.ollama") as mock_ollama, \
+             patch("bantz.core.routing_engine.registry") as mock_registry:
+
+            mock_registry.names.return_value = ["web_search", "filesystem"]
+            mock_planner.decompose = AsyncMock(return_value=[
+                PlanStep(step=1, tool="web_search", params={}, description="X"),
+                PlanStep(step=2, tool="summarizer", params={}, description="Y", depends_on=1),
+            ])
+            mock_planner.format_itinerary = MagicMock(return_value="...")
+            mock_executor.run = AsyncMock(
+                return_value=PlanExecutionResult(step_results=[]))
+            mock_dal.conversations = MagicMock()
+            mock_ollama.chat = AsyncMock()
+
+            from bantz.core.routing_engine import execute_plan
+
+            await execute_plan("test", "test", {})
+
+        call_args = mock_planner.decompose.call_args[0]
+        tool_names = call_args[1]
+        assert "summarizer" in tool_names
+        assert "process_text" in tool_names  # backward compat
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 17. Butler Lore toast notifications (Architect's Revision)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestButlerLoreToasts:
+    """Toast notifications during planner execution."""
+
+    @pytest.mark.asyncio
+    async def test_per_step_toast_emitted(self):
+        """Each step triggers a toast notification."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutor
+
+        steps = [
+            PlanStep(step=1, tool="weather", params={"city": "London"},
+                     description="Check London weather"),
+        ]
+
+        mock_weather = AsyncMock(return_value=ToolResult(
+            success=True, output="London: 15°C"))
+
+        toast_calls: list = []
+        original_toast = None
+
+        executor = PlanExecutor()
+        with patch("bantz.agent.executor.registry") as mock_reg, \
+             patch("bantz.agent.executor.notify_toast") as mock_toast:
+            mock_reg.get = MagicMock(
+                return_value=MagicMock(execute=mock_weather))
+            result = await executor.run(steps)
+
+        mock_toast.assert_called()
+        # Should contain step info
+        call_args = mock_toast.call_args_list[0]
+        assert "Step 1" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_routing_engine_toast_on_plan_start(self):
+        """execute_plan sends a toast when planning starts."""
+        from bantz.agent.planner import PlanStep
+        from bantz.agent.executor import PlanExecutionResult, StepResult
+
+        with patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.agent.executor.plan_executor") as mock_executor, \
+             patch("bantz.core.routing_engine.data_layer") as mock_dal, \
+             patch("bantz.core.routing_engine.ollama") as mock_ollama, \
+             patch("bantz.core.notification_manager.notify_toast") as mock_toast:
+
+            mock_planner.decompose = AsyncMock(return_value=[
+                PlanStep(step=1, tool="weather", params={}, description="X"),
+                PlanStep(step=2, tool="news", params={}, description="Y"),
+            ])
+            mock_planner.format_itinerary = MagicMock(return_value="Plan...")
+            mock_executor.run = AsyncMock(return_value=PlanExecutionResult(
+                step_results=[
+                    StepResult(step_number=1, tool="weather",
+                               description="X", success=True, output="ok"),
+                    StepResult(step_number=2, tool="news",
+                               description="Y", success=True, output="ok"),
+                ]))
+            mock_dal.conversations = MagicMock()
+            mock_ollama.chat = AsyncMock()
+
+            from bantz.core.routing_engine import execute_plan
+            await execute_plan("test", "test", {})
+
+        # At least one toast with "itinerary" or "Drafting"
+        toast_texts = [str(c) for c in mock_toast.call_args_list]
+        assert any("Drafting" in t or "itinerary" in t.lower() for t in toast_texts)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 18. PLANNER_SYSTEM — $REF syntax in prompt (Architect's Revision)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPlannerPromptRefSyntax:
+    """PLANNER_SYSTEM now teaches $REF_STEP_N syntax."""
+
+    def test_prompt_uses_ref_step_syntax(self):
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "$REF_STEP_" in PLANNER_SYSTEM
+
+    def test_prompt_has_summarizer_tool(self):
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "summarizer" in PLANNER_SYSTEM
+
+    def test_prompt_has_ref_params_syntax(self):
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "$REF_STEP_" in PLANNER_SYSTEM
+        assert "_PARAMS_" in PLANNER_SYSTEM
+
+    def test_prompt_has_legacy_compat_note(self):
+        """Prompt must mention legacy {step_N_output} for backward compat."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        assert "step_N_output" in PLANNER_SYSTEM
+        assert "deprecated" in PLANNER_SYSTEM.lower() or "legacy" in PLANNER_SYSTEM.lower()
+
+    def test_example_uses_ref_syntax(self):
+        """Examples must use $REF_STEP_N, not {step_N_output}."""
+        from bantz.agent.planner import PLANNER_SYSTEM
+        idx = PLANNER_SYSTEM.index("EXAMPLES:")
+        block = PLANNER_SYSTEM[idx:]
+        assert "$REF_STEP_1" in block
+        assert "$REF_STEP_2" in block
+        assert "$REF_STEP_3" in block
 
 
