@@ -609,15 +609,15 @@ class TestErrorResilience:
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestBrainIntegration:
-    """Verify {deep_memory} is in CHAT_SYSTEM and format calls work."""
+    """Verify memory_context placeholder in CHAT_SYSTEM and format calls work (#211)."""
 
-    def test_chat_system_has_deep_memory_placeholder(self):
-        """CHAT_SYSTEM contains {deep_memory}."""
+    def test_chat_system_has_memory_context_placeholder(self):
+        """CHAT_SYSTEM contains {memory_context} (unified memory block #211)."""
         from bantz.core.brain import CHAT_SYSTEM
-        assert "{deep_memory}" in CHAT_SYSTEM
+        assert "{memory_context}" in CHAT_SYSTEM
 
     def test_chat_system_format_with_deep_memory(self):
-        """CHAT_SYSTEM.format() accepts deep_memory kwarg."""
+        """CHAT_SYSTEM.format() accepts memory_context kwarg (includes deep memory)."""
         from bantz.core.brain import CHAT_SYSTEM
 
         formatted = CHAT_SYSTEM.format(
@@ -626,16 +626,14 @@ class TestBrainIntegration:
             formality_hint="",
             time_hint="",
             profile_hint="",
-            graph_hint="",
-            vector_hint="",
-            deep_memory="Spontaneous recall: ma'am mentioned an exam",
+            memory_context="Spontaneous recall: ma'am mentioned an exam",
             desktop_hint="",
         )
         assert "Spontaneous recall: ma'am mentioned an exam" in formatted
-        assert "{deep_memory}" not in formatted
+        assert "{memory_context}" not in formatted
 
     def test_chat_system_format_empty_deep_memory(self):
-        """When deep_memory='', no artifact in output."""
+        """When memory_context='', no artifact in output."""
         from bantz.core.brain import CHAT_SYSTEM
 
         formatted = CHAT_SYSTEM.format(
@@ -644,12 +642,10 @@ class TestBrainIntegration:
             formality_hint="",
             time_hint="",
             profile_hint="",
-            graph_hint="",
-            vector_hint="",
-            deep_memory="",
+            memory_context="",
             desktop_hint="",
         )
-        assert "{deep_memory}" not in formatted
+        assert "{memory_context}" not in formatted
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -657,15 +653,15 @@ class TestBrainIntegration:
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestFinalizerIntegration:
-    """Verify {deep_memory} is in FINALIZER_SYSTEM."""
+    """Verify {memory_context} is in FINALIZER_SYSTEM (#211)."""
 
-    def test_finalizer_system_has_deep_memory(self):
-        """FINALIZER_SYSTEM contains {deep_memory}."""
+    def test_finalizer_system_has_memory_context(self):
+        """FINALIZER_SYSTEM contains {memory_context}."""
         from bantz.core.finalizer import FINALIZER_SYSTEM
-        assert "{deep_memory}" in FINALIZER_SYSTEM
+        assert "{memory_context}" in FINALIZER_SYSTEM
 
     def test_finalizer_system_format(self):
-        """FINALIZER_SYSTEM.format() accepts deep_memory."""
+        """FINALIZER_SYSTEM.format() accepts memory_context."""
         from bantz.core.finalizer import FINALIZER_SYSTEM
 
         formatted = FINALIZER_SYSTEM.format(
@@ -674,14 +670,24 @@ class TestFinalizerIntegration:
             formality_hint="",
             time_hint="",
             profile_hint="",
-            graph_hint="",
-            deep_memory="Butler recalls a prior conversation",
+            memory_context="Butler recalls a prior conversation",
         )
         assert "Butler recalls a prior conversation" in formatted
-        assert "{deep_memory}" not in formatted
+        assert "{memory_context}" not in formatted
 
-    def test_finalize_signature_accepts_deep_memory(self):
-        """finalize() and finalize_stream() accept deep_memory kwarg."""
+    def test_finalize_signature_accepts_memory_context(self):
+        """finalize() and finalize_stream() accept memory_context kwarg (#211)."""
+        import inspect
+        from bantz.core.finalizer import finalize, finalize_stream
+
+        sig_f = inspect.signature(finalize)
+        assert "memory_context" in sig_f.parameters
+
+        sig_fs = inspect.signature(finalize_stream)
+        assert "memory_context" in sig_fs.parameters
+
+    def test_finalize_signature_still_accepts_deep_memory(self):
+        """finalize() still accepts deep_memory for backward compat."""
         import inspect
         from bantz.core.finalizer import finalize, finalize_stream
 
@@ -872,21 +878,19 @@ class TestEndToEndProbe:
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestBrainDeepMemoryContext:
-    """Verify Brain has _deep_memory_context method."""
+    """Verify deep memory is accessible via OmniMemory (#211)."""
 
-    def test_brain_has_method(self):
-        """Brain class has _deep_memory_context."""
-        from bantz.core.brain import Brain
-        assert hasattr(Brain, "_deep_memory_context")
-        assert asyncio.iscoroutinefunction(Brain._deep_memory_context)
+    def test_omni_memory_has_deep_search(self):
+        """OmniMemoryManager has _deep_search static method."""
+        from bantz.memory.omni_memory import OmniMemoryManager
+        assert hasattr(OmniMemoryManager, "_deep_search")
+        assert asyncio.iscoroutinefunction(OmniMemoryManager._deep_search)
 
-    def test_brain_deep_memory_context_graceful_on_error(self):
-        """_deep_memory_context returns '' on import/probe failures."""
-        from bantz.core.brain import Brain
-
-        brain = Brain.__new__(Brain)
+    def test_deep_search_graceful_on_error(self):
+        """_deep_search returns '' on import/probe failures."""
+        from bantz.memory.omni_memory import OmniMemoryManager
 
         with patch("bantz.memory.deep_probe.deep_probe") as mock_probe:
             mock_probe.probe = AsyncMock(side_effect=RuntimeError("fail"))
-            result = _run(brain._deep_memory_context("test"))
+            result = _run(OmniMemoryManager._deep_search("test"))
             assert result == ""

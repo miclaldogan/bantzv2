@@ -40,9 +40,7 @@ Never break character.
 {formality_hint}
 {time_hint}
 {profile_hint}
-{graph_hint}
-{vector_hint}
-{deep_memory}
+{memory_context}
 {desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
 1. When your tools (email, weather, search, calendar, filesystem, etc.) have ALREADY been used and \
@@ -122,6 +120,22 @@ or interact with screen elements.\
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _legacy_memory_block(ctx: "BantzContext") -> str:
+    """Fallback: combine individual memory fields when memory_combined is empty.
+
+    This handles callers that populate graph_context / vector_context /
+    deep_memory directly instead of going through OmniMemoryManager.
+    """
+    parts = []
+    if ctx.graph_context:
+        parts.append(ctx.graph_context)
+    if ctx.vector_context:
+        parts.append(ctx.vector_context)
+    if ctx.deep_memory:
+        parts.append(ctx.deep_memory)
+    return "\n".join(parts)
+
+
 def build_chat_system(ctx: "BantzContext", tc: dict) -> str:
     """Render the ``CHAT_SYSTEM`` template from populated context fields.
 
@@ -142,11 +156,9 @@ def build_chat_system(ctx: "BantzContext", tc: dict) -> str:
         time_hint=tc.get("prompt_hint", ""),
         profile_hint=ctx.profile_hint,
         style_hint=ctx.style_hint,
-        graph_hint=ctx.graph_context,
-        vector_hint=ctx.vector_context,
+        memory_context=ctx.memory_combined or _legacy_memory_block(ctx),
         desktop_hint=ctx.desktop_context,
         persona_state=ctx.persona_state,
-        deep_memory=ctx.deep_memory,
         formality_hint=ctx.formality_hint,
     )
     # Inject computer-use authorization when input control is active
