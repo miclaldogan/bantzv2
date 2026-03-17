@@ -44,9 +44,6 @@ _STYLES_PATH = Path(__file__).parent / "styles.tcss"
 
 # ── Messages ────────────────────────────────────────────────────────
 
-class WakeWordDetected(Message):
-    """Fired (from the audio thread via call_from_thread) when the user says the wake word."""
-
 
 class BantzEventMessage(Message):
     """Bridges EventBus → Textual main thread (#220, Sprint 3 Part 3).
@@ -333,21 +330,27 @@ class BantzApp(App):
                 except Exception:
                     pass
 
-                # Fallback: render directly to chat
+                # Fallback: render directly to chat (thread-safe)
+                def _show_observer_fallback(ev=event) -> None:
+                    try:
+                        chat = self.query_one("#chat-log", ChatLog)
+                        if ev.severity == Severity.CRITICAL:
+                            icon = "\U0001f6a8"  # 🚨
+                            msg = f"{icon} **Terminal Error Detected**\n```\n{ev.raw_text[:500]}\n```"
+                            if ev.analysis:
+                                msg += f"\n\n**Analysis:** {ev.analysis}"
+                            chat.add_error(msg)
+                        elif ev.severity == Severity.WARNING:
+                            icon = "\u26a0\ufe0f"  # ⚠️
+                            chat.add_system(f"{icon} stderr: {ev.raw_text[:200]}")
+                        else:
+                            chat.add_system(f"\u2139\ufe0f stderr: {ev.raw_text[:120]}")
+                        chat.scroll_end()
+                    except Exception:
+                        pass
+
                 try:
-                    chat = self.query_one("#chat-log", ChatLog)
-                    if event.severity == Severity.CRITICAL:
-                        icon = "\U0001f6a8"  # 🚨
-                        msg = f"{icon} **Terminal Error Detected**\n```\n{event.raw_text[:500]}\n```"
-                        if event.analysis:
-                            msg += f"\n\n**Analysis:** {event.analysis}"
-                        chat.add_error(msg)
-                    elif event.severity == Severity.WARNING:
-                        icon = "\u26a0\ufe0f"  # ⚠️
-                        chat.add_system(f"{icon} stderr: {event.raw_text[:200]}")
-                    else:
-                        chat.add_system(f"\u2139\ufe0f stderr: {event.raw_text[:120]}")
-                    chat.scroll_end()
+                    self.call_from_thread(_show_observer_fallback)
                 except Exception:
                     pass
 
@@ -780,6 +783,8 @@ class BantzApp(App):
         if result.needs_confirm:
             self._pending = result
             chat.add_bantz(result.response)
+        elif not result.response or not result.response.strip():
+            chat.add_system("🤔 I processed your message but had nothing to say. Try rephrasing?")
         else:
             if result.tool_used:
                 chat.add_tool(result.tool_used)
@@ -1048,12 +1053,16 @@ class BantzApp(App):
         bus.on("ghost_loop_listening", self._bus_relay)
         bus.on("ghost_loop_transcribing", self._bus_relay)
         bus.on("ghost_loop_idle", self._bus_relay)
+        bus.on("voice_no_speech", self._bus_relay)
+        bus.on("stt_model_loading", self._bus_relay)
+        bus.on("stt_model_ready", self._bus_relay)
+        bus.on("stt_model_failed", self._bus_relay)
         bus.on("thinking_start", self._bus_relay)
         bus.on("thinking_token", self._bus_relay)
         bus.on("thinking_done", self._bus_relay)
         bus.on("planner_step", self._bus_relay)
 
-        log.debug("EventBus → TUI bridge active (11 subscriptions)")
+        log.debug("EventBus → TUI bridge active (15 subscriptions)")
 
     def _relay_bus_event(self, event: Event) -> None:
         """Relay a single bus Event into the Textual message loop.
@@ -1066,7 +1075,7 @@ class BantzApp(App):
             self.call_from_thread(self.post_message, BantzEventMessage(event))
         except Exception:
             # App shutting down or not yet mounted — silently discard
-            pass
+            log.debug("Bus relay failed for event: %s", event.name)
 
     def _unsubscribe_event_bus(self) -> None:
         """Remove all bus subscriptions (called on quit)."""
@@ -1079,6 +1088,10 @@ class BantzApp(App):
             bus.off("ghost_loop_listening", relay)
             bus.off("ghost_loop_transcribing", relay)
             bus.off("ghost_loop_idle", relay)
+            bus.off("voice_no_speech", relay)
+            bus.off("stt_model_loading", relay)
+            bus.off("stt_model_ready", relay)
+            bus.off("stt_model_failed", relay)
             bus.off("thinking_start", relay)
             bus.off("thinking_token", relay)
             bus.off("thinking_done", relay)
@@ -1106,6 +1119,14 @@ class BantzApp(App):
                 self._on_bus_ghost_transcribing(event)
             elif name == "ghost_loop_idle":
                 self._on_bus_ghost_idle(event)
+            elif name == "voice_no_speech":
+                self._on_bus_voice_no_speech(event)
+            elif name == "stt_model_loading":
+                self._on_bus_stt_model_loading(event)
+            elif name == "stt_model_ready":
+                self._on_bus_stt_model_ready(event)
+            elif name == "stt_model_failed":
+                self._on_bus_stt_model_failed(event)
             elif name == "thinking_start":
                 self._on_bus_thinking_start(event)
             elif name == "thinking_token":
@@ -1114,6 +1135,8 @@ class BantzApp(App):
                 self._on_bus_thinking_done(event)
             elif name == "planner_step":
                 self._on_bus_planner_step(event)
+            else:
+                log.debug("Unhandled bus event: %s", name)
         except Exception:
             log.debug("on_bantz_event_message(%s) error", name, exc_info=True)
 
@@ -1201,6 +1224,11 @@ class BantzApp(App):
         if not text:
             return
 
+        # Guard against concurrent voice + typed input processing
+        if self._busy:
+            log.debug("TUI: voice_input ignored — already processing")
+            return
+
         chat = self.query_one("#chat-log", ChatLog)
         chat.add_user(f"🎤 {text}")
         chat.scroll_end()
@@ -1229,6 +1257,50 @@ class BantzApp(App):
     def _on_bus_ghost_idle(self, event: Event) -> None:
         """Ghost Loop returned to idle — no visual action needed."""
         pass
+
+    def _on_bus_voice_no_speech(self, event: Event) -> None:
+        """Ghost Loop couldn't capture or transcribe speech → tell user."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            reason = event.data.get("reason", "")
+            if "no_audio" in reason:
+                chat.add_system("🤔 I didn't catch that — no speech detected.")
+            elif "empty_transcription" in reason:
+                chat.add_system("🤔 I heard something but couldn't make it out.")
+            else:
+                chat.add_system("🤔 Something went wrong — try again.")
+            chat.add_system("Say \"Hey Bantz\" to try again.")
+            chat.scroll_end()
+        except Exception:
+            pass
+
+    def _on_bus_stt_model_loading(self, event: Event) -> None:
+        """STT model is being downloaded/loaded → show indicator."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system("⏳ Loading speech recognition model (first time may take a minute)...")
+            chat.scroll_end()
+        except Exception:
+            pass
+
+    def _on_bus_stt_model_ready(self, event: Event) -> None:
+        """STT model loaded → confirm."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            chat.add_system("✅ Speech recognition ready.")
+            chat.scroll_end()
+        except Exception:
+            pass
+
+    def _on_bus_stt_model_failed(self, event: Event) -> None:
+        """STT model failed to load → warn user."""
+        try:
+            chat = self.query_one("#chat-log", ChatLog)
+            error = event.data.get("error", "unknown error")
+            chat.add_error(f"❌ Speech recognition failed to load: {error}")
+            chat.scroll_end()
+        except Exception:
+            pass
 
     def _start_ghost_loop(self) -> None:
         """Start the Ghost Loop if enabled (#36)."""
@@ -1269,21 +1341,6 @@ class BantzApp(App):
                 chat.add_system("Wake Word: listening for \"Hey Bantz\"")
         except Exception as exc:
             log.debug("Wake word start failed: %s", exc)
-
-    def on_wake_word_detected(self, _msg: WakeWordDetected) -> None:
-        """Handle wake word detection — focus input + notify user.
-
-        .. deprecated:: Sprint 3 Part 3
-           Kept for backward compat.  Primary path is now
-           ``on_bantz_event_message`` → ``_on_bus_wake_word``.
-        """
-        try:
-            chat = self.query_one("#chat-log", ChatLog)
-            chat.add_bantz("Yes boss? 🎤")
-            chat.scroll_end()
-            self.query_one("#chat-input", Input).focus()
-        except Exception as exc:
-            log.debug("Wake word handler error: %s", exc)
 
 
 def run() -> None:

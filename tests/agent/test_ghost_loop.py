@@ -382,10 +382,15 @@ class TestGhostLoopPipeline:
             with patch("bantz.agent.voice_capture.voice_capture", mock_vc):
                 gl._capture_and_transcribe()
         assert gl._busy is False
-        # Should have emitted listening + idle
+        # Should have emitted listening + voice_no_speech + idle
         calls = [c[0][0] for c in mock_bus.emit_threadsafe.call_args_list]
         assert "ghost_loop_listening" in calls
+        assert "voice_no_speech" in calls
         assert "ghost_loop_idle" in calls
+        # voice_no_speech should include reason
+        no_speech = [c for c in mock_bus.emit_threadsafe.call_args_list
+                     if c[0][0] == "voice_no_speech"]
+        assert no_speech[0][1]["reason"] == "no_audio"
 
     def test_pipeline_successful_transcription(self):
         from bantz.agent.ghost_loop import GhostLoop
@@ -420,9 +425,38 @@ class TestGhostLoopPipeline:
                 with patch("bantz.agent.stt.stt_engine", mock_stt):
                     gl._capture_and_transcribe()
         assert gl._total_transcriptions == 0
-        # voice_input should NOT have been emitted
+        # voice_input should NOT have been emitted, but voice_no_speech SHOULD
         emit_names = [c[0][0] for c in mock_bus.emit_threadsafe.call_args_list]
         assert "voice_input" not in emit_names
+        assert "voice_no_speech" in emit_names
+        no_speech = [c for c in mock_bus.emit_threadsafe.call_args_list
+                     if c[0][0] == "voice_no_speech"]
+        assert no_speech[0][1]["reason"] == "empty_transcription"
+
+    def test_pipeline_exception_emits_voice_no_speech(self):
+        """Pipeline exceptions should emit voice_no_speech with error info."""
+        from bantz.agent.ghost_loop import GhostLoop
+        gl = GhostLoop()
+        mock_vc = MagicMock()
+        mock_vc.capture.side_effect = RuntimeError("mic exploded")
+        mock_bus = MagicMock()
+        with patch("bantz.agent.ghost_loop.bus", mock_bus):
+            with patch("bantz.agent.voice_capture.voice_capture", mock_vc):
+                gl._capture_and_transcribe()
+        assert gl._busy is False
+        emit_names = [c[0][0] for c in mock_bus.emit_threadsafe.call_args_list]
+        assert "voice_no_speech" in emit_names
+        no_speech = [c for c in mock_bus.emit_threadsafe.call_args_list
+                     if c[0][0] == "voice_no_speech"]
+        assert "pipeline_error" in no_speech[0][1]["reason"]
+
+    def test_pipeline_alsa_release_sleep(self):
+        """Pipeline should sleep ≥0.25s after pausing wake word for ALSA."""
+        import inspect
+        from bantz.agent.ghost_loop import GhostLoop
+        src = inspect.getsource(GhostLoop._capture_and_transcribe)
+        # Verify the sleep is at least 0.25s (we set it to 0.30)
+        assert "time.sleep(0.30)" in src or "time.sleep(0.3)" in src
 
 
 class TestGhostLoopDiagnose:
@@ -458,6 +492,10 @@ class TestTUIEventSubscriptions:
         assert 'bus.on("ghost_loop_listening"' in src
         assert 'bus.on("ghost_loop_transcribing"' in src
         assert 'bus.on("ghost_loop_idle"' in src
+        assert 'bus.on("voice_no_speech"' in src
+        assert 'bus.on("stt_model_loading"' in src
+        assert 'bus.on("stt_model_ready"' in src
+        assert 'bus.on("stt_model_failed"' in src
 
     def test_unsubscribe_has_voice_events(self):
         """_unsubscribe_event_bus must unsubscribe from ghost loop events."""
@@ -468,6 +506,10 @@ class TestTUIEventSubscriptions:
         assert 'bus.off("ghost_loop_listening"' in src
         assert 'bus.off("ghost_loop_transcribing"' in src
         assert 'bus.off("ghost_loop_idle"' in src
+        assert 'bus.off("voice_no_speech"' in src
+        assert 'bus.off("stt_model_loading"' in src
+        assert 'bus.off("stt_model_ready"' in src
+        assert 'bus.off("stt_model_failed"' in src
 
     def test_event_dispatch_has_voice_input(self):
         """on_bantz_event_message must dispatch voice_input events."""
@@ -477,6 +519,8 @@ class TestTUIEventSubscriptions:
         assert '"voice_input"' in src
         assert '"ghost_loop_listening"' in src
         assert '"ghost_loop_transcribing"' in src
+        assert '"voice_no_speech"' in src
+        assert '"stt_model_loading"' in src
 
     def test_voice_input_handler_exists(self):
         """BantzApp must have _on_bus_voice_input method."""
@@ -491,6 +535,39 @@ class TestTUIEventSubscriptions:
     def test_ghost_transcribing_handler_exists(self):
         from bantz.interface.tui.app import BantzApp
         assert hasattr(BantzApp, "_on_bus_ghost_transcribing")
+
+    def test_voice_no_speech_handler_exists(self):
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "_on_bus_voice_no_speech")
+        assert callable(getattr(BantzApp, "_on_bus_voice_no_speech"))
+
+    def test_stt_model_loading_handler_exists(self):
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "_on_bus_stt_model_loading")
+        assert callable(getattr(BantzApp, "_on_bus_stt_model_loading"))
+
+    def test_stt_model_ready_handler_exists(self):
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "_on_bus_stt_model_ready")
+        assert callable(getattr(BantzApp, "_on_bus_stt_model_ready"))
+
+    def test_stt_model_failed_handler_exists(self):
+        from bantz.interface.tui.app import BantzApp
+        assert hasattr(BantzApp, "_on_bus_stt_model_failed")
+        assert callable(getattr(BantzApp, "_on_bus_stt_model_failed"))
+
+    def test_voice_input_handler_has_busy_guard(self):
+        """_on_bus_voice_input must check _busy before processing."""
+        import inspect
+        from bantz.interface.tui.app import BantzApp
+        src = inspect.getsource(BantzApp._on_bus_voice_input)
+        assert "_busy" in src
+
+    def test_legacy_wake_word_message_removed(self):
+        """The dead WakeWordDetected message class should no longer exist."""
+        from bantz.interface import tui
+        from bantz.interface.tui import app as tui_app
+        assert not hasattr(tui_app, "WakeWordDetected")
 
     def test_start_ghost_loop_method_exists(self):
         from bantz.interface.tui.app import BantzApp
