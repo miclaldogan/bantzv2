@@ -75,6 +75,17 @@ class MemoryCountUpdated(Message):
         self.total_sessions = total_sessions
 
 
+class VoiceStatusChanged(Message):
+    """Fired to update the transient voice pipeline status in the header.
+
+    Pass an empty string to clear the indicator (idle state).
+    """
+
+    def __init__(self, status: str) -> None:
+        super().__init__()
+        self.status = status
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Operations Header Widget
 # ═══════════════════════════════════════════════════════════════════════════
@@ -97,6 +108,8 @@ class OperationsHeader(Static):
     uptime_text: reactive[str] = reactive("0m")
     memory_count: reactive[int] = reactive(0)
     session_count: reactive[int] = reactive(0)
+    # Transient voice pipeline status — cleared after voice_input is processed
+    voice_status: reactive[str] = reactive("")
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -139,7 +152,8 @@ class OperationsHeader(Static):
 
         line1 = f"  BANTZ // OPERATIONS CENTER    {face} {label}"
         line2 = f"  {dots}  │  {model}"
-        line3 = f"  Uptime: {uptime}  │  Memory: {mem}  │  Sessions: {sess}"
+        voice_part = f"  │  {self.voice_status}" if self.voice_status else ""
+        line3 = f"  Uptime: {uptime}  │  Memory: {mem}  │  Sessions: {sess}{voice_part}"
 
         return f"{line1}\n{line2}\n{line3}"
 
@@ -166,6 +180,9 @@ class OperationsHeader(Static):
     def watch_session_count(self) -> None:
         self.refresh()
 
+    def watch_voice_status(self) -> None:
+        self.refresh()
+
     # ── Event handler: ServiceHealthChanged ───────────────────────
 
     def on_service_health_changed(self, msg: ServiceHealthChanged) -> None:
@@ -183,6 +200,10 @@ class OperationsHeader(Static):
         """React to DB count updates (event-driven, not polling)."""
         self.memory_count = msg.total_messages
         self.session_count = msg.total_sessions
+
+    def on_voice_status_changed(self, msg: VoiceStatusChanged) -> None:
+        """React to voice pipeline state changes — updates header status bar."""
+        self.voice_status = msg.status
 
     # ── Uptime ticker ─────────────────────────────────────────────
 

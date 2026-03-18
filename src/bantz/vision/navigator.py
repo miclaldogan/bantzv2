@@ -479,11 +479,11 @@ class Navigator:
             # Try capturing the specific app window, fall back to full screen
             img_b64 = None
             try:
-                img_b64 = capture_window_base64(app_name)
+                img_b64 = await capture_window_base64(app_name)
             except Exception:
                 pass
             if not img_b64:
-                img_b64 = capture_base64()
+                img_b64 = await capture_base64()
             if not img_b64:
                 return None
 

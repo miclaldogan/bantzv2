@@ -319,13 +319,15 @@ class TestMoodHistory:
 
     def test_recent_filters_old(self, history):
         from bantz.interface.tui.mood import Mood
+        from bantz.data.connection_pool import get_pool
         # Insert entry with old timestamp
         old_ts = (datetime.now() - timedelta(hours=25)).isoformat()
-        history._conn.execute(
-            "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("stressed", "chill", "old", 90, 50, "idle", old_ts),
-        )
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("stressed", "chill", "old", 90, 50, "idle", old_ts),
+            )
         entries = history.recent(hours=24)
         assert len(entries) == 0
 
@@ -345,19 +347,21 @@ class TestMoodHistory:
 
     def test_summary_24h_with_data(self, history):
         from bantz.interface.tui.mood import Mood
+        from bantz.data.connection_pool import get_pool
         # Insert two transitions 30 min apart
         t1 = datetime.now() - timedelta(minutes=60)
         t2 = datetime.now() - timedelta(minutes=30)
-        history._conn.execute(
-            "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("chill", "stressed", "recovery", 20, 40, "idle", t1.isoformat()),
-        )
-        history._conn.execute(
-            "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("focused", "chill", "coding", 35, 50, "coding", t2.isoformat()),
-        )
+        with get_pool().connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("chill", "stressed", "recovery", 20, 40, "idle", t1.isoformat()),
+            )
+            conn.execute(
+                "INSERT INTO mood_history (mood, prev_mood, reason, cpu_pct, ram_pct, activity, timestamp)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("focused", "chill", "coding", 35, 50, "coding", t2.isoformat()),
+            )
         summary = history.summary_24h()
         assert "chill" in summary
         assert "focused" in summary

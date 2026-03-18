@@ -19,25 +19,30 @@ Architecture (The Ghost Loop):
     │       ├─ 3. STTEngine.transcribe(pcm_bytes)                  │
     │       ├─ 4. Emit "voice_input" to EventBus                   │
     │       │     (TUI picks this up → displays + brain.process)   │
-    │       └─ 5. Loop back to idle (wake word listener continues) │
+    │       └─ 5. Conversation window: listen for 60s follow-ups   │
     └───────────────────────────────────────────────────────────────┘
 
-The Ghost Loop runs as a daemon thread.  It subscribes to
-``wake_word_detected`` on the EventBus and chains the capture →
-transcribe → dispatch pipeline each time the wake word fires.
-
-No manual keybinds needed.  Fully hands-free.
+After a successful transcription the Ghost Loop stays in *conversation
+mode* for ``CONVERSATION_WINDOW_SEC`` seconds.  During this window a
+follow-up command can be spoken without saying the wake word again.
+If no speech is detected within 30 s (VAD capture timeout) the window
+expires and the wake-word listener is resumed.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import threading
+import time
 from typing import Optional
 
 from bantz.core.event_bus import bus, Event
 
 log = logging.getLogger("bantz.ghost_loop")
+
+# After a successful transcription, keep listening for this many seconds
+# without requiring another wake word.
+CONVERSATION_WINDOW_SEC = 60
 
 
 class GhostLoop:
@@ -49,6 +54,8 @@ class GhostLoop:
         self._total_transcriptions: int = 0
         self._last_text: str = ""
         self._thread_pool: Optional[threading.Thread] = None
+        # Monotonic deadline for conversation-mode follow-ups (0 = not active)
+        self._conversation_end: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -91,6 +98,7 @@ class GhostLoop:
             return
         bus.off("wake_word_detected", self._on_wake_event)
         self._running = False
+        self._conversation_end = 0.0
         log.info("Ghost Loop: stopped (total transcriptions: %d)",
                  self._total_transcriptions)
 
@@ -108,18 +116,14 @@ class GhostLoop:
             "busy": self._busy,
             "total_transcriptions": self._total_transcriptions,
             "last_text": self._last_text[:80] if self._last_text else "",
+            "conversation_mode": self._conversation_end > time.monotonic(),
         }
 
     # ── Event handler ───────────────────────────────────────────────────
 
     @staticmethod
     def _preload_stt() -> None:
-        """Load the STT model in the background at startup.
-
-        Emits ``stt_model_loading`` / ``stt_model_ready`` events so the
-        TUI can show a status indicator instead of silently freezing on
-        first run when the model must be downloaded from HuggingFace.
-        """
+        """Load the STT model in the background at startup."""
         try:
             bus.emit_threadsafe("stt_model_loading")
             log.info("Ghost Loop: pre-loading STT model …")
@@ -141,9 +145,9 @@ class GhostLoop:
             log.debug("Ghost Loop: already busy, ignoring wake word")
             return
 
-        # Run the blocking pipeline on a separate thread
         thread = threading.Thread(
             target=self._capture_and_transcribe,
+            kwargs={"release_mic": True},
             name="bantz-ghost-loop",
             daemon=True,
         )
@@ -151,76 +155,103 @@ class GhostLoop:
 
     # ── Pipeline (runs on background thread) ────────────────────────────
 
-    def _capture_and_transcribe(self) -> None:
-        """Blocking pipeline: capture audio → STT → emit to bus."""
+    def _capture_and_transcribe(self, *, release_mic: bool = True) -> None:
+        """Blocking pipeline: capture audio → STT → emit to bus.
+
+        Args:
+            release_mic: When True, pause the wake word listener to free
+                the mic before opening the capture stream.  Set to False
+                for conversation-mode continuations where the wake word
+                listener is already paused and the mic is available.
+        """
         self._busy = True
+        should_chain = False  # set True on successful transcription
 
         try:
-            # 0. Pause wake word listener to release the mic
-            try:
-                from bantz.agent.wake_word import wake_listener
-                wake_listener.pause()
-                import time
-                time.sleep(0.30)  # give ALSA time to fully release the device
-            except Exception as exc:
-                log.debug("Ghost Loop: could not pause wake word — %s", exc)
+            # 0. Release mic from wake word listener (first call only)
+            if release_mic:
+                try:
+                    from bantz.agent.wake_word import wake_listener
+                    wake_listener.pause()
+                    # 500ms for ALSA/PulseAudio to fully release the device
+                    time.sleep(0.50)
+                    log.info("Ghost Loop: [1/4] mic released, starting capture")
+                except Exception as exc:
+                    log.warning("Ghost Loop: could not pause wake word — %s", exc)
 
-            # 1. Emit "listening" event so TUI can show indicator
+            # 1. Emit "listening" event so TUI shows indicator
             bus.emit_threadsafe("ghost_loop_listening")
 
             # 2. Capture audio with VAD
             from bantz.agent.voice_capture import voice_capture
+            log.info("Ghost Loop: [2/4] recording with VAD…")
             pcm_bytes = voice_capture.capture()
 
             if not pcm_bytes:
-                log.info("Ghost Loop: no audio captured")
-                bus.emit_threadsafe(
-                    "voice_no_speech",
-                    reason="no_audio",
-                )
+                log.warning("Ghost Loop: [2/4] FAILED — no audio captured (mic busy or VAD timeout)")
+                bus.emit_threadsafe("voice_no_speech", reason="no_audio")
                 return
+
+            log.info("Ghost Loop: [2/4] captured %d bytes of PCM audio", len(pcm_bytes))
 
             # 3. Emit "transcribing" event
             bus.emit_threadsafe("ghost_loop_transcribing")
 
             # 4. Transcribe via faster-whisper
             from bantz.agent.stt import stt_engine
+            log.info("Ghost Loop: [3/4] sending to STT (faster-whisper)…")
             text = stt_engine.transcribe(pcm_bytes)
 
             if not text:
-                log.info("Ghost Loop: STT returned empty")
-                bus.emit_threadsafe(
-                    "voice_no_speech",
-                    reason="empty_transcription",
-                )
+                log.warning("Ghost Loop: [3/4] FAILED — STT returned empty")
+                bus.emit_threadsafe("voice_no_speech", reason="empty_transcription")
                 return
 
             self._total_transcriptions += 1
             self._last_text = text
-            log.info("Ghost Loop: transcribed → \"%s\"", text[:80])
+            log.info("Ghost Loop: [4/4] ✅ TRANSCRIBED → \"%s\"", text[:120])
 
-            # 5. Dispatch as a voice input event
-            #    The TUI subscribes to this and feeds it to brain.process()
+            # 5. Dispatch as voice input
             bus.emit_threadsafe("voice_input", text=text)
+            log.info("Ghost Loop: voice_input emitted to EventBus")
+
+            # Refresh conversation window — user can speak again without wake word
+            self._conversation_end = time.monotonic() + CONVERSATION_WINDOW_SEC
+            should_chain = True
 
         except Exception as exc:
-            log.error("Ghost Loop: pipeline error — %s", exc)
-            bus.emit_threadsafe(
-                "voice_no_speech",
-                reason=f"pipeline_error: {exc}",
-            )
+            log.error("Ghost Loop: pipeline EXCEPTION at step — %s: %s",
+                      type(exc).__name__, exc, exc_info=True)
+            bus.emit_threadsafe("voice_no_speech", reason=f"pipeline_error: {exc}")
         finally:
             self._busy = False
-            # Resume wake word listener so it re-acquires the mic
-            try:
-                from bantz.agent.wake_word import wake_listener
-                wake_listener.resume()
-            except Exception:
-                pass
-            try:
-                bus.emit_threadsafe("ghost_loop_idle")
-            except Exception:
-                pass
+
+            if should_chain and self._running and time.monotonic() < self._conversation_end:
+                # ── Conversation mode: chain another capture cycle ───────
+                remaining = int(self._conversation_end - time.monotonic())
+                log.info("Ghost Loop: conversation mode active (%ds left) — listening again", remaining)
+                # Update TUI header to show we're still listening
+                bus.emit_threadsafe("ghost_loop_listening")
+                thread = threading.Thread(
+                    target=self._capture_and_transcribe,
+                    # Mic is already free — skip the pause step
+                    kwargs={"release_mic": False},
+                    name="bantz-ghost-loop-conv",
+                    daemon=True,
+                )
+                thread.start()
+            else:
+                # ── Return to idle: resume wake word listener ─────────
+                try:
+                    from bantz.agent.wake_word import wake_listener
+                    wake_listener.resume()
+                    log.info("Ghost Loop: wake word listener resumed")
+                except Exception as exc:
+                    log.warning("Ghost Loop: could not resume wake word — %s", exc)
+                try:
+                    bus.emit_threadsafe("ghost_loop_idle")
+                except Exception:
+                    pass
 
     # ── Diagnostics ─────────────────────────────────────────────────────
 
@@ -233,6 +264,7 @@ class GhostLoop:
             "running": self._running,
             "busy": self._busy,
             "total_transcriptions": self._total_transcriptions,
+            "conversation_mode": self._conversation_end > time.monotonic(),
             "voice_capture": voice_capture.diagnose(),
             "stt": stt_engine.diagnose(),
         }

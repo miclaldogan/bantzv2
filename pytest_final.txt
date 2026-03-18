@@ -1,0 +1,688 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
+........................................................................ [ 34%]
+........................................................................ [ 37%]
+.................................FFFFFFFFFFFFFFFFFFFFFFFF............... [ 40%]
+........................................................................ [ 43%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 56%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+........................................................................ [ 65%]
+........................................................................ [ 68%]
+..ssssss................................................................ [ 71%]
+........................................................................ [ 74%]
+........................................................................ [ 77%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_____________________ TestExtractCity.test_weather_in_city _____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc264f50>
+
+    def test_weather_in_city(self):
+>       assert self._extract("weather in Istanbul") == "Istanbul"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:275: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc264f50>
+text = 'weather in Istanbul'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+___________________ TestExtractCity.test_weather_in_new_york ___________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265550>
+
+    def test_weather_in_new_york(self):
+>       assert self._extract("weather in New York") == "New York"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:278: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265550>
+text = 'weather in New York'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+___________________ TestExtractCity.test_forecast_for_london ___________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265b50>
+
+    def test_forecast_for_london(self):
+>       assert self._extract("forecast for London") == "London"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:281: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265b50>
+text = 'forecast for London'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+__________________ TestExtractCity.test_temperature_in_berlin __________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266190>
+
+    def test_temperature_in_berlin(self):
+>       assert self._extract("temperature in Berlin") == "Berlin"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:284: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266190>
+text = 'temperature in Berlin'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_________________ TestExtractCity.test_how_is_weather_in_paris _________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266790>
+
+    def test_how_is_weather_in_paris(self):
+>       assert self._extract("how's the weather in Paris") == "Paris"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266790>
+text = "how's the weather in Paris"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_________________ TestExtractCity.test_how_is_weather_in_tokyo _________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266d90>
+
+    def test_how_is_weather_in_tokyo(self):
+>       assert self._extract("how is the weather in Tokyo") == "Tokyo"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:290: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266d90>
+text = 'how is the weather in Tokyo'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+______________________ TestExtractCity.test_bare_weather _______________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267390>
+
+    def test_bare_weather(self):
+        """Just 'weather' → empty (auto-detect via GPS)."""
+>       assert self._extract("weather") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:294: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267390>
+text = 'weather'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+____________________ TestExtractCity.test_whats_the_weather ____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267990>
+
+    def test_whats_the_weather(self):
+        """'what's the weather' → empty."""
+>       assert self._extract("what's the weather") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:298: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267990>
+text = "what's the weather"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+______________________ TestExtractCity.test_is_it_raining ______________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267f90>
+
+    def test_is_it_raining(self):
+        """'is it raining' → empty."""
+>       assert self._extract("is it raining") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:302: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267f90>
+text = 'is it raining'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+______________________ TestExtractCity.test_weather_today ______________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267b50>
+
+    def test_weather_today(self):
+        """'weather today' → empty."""
+>       assert self._extract("weather today") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc267b50>
+text = 'weather today'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_____________________ TestExtractCity.test_show_me_weather _____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266f10>
+
+    def test_show_me_weather(self):
+        """'show me weather' → empty."""
+>       assert self._extract("show me weather") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:310: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266f10>
+text = 'show me weather'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+____________________ TestExtractCity.test_turkish_de_suffix ____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266390>
+
+    def test_turkish_de_suffix(self):
+        """ankara'da hava nasıl → Ankara"""
+>       assert self._extract("ankara'da hava nasıl") == "Ankara"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:316: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc266390>
+text = "ankara'da hava nasıl"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+____________________ TestExtractCity.test_turkish_te_suffix ____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265450>
+
+    def test_turkish_te_suffix(self):
+        """İstanbul'da hava nasıl → İstanbul"""
+>       result = self._extract("istanbul'da hava nasıl")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:320: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc265450>
+text = "istanbul'da hava nasıl"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+________________ TestExtractCity.test_turkish_izmir_hava_durumu ________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc264bd0>
+
+    def test_turkish_izmir_hava_durumu(self):
+        """izmir hava durumu → Izmir"""
+>       result = self._extract("izmir hava durumu")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:325: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc264bd0>
+text = 'izmir hava durumu'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+________________ TestExtractCity.test_turkish_bugun_hava_nasil _________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc247f90>
+
+    def test_turkish_bugun_hava_nasil(self):
+        """bugün hava nasıl → empty (no city, use GPS)."""
+>       assert self._extract("bugün hava nasıl") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:330: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc247f90>
+text = 'bugün hava nasıl'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+________________ TestExtractCity.test_turkish_yarin_hava_nasil _________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc246650>
+
+    def test_turkish_yarin_hava_nasil(self):
+        """yarın hava nasıl → empty."""
+>       assert self._extract("yarın hava nasıl") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:334: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc246650>
+text = 'yarın hava nasıl'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+___________________ TestExtractCity.test_turkish_antalya_de ____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26c210>
+
+    def test_turkish_antalya_de(self):
+        """antalya'da hava → Antalya"""
+>       result = self._extract("antalya'da hava")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26c210>
+text = "antalya'da hava"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+____________________ TestExtractCity.test_turkish_bursa_te _____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26c810>
+
+    def test_turkish_bursa_te(self):
+        """bursa'da hava → Bursa"""
+>       result = self._extract("bursa'da hava nasıl")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:343: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26c810>
+text = "bursa'da hava nasıl"
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+____________________ TestExtractCity.test_single_city_name _____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26ce10>
+
+    def test_single_city_name(self):
+        """Just a city name like 'Berlin' after stripping weather words."""
+        # The quick_route checks for weather keywords first, so city-only
+        # wouldn't reach _extract_city. But if it does:
+>       result = self._extract("Berlin")
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:352: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26ce10>
+text = 'Berlin'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_______________________ TestExtractCity.test_empty_input _______________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26d410>
+
+    def test_empty_input(self):
+>       assert self._extract("") == ""
+               ^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26d410>
+text = ''
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_________________ TestExtractCity.test_question_mark_stripped __________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26da10>
+
+    def test_question_mark_stripped(self):
+>       assert self._extract("weather in Rome?") == "Rome"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:359: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26da10>
+text = 'weather in Rome?'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+__________________ TestExtractCity.test_weather_in_city_today __________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26e010>
+
+    def test_weather_in_city_today(self):
+>       assert self._extract("weather in Madrid today") == "Madrid"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:362: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26e010>
+text = 'weather in Madrid today'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+_____________________ TestExtractCity.test_multi_word_city _____________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26e610>
+
+    def test_multi_word_city(self):
+        """Cities with spaces."""
+>       assert self._extract("weather in San Francisco") == "San Francisco"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:366: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26e610>
+text = 'weather in San Francisco'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+________________ TestExtractCity.test_forecast_tomorrow_no_city ________________
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26ec50>
+
+    def test_forecast_tomorrow_no_city(self):
+        """'forecast tomorrow' → empty."""
+>       assert self._extract("forecast tomorrow") == ""
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_core_stabilization.py:370: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.core.test_core_stabilization.TestExtractCity object at 0x7a39dc26ec50>
+text = 'forecast tomorrow'
+
+    def _extract(self, text: str) -> str:
+>       from bantz.core.brain import _extract_city
+E       ImportError: cannot import name '_extract_city' from 'bantz.core.brain' (/home/iclaldogan/bantzv2/src/bantz/core/brain.py)
+
+tests/core/test_core_stabilization.py:269: ImportError
+=============================== warnings summary ===============================
+tests/agent/test_job_scheduler.py::TestRunJobNow::test_run_nonexistent_job
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object BaseSubprocessTransport._connect_pipes at 0x7a39daba9360>
+  
+  Traceback (most recent call last):
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 1578, in connect_read_pipe
+      await waiter
+  GeneratorExit
+  
+  During handling of the above exception, another exception occurred:
+  
+  Traceback (most recent call last):
+    File "/usr/lib/python3.11/asyncio/base_subprocess.py", line 168, in _connect_pipes
+      _, pipe = await loop.connect_read_pipe(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 1580, in connect_read_pipe
+      transport.close()
+    File "/usr/lib/python3.11/asyncio/unix_events.py", line 557, in close
+      self._close(None)
+    File "/usr/lib/python3.11/asyncio/unix_events.py", line 581, in _close
+      self._loop.call_soon(self._call_connection_lost, exc)
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 758, in call_soon
+      self._check_closed()
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 519, in _check_closed
+      raise RuntimeError('Event loop is closed')
+  RuntimeError: Event loop is closed
+  
+  During handling of the above exception, another exception occurred:
+  
+  Traceback (most recent call last):
+    File "/usr/lib/python3.11/asyncio/base_subprocess.py", line 189, in _connect_pipes
+      waiter.set_exception(exc)
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 758, in call_soon
+      self._check_closed()
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 519, in _check_closed
+      raise RuntimeError('Event loop is closed')
+  RuntimeError: Event loop is closed
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/agent/test_job_scheduler.py::TestRunJobNow::test_run_nonexistent_job
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object _step_docker_cleanup at 0x7a39d9dc5a60>
+  
+  Traceback (most recent call last):
+    File "/home/iclaldogan/bantzv2/src/bantz/agent/workflows/maintenance.py", line 166, in _step_docker_cleanup
+      rc, out, err = await _run_cmd("docker", "info", timeout=10)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/home/iclaldogan/bantzv2/src/bantz/agent/workflows/maintenance.py", line 127, in _run_cmd
+      proc = await asyncio.create_subprocess_exec(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/lib/python3.11/asyncio/subprocess.py", line 218, in create_subprocess_exec
+      transport, protocol = await loop.subprocess_exec(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/lib/python3.11/asyncio/base_events.py", line 1680, in subprocess_exec
+      transport = await self._make_subprocess_transport(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  RuntimeError: coroutine ignored GeneratorExit
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/agent/test_job_scheduler.py: 4 warnings
+tests/workflows/test_maintenance.py: 21 warnings
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:589: DeprecationWarning: Passing 'msg' argument to Task.cancel() is deprecated since Python 3.11, and scheduled for removal in Python 3.14.
+    should_retry = scope._deliver_cancellation(origin) or should_retry
+
+tests/agent/test_job_scheduler.py: 4 warnings
+tests/workflows/test_maintenance.py: 21 warnings
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:589: DeprecationWarning: Passing 'msg' argument to Future.cancel() is deprecated since Python 3.11, and scheduled for removal in Python 3.14.
+    should_retry = scope._deliver_cancellation(origin) or should_retry
+
+tests/agent/test_proactive.py::TestProactiveGuards::test_aborts_when_disabled
+tests/agent/test_proactive.py::TestProactiveGuards::test_aborts_when_not_initialized
+tests/agent/test_proactive.py::TestProactiveGuards::test_aborts_during_coding
+tests/agent/test_proactive.py::TestProactiveGuards::test_aborts_in_focus_mode
+tests/agent/test_proactive.py::TestProactiveGuards::test_aborts_when_daily_limit_reached
+tests/agent/test_proactive.py::TestProactiveBrainHandler::test_process_proactive_status
+tests/agent/test_proactive.py::TestJobSchedulerProactive::test_job_runs_proactive_engine
+  /home/iclaldogan/bantzv2/tests/agent/test_proactive.py:26: DeprecationWarning: There is no current event loop
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+tests/agent/test_tts.py::TestTTSAsync::test_speak_background
+  /usr/lib/python3.11/tokenize.py:529: RuntimeWarning: coroutine 'TestTTSAsync.test_synthesize_timeout.<locals>.slow_comm' was never awaited
+    pseudomatch = _compile(PseudoToken).match(line, pos)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/core/test_brain_integrations.py: 21 warnings
+  /home/iclaldogan/bantzv2/tests/core/test_brain_integrations.py:21: DeprecationWarning: There is no current event loop
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+tests/memory/test_deep_probe.py: 14 warnings
+  /home/iclaldogan/bantzv2/tests/memory/test_deep_probe.py:32: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_session_success
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:437: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_below_threshold
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:460: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_with_embedding
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:482: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_with_graph_extraction
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:505: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_llm_failure
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:522: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_nonexistent_session
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:535: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_distiller.py::TestDistillSession::test_distill_tools_from_messages
+  /home/iclaldogan/bantzv2/tests/memory/test_distiller.py:551: DeprecationWarning: There is no current event loop
+    result = asyncio.get_event_loop().run_until_complete(
+
+tests/memory/test_vector_memory.py::TestEmbedder::test_embed_empty_returns_none
+tests/memory/test_vector_memory.py::TestEmbedder::test_embed_whitespace_returns_none
+tests/memory/test_vector_memory.py::TestEmbedder::test_embed_success_new_api
+tests/memory/test_vector_memory.py::TestEmbedder::test_embed_fallback_old_api
+tests/memory/test_vector_memory.py::TestMemoryVectorIntegration::test_embed_pending
+tests/memory/test_vector_memory.py::TestMemoryVectorIntegration::test_semantic_search
+tests/memory/test_vector_memory.py::TestMemoryVectorIntegration::test_hybrid_search
+tests/memory/test_vector_memory.py::TestMemoryVectorIntegration::test_semantic_search_disabled
+tests/memory/test_vector_memory.py::TestMemoryVectorIntegration::test_backfill_embeddings
+  /home/iclaldogan/bantzv2/tests/memory/test_vector_memory.py:30: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+tests/tools/test_gmail_autochain.py: 11 warnings
+  /home/iclaldogan/bantzv2/tests/tools/test_gmail_autochain.py:24: DeprecationWarning: There is no current event loop
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+tests/tui/test_telemetry.py::TestTelemetryCollector::test_ring_buffer_overflow
+  /home/iclaldogan/bantzv2/src/bantz/interface/tui/telemetry.py:57: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+    import pynvml
+
+tests/workflows/test_maintenance.py::TestRunMaintenance::test_step_timeout_handled
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:636: DeprecationWarning: Passing 'msg' argument to Task.cancel() is deprecated since Python 3.11, and scheduled for removal in Python 3.14.
+    self._deliver_cancellation(self)
+
+tests/workflows/test_maintenance.py::TestRunMaintenance::test_step_timeout_handled
+  /home/iclaldogan/bantzv2/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:636: DeprecationWarning: Passing 'msg' argument to Future.cancel() is deprecated since Python 3.11, and scheduled for removal in Python 3.14.
+    self._deliver_cancellation(self)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_weather_in_city
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_weather_in_new_york
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_forecast_for_london
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_temperature_in_berlin
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_how_is_weather_in_paris
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_how_is_weather_in_tokyo
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_bare_weather
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_whats_the_weather
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_is_it_raining
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_weather_today
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_show_me_weather
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_de_suffix
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_te_suffix
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_izmir_hava_durumu
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_bugun_hava_nasil
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_yarin_hava_nasil
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_antalya_de
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_turkish_bursa_te
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_single_city_name
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_empty_input
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_question_mark_stripped
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_weather_in_city_today
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_multi_word_city
+FAILED tests/core/test_core_stabilization.py::TestExtractCity::test_forecast_tomorrow_no_city
+24 failed, 2281 passed, 6 skipped, 125 warnings in 26.08s

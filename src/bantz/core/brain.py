@@ -39,6 +39,8 @@ from bantz.core.memory_injector import (
     style_hint as _style_hint,
     persona_hint as _persona_hint,
     formality_hint as _formality_hint,
+    graph_context as _graph_ctx_fn,
+    deep_memory_context as _deep_memory_ctx_fn,
 )
 from bantz.core.prompt_builder import (
     CHAT_SYSTEM,      # noqa: F401  — re-export for backward compat
@@ -98,6 +100,10 @@ class Brain:
         # gui_action removed (#185) — superseded by visual_click
         try:
             import bantz.tools.visual_click  # noqa: F401  (#185)
+        except (ImportError, ModuleNotFoundError):
+            pass
+        try:
+            import bantz.tools.browser_control  # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass
         import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
@@ -298,6 +304,9 @@ class Brain:
                 "tell me more", "summarize", "summary", "again",
                 "read", "open", "reply", "forward", "delete",
                 "first", "second", "third", "last", "next",
+                "play", "click", "watch", "launch",
+                # Turkish follow-up words
+                "aç", "tıkla", "onu", "şunu", "bunu", "oynat",
             }
             if any(h in lower for h in followup_hints):
                 parts.append(
@@ -468,6 +477,9 @@ class Brain:
             "remind": "reminder", "reminders": "reminder",
             "events": "calendar", "schedule": "calendar",
             "class": "classroom", "homework": "classroom",
+            "firefox": "browser_control", "chrome": "browser_control",
+            "chromium": "browser_control", "browser": "browser_control",
+            "screenshot": "browser_control", "accessibility": "accessibility",
         }
         if tool_name:
             # Pass 1: fuzzy registry lookup (handles "Web Search" → "web_search")
@@ -547,6 +559,36 @@ class Brain:
             err = f"Tool not found: {tool_name}"
             data_layer.conversations.add("assistant", err)
             return BrainResult(response=err, tool_used=None)
+
+        # ── Pre-tool announcement (speed illusion) ────────────────────
+        # Emit an immediate chat message before the tool runs so the user
+        # sees "Let me check your calendar..." instead of dead silence.
+        _PRE_TOOL_LINES = {
+            "calendar":      "Let me check our schedule...",
+            "gmail":         "Let me check your inbox...",
+            "weather":       "Let me check the weather...",
+            "web_search":    "Let me look that up for you...",
+            "shell":         "Running that for you...",
+            "system":        "Checking system status...",
+            "reminder":      "Checking your reminders...",
+            "filesystem":    "Accessing the file...",
+            "document":      "Let me read that document...",
+            "news":          "Fetching the latest news...",
+            "read_url":      "Fetching that page...",
+            "visual_click":     "Clicking that for you...",
+            "input_control":    "Performing that action...",
+            "accessibility":    "Analysing the screen...",
+            "browser_control":  "Operating the browser for you...",
+            "classroom":     "Checking your assignments...",
+        }
+        pre_line = _PRE_TOOL_LINES.get(tool_name)
+        if pre_line:
+            try:
+                from bantz.core.event_bus import bus as _bus
+                await _bus.emit("pre_tool_message", message=pre_line, tool=tool_name)
+                await asyncio.sleep(0)  # yield so TUI renders the line before tool blocks
+            except Exception:
+                pass
 
         result = await tool.execute(**tool_args)
 

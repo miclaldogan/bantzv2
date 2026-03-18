@@ -27,6 +27,20 @@ ChatLog {
     scrollbar-color: #2a4a2a;
 }
 
+/* ThinkingPanel: hidden by default, shown via .visible class (#273).
+   Defined here (not only in DEFAULT_CSS) so it can't be overridden. */
+ThinkingPanel {
+    height: auto;
+    max-height: 5;
+    overflow-y: hidden;
+    padding: 0 1;
+    color: #666666;
+    display: none;
+}
+ThinkingPanel.visible {
+    display: block;
+}
+
 #thinking-area {
     height: 1;
     padding: 0 1;

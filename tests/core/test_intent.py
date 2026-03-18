@@ -227,7 +227,9 @@ class TestCotRouteWithHistory:
             plan, error = await cot_route("hello", [], recent_history=None)
 
         system_content = captured_messages[0]["content"]
-        assert "RECENT CONVERSATION" not in system_content
+        # The static COT_SYSTEM mentions "RECENT CONVERSATION" in routing rules,
+        # so we check for the specific dynamic block header instead.
+        assert "RECENT CONVERSATION (use to resolve pronouns" not in system_content
 
     @pytest.mark.asyncio
     async def test_empty_history_no_injection(self):
@@ -255,7 +257,7 @@ class TestCotRouteWithHistory:
             plan, error = await cot_route("hello", [], recent_history=[])
 
         system_content = captured_messages[0]["content"]
-        assert "RECENT CONVERSATION" not in system_content
+        assert "RECENT CONVERSATION (use to resolve pronouns" not in system_content
 
     @pytest.mark.asyncio
     async def test_tool_context_injected_when_provided(self):

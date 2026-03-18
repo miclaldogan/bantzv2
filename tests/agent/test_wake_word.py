@@ -55,8 +55,8 @@ class TestWakeWordConfig:
 
     def test_wake_word_sensitivity_default(self):
         from bantz.config import Config
-        c = Config()
-        assert c.wake_word_sensitivity == 0.5
+        # Test the hardcoded Field default, independent of .env overrides
+        assert Config.model_fields["wake_word_sensitivity"].default == 0.5
 
     def test_wake_word_sensitivity_custom(self):
         from bantz.config import Config

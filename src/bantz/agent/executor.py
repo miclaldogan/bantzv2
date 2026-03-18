@@ -23,6 +23,7 @@ Usage:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -154,7 +155,12 @@ class PlanExecutor:
                 except Exception:
                     pass
 
-            # (#273) Emit planner_step start event to TUI
+            # (#273) Emit planner_step start event to TUI.
+            # asyncio.sleep(0) yields to the event loop so the EventBus
+            # dispatcher task can drain the queue and deliver the event to
+            # the TUI *before* the tool starts executing.  Without this,
+            # all events bunch up and only appear after brain.process()
+            # returns — too late for the speed-illusion effect.
             try:
                 await bus.emit(
                     "planner_step",
@@ -164,6 +170,7 @@ class PlanExecutor:
                     description=description,
                     status="start",
                 )
+                await asyncio.sleep(0)  # flush dispatcher before tool executes
             except Exception:
                 pass
 
@@ -344,6 +351,7 @@ class PlanExecutor:
                 result=sr.output[:200] if sr.success else "",
                 error=sr.error if not sr.success else "",
             )
+            await asyncio.sleep(0)  # flush dispatcher so TUI sees result immediately
         except Exception:
             pass
 
@@ -489,8 +497,11 @@ class PlanExecutor:
             return ""
 
         def _url_extract(val: str) -> str:
-            """For read_url, extract first HTTP URL from prose."""
-            if tool_name == "read_url" and val and not val.startswith("http"):
+            """For read_url and browser_control navigate, extract first HTTP URL from prose."""
+            needs_url = tool_name == "read_url" or (
+                tool_name == "browser_control" and params.get("action") == "navigate"
+            )
+            if needs_url and val and not val.startswith("http"):
                 hit = re.search(r"https?://[^\s\"'>]+", val)
                 if hit:
                     return hit.group(0).rstrip(".:;")
@@ -567,8 +578,8 @@ def _resolve_legacy(
             # Fallback: use output (LLM hallucinated a key name)
             replacement = state.get("output", "")
 
-        # Special handling for read_url: extract first HTTP URL from prose
-        if tool_name == "read_url" and replacement and not replacement.startswith("http"):
+        # Special handling for read_url and browser_control navigate: extract first HTTP URL
+        if tool_name in ("read_url", "browser_control") and replacement and not replacement.startswith("http"):
             url_match = re.search(r"https?://[^\s\"'>]+", replacement)
             if url_match:
                 replacement = url_match.group(0).rstrip(".:;")

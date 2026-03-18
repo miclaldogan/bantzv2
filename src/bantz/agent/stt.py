@@ -132,11 +132,14 @@ class STTEngine:
             segments, info = self._model.transcribe(
                 audio,
                 language=self._language,
-                beam_size=3,
+                beam_size=5,
                 vad_filter=True,
                 vad_parameters=dict(
                     min_silence_duration_ms=300,
                 ),
+                # Initial prompt biases the model toward assistant-context vocab,
+                # reducing common Whisper errors like "what" → "but".
+                initial_prompt="The user is speaking a command to Bantz, an AI assistant.",
             )
 
             # Collect all segment texts

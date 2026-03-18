@@ -455,8 +455,8 @@ class TestGhostLoopPipeline:
         import inspect
         from bantz.agent.ghost_loop import GhostLoop
         src = inspect.getsource(GhostLoop._capture_and_transcribe)
-        # Verify the sleep is at least 0.25s (we set it to 0.30)
-        assert "time.sleep(0.30)" in src or "time.sleep(0.3)" in src
+        # Mic release sleep was increased from 0.30 to 0.50 for better ALSA reliability
+        assert any(f"time.sleep({v})" in src for v in ("0.30", "0.3", "0.50", "0.5"))
 
 
 class TestGhostLoopDiagnose:

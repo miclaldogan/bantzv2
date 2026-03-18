@@ -51,11 +51,16 @@ def notify_toast(title: str, reason: str = "", toast_type: str = "info") -> None
             pass
 
     # Fallback: try App.current directly
+    # Textual v8: call_from_thread raises RuntimeError on the main thread.
+    import threading as _threading
     try:
         from textual.app import App as _App
         app = _App.current
         if app and hasattr(app, "push_toast"):
-            app.call_from_thread(app.push_toast, title, reason, toast_type)
+            if _threading.current_thread() is _threading.main_thread():
+                app.push_toast(title, reason, toast_type)
+            else:
+                app.call_from_thread(app.push_toast, title, reason, toast_type)
             return
     except Exception:
         pass

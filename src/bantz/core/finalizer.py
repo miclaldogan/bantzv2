@@ -111,21 +111,12 @@ async def finalize(
         )},
     ]
 
-    # Prefer Gemini Flash for finalization if available
     raw = None
     try:
-        from bantz.llm.gemini import gemini
-        if gemini.is_enabled():
-            raw = await gemini.chat(messages, temperature=0.2)
+        from bantz.llm.ollama import ollama
+        raw = await ollama.chat(messages)
     except Exception:
-        pass  # fall through to Ollama
-
-    if raw is None:
-        try:
-            from bantz.llm.ollama import ollama
-            raw = await ollama.chat(messages)
-        except Exception:
-            return output[:1500]
+        return output[:1500]
 
     cleaned = strip_markdown(raw)
 
@@ -188,17 +179,6 @@ async def finalize_stream(
     ]
 
     async def _stream() -> AsyncIterator[str]:
-        # Try Gemini streaming first
-        try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                async for token in gemini.chat_stream(messages, temperature=0.2):
-                    yield token
-                return
-        except Exception:
-            pass
-
-        # Ollama streaming fallback
         try:
             from bantz.llm.ollama import ollama
             async for token in ollama.chat_stream(messages):

@@ -134,6 +134,12 @@ _last_results_store = _LastResultsStore()
 
 TIMEOUT = 10.0
 
+# Realistic browser UA avoids 403/bot-block from DuckDuckGo
+_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
 
 async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
     """
@@ -152,7 +158,7 @@ async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
             resp = await client.get(
                 "https://api.duckduckgo.com/",
                 params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-                headers={"User-Agent": "Bantz/2.0"},
+                headers={"User-Agent": _USER_AGENT},
             )
             resp.raise_for_status()
             data = resp.json()
@@ -214,7 +220,7 @@ async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
                 resp = await client.get(
                     "https://html.duckduckgo.com/html/",
                     params={"q": query},
-                    headers={"User-Agent": "Bantz/2.0"},
+                    headers={"User-Agent": _USER_AGENT},
                 )
                 resp.raise_for_status()
                 html = resp.text

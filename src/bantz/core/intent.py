@@ -52,6 +52,18 @@ TOOL PARAMETER REFERENCE (extract these from the user message):
 - visual_click: {{"target": "<UI element description>", "app": "<optional app name>"}} — click or interact with visible UI elements on screen
 - accessibility: {{"action": "screenshot|describe|focus|list_apps|tree|find|info", "app": "...", "label": "..."}}
 - read_url: {{"url": "https://..."}} — fetch and read the full text of a webpage
+- browser_control: {{"action": "open|screenshot|navigate|new_tab|find_and_click|type_in_element|hotkey|type|scroll", "app": "firefox", "url": "https://...", "target": "element name", "text": "...", "keys": "ctrl+t", "wait": 2.0}}
+  • action=open  → launch the app (add url= to also navigate there immediately)
+  • action=navigate → go to url= in already-open browser
+  • action=new_tab → open a new tab (Ctrl+T)
+  • action=find_and_click → click a UI element by name (target=)
+  • action=type_in_element → find element, click it, type text= into it, press Enter (target= text= required)
+  • action=screenshot → capture screen
+  • action=hotkey → send key combo
+  • action=type → type text at current cursor position
+  SINGLE-STEP PATTERN: "open firefox and go to X" → browser_control action=open app=firefox url=https://X
+  FOLLOW-UP PATTERN: "open it"/"play it"/"click it"/"aç onu" after a browser action → browser_control action=find_and_click target="first result" app=firefox
+  IN-PAGE INTERACTION (use planner for multi-step): navigate → screenshot → type_in_element
 
 CHAIN OF THOUGHT — follow ALL three steps before deciding:
 
@@ -81,9 +93,24 @@ ROUTING RULES:
               "click X", "open X menu", "press the Y button" → visual_click
 - accessibility: focus window, screen analysis, screenshot, describe UI, list apps
 - read_url:   fetch and read full content of a specific URL
+- browser_control: For a SINGLE browser action:
+              • "open firefox" → action=open app=firefox
+              • "take screenshot" → action=screenshot
+              • "new tab" → action=new_tab
+              • FOLLOW-UP after browser action: "open it", "play it", "click it",
+                "aç onu", "aç", "tıkla" → action=find_and_click target="first result"
+                (ONLY when PREVIOUS TOOL RESULT or RECENT CONVERSATION shows a browser/search was just performed)
+              DO NOT use for any request that involves navigating AND doing something else.
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
-- planner:    When the request requires TWO OR MORE different tools in sequence
-              (e.g. "find articles, summarize them, and save to a file")
+- planner:    When the request requires TWO OR MORE steps, even using the same tool.
+              USE PLANNER for ALL of these patterns:
+              • "go to [site] and [do something]" → navigate + action = planner
+              • "open [video/page] on youtube" → search + find + click = planner
+              • "find/play/watch [X] on youtube" → search + click = planner
+              • "search for X on [site]" → navigate + search = planner
+              • "open [site] and [do something]" → planner
+              • "and then", "then", "and search", "and click", "and type" → planner
+              • any request that requires seeing the screen after navigation → planner
 
 CRITICAL:
 - If the user's request contains ambiguous pronouns (e.g., 'him', 'her') or refers to unspecified files/reports ('that report'), you MUST ask for clarification. Do NOT invent a fake report, do NOT roleplay sending a message to a fake person, and do not route to a tool until the ambiguity is resolved. Route to "chat" to ask for clarification.
@@ -133,6 +160,9 @@ _THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.DOTALL)
 _THINKING_OPEN = re.compile(r"<thinking\s*>", re.IGNORECASE)
 # Matches a single </thinking> close tag
 _THINKING_CLOSE = re.compile(r"</thinking\s*>", re.IGNORECASE)
+# Detects start of JSON output — our CoT always returns {"route": ...}
+# When this pattern appears in the buffer, the thinking phase is done.
+_JSON_MARKER = re.compile(r'\{\s*"route"\s*:', re.IGNORECASE)
 
 
 def strip_thinking(text: str) -> str:
@@ -230,6 +260,10 @@ async def _stream_and_collect(
     in_thinking = False
     thinking_tokens = 0
     thinking_started = False
+    # Once the thinking block closes, never re-detect it.
+    # Without this flag, old <thinking> tags accumulate in `buf` and every
+    # subsequent token falsely re-triggers detection → ThinkingPanel spam. (#273)
+    thinking_complete = False
 
     if emit_thinking:
         await bus.emit("thinking_start", source=source)
@@ -238,10 +272,17 @@ async def _stream_and_collect(
         async for token in ollama.chat_stream(messages):
             buf += token
 
-            if not emit_thinking:
+            if not emit_thinking or thinking_complete:
                 continue
 
-            # ── Detect <thinking> open ────────────────────────────────
+            # ── Detect JSON start (CoT always ends with {"route": ...) ──
+            # When the JSON marker appears, the thinking phase is done.
+            if not in_thinking and _JSON_MARKER.search(buf):
+                thinking_complete = True
+                await bus.emit("thinking_done", source=source)
+                continue
+
+            # ── Detect <thinking> open (only before we've seen one block) ─
             if not in_thinking:
                 if _THINKING_OPEN.search(buf):
                     in_thinking = True
@@ -255,19 +296,31 @@ async def _stream_and_collect(
                         if inner:
                             await bus.emit("thinking_token", token=inner, source=source)
                     continue
+                else:
+                    # No <thinking> tag yet — emit token directly as thinking content.
+                    # This shows the model's reasoning even for models that don't use tags.
+                    inner = _clean_thinking_text(token)
+                    if inner:
+                        if not thinking_started:
+                            thinking_started = True
+                        await bus.emit("thinking_token", token=inner, source=source)
+                    continue
 
             # ── Inside <thinking> block ───────────────────────────────
             if in_thinking:
                 thinking_tokens += 1
-                # Check for close tag
-                if _THINKING_CLOSE.search(buf):
+                # Check for close tag only in the current token (not full buf)
+                # to avoid re-matching the tag after the block has closed.
+                if _THINKING_CLOSE.search(token) or _THINKING_CLOSE.search(buf[-80:]):
                     in_thinking = False
+                    thinking_complete = True
                     await bus.emit("thinking_done", source=source)
                     continue
 
                 # Force-close if model never emits </thinking> (#273 Critique 2)
                 if thinking_tokens > _THINKING_MAX_TOKENS:
                     in_thinking = False
+                    thinking_complete = True
                     log.warning("Force-closing <thinking> after %d tokens (no close tag)", thinking_tokens)
                     await bus.emit("thinking_done", source=source)
                     continue
@@ -280,12 +333,12 @@ async def _stream_and_collect(
     except Exception as exc:
         log.warning("Stream error during %s: %s", source, exc)
         # If we were mid-thinking, close it
-        if in_thinking and emit_thinking:
+        if (in_thinking or thinking_started) and not thinking_complete and emit_thinking:
             await bus.emit("thinking_done", source=source)
         raise
 
-    # If thinking never closed, emit done
-    if thinking_started and in_thinking and emit_thinking:
+    # If thinking phase never completed (e.g. model returned no JSON), emit done
+    if not thinking_complete and emit_thinking:
         await bus.emit("thinking_done", source=source)
 
     return buf

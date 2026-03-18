@@ -534,10 +534,12 @@ class TestConfigFields:
         assert hasattr(config, "notification_sound")
 
     def test_config_defaults(self):
-        from bantz.config import config
-        assert config.desktop_notifications is True
-        assert config.notification_icon == ""
-        assert config.notification_sound is False
+        from bantz.config import Config
+        # Test the hardcoded Field defaults, independent of .env overrides
+        fields = Config.model_fields
+        assert fields["desktop_notifications"].default is True
+        assert fields["notification_icon"].default == ""
+        assert fields["notification_sound"].default is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════

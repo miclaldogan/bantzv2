@@ -145,7 +145,7 @@ class TestUnsubscribeEventBus:
         test_bus.bind_loop = MagicMock()
         with patch("bantz.interface.tui.app.bus", test_bus):
             app._subscribe_event_bus()
-            assert test_bus.subscriber_count() == 15
+            assert test_bus.subscriber_count() == 16
             app._unsubscribe_event_bus()
             assert test_bus.subscriber_count("wake_word_detected") == 0
             assert test_bus.subscriber_count("ambient_change") == 0
@@ -188,11 +188,11 @@ class TestRelayBusEvent:
         app = self._make_app()
         ev = Event(name="test", data={"x": 1})
         app._relay_bus_event(ev)
-        app.call_from_thread.assert_called_once()
-        args = app.call_from_thread.call_args
-        assert args[0][0] is app.post_message
-        # Second arg should be a BantzEventMessage
-        msg = args[0][1]
+        # _relay_bus_event calls post_message directly when on the main thread
+        # (Textual v8: call_from_thread raises RuntimeError on main thread).
+        app.post_message.assert_called_once()
+        args = app.post_message.call_args
+        msg = args[0][0]
         assert isinstance(msg, BantzEventMessage)
         assert msg.event is ev
 
@@ -273,15 +273,16 @@ class TestOnBusWakeWord:
         app = object.__new__(BantzApp)
         return app
 
-    def test_adds_chat_message_and_focuses(self):
+    def test_sets_voice_status_and_focuses(self):
+        # Wake word no longer writes to chat — it updates the header voice status
+        # bar and focuses the input.
         app = self._make_app()
-        chat = MagicMock()
         inp = MagicMock()
-        app.query_one = MagicMock(side_effect=lambda sel, cls=None: chat if "chat-log" in str(sel) else inp)
+        app._set_voice_status = MagicMock()
+        app.query_one = MagicMock(side_effect=lambda sel, cls=None: inp)
         ev = Event(name="wake_word_detected", data={"count": 3})
         app._on_bus_wake_word(ev)
-        chat.add_bantz.assert_called_once_with("Yes boss? 🎤")
-        chat.scroll_end.assert_called_once()
+        app._set_voice_status.assert_called_once_with("[bold green]🎤 Wake word...[/]")
         inp.focus.assert_called_once()
 
 

@@ -100,6 +100,7 @@ class ChatLog(RichLog):
 
     def add_user(self, text: str) -> None:
         self.write(f"[bold green]▶ You[/]   {text}")
+        self.scroll_end(animate=False)
 
     def add_bantz(self, text: str) -> None:
         lines = text.strip().splitlines()
@@ -108,6 +109,7 @@ class ChatLog(RichLog):
         self.write(f"[bold cyan]◆ Bantz[/]  {lines[0]}")
         for line in lines[1:]:
             self.write(f"         {line}")
+        self.scroll_end(animate=False)
 
     def stream_start(self) -> None:
         """Begin a streaming response."""
@@ -154,9 +156,12 @@ class ChatLog(RichLog):
 
     def add_system(self, text: str) -> None:
         self.write(f"[dim]  {text}[/]")
+        self.scroll_end(animate=False)
 
     def add_error(self, text: str) -> None:
         self.write(f"[bold red]  ✗ {text}[/]")
+        self.scroll_end(animate=False)
 
     def add_tool(self, tool_name: str) -> None:
         self.write(f"[dim magenta]  ⚙ [{tool_name}][/]")
+        self.scroll_end(animate=False)

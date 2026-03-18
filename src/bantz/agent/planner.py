@@ -48,6 +48,12 @@ TOOL REFERENCE:
 - document: summarize/read a document. Params: {{"path": "...", "action": "summarize|read|ask", "question": "..."}}
 - read_url: fetch and read the full text content of a specific URL/webpage. Params: {{"url": "https://..."}}
 - summarizer: summarize, analyze, rewrite, or transform text from a previous step. Params: {{"instruction": "Summarize the following: $REF_STEP_N"}}
+- browser_control: open apps, navigate browser, take screenshots, click UI elements, type in page inputs. Params: {{"action": "open|navigate|new_tab|screenshot|find_and_click|type_in_element|hotkey|type|scroll", "app": "firefox", "url": "https://...", "target": "element name", "text": "...", "keys": "ctrl+t", "wait": 2.0}}
+  • action=navigate → go to url= in browser
+  • action=find_and_click → click a visible UI element (target= required)
+  • action=type_in_element → find element by name, click it, type text= into it (target= text= required)
+  • action=screenshot → capture current screen state
+  Use for: "open firefox", "go to a website", "search on YouTube", "click a button", "type in a form", any GUI automation.
   (Legacy alias: "process_text" also accepted by the executor.)
 
 CRITICAL TOOL RULES:
@@ -135,6 +141,52 @@ Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use $REF_
   {{"step": 2, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs 2025"}}, "description": "Search for articles", "depends_on": null}},
   {{"step": 3, "tool": "summarizer", "params": {{"instruction": "Summarize this article in detail: $REF_STEP_2"}}, "description": "Summarize the search results", "depends_on": 2}},
   {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "$REF_STEP_1_PARAMS_folder_path/quantum_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save summary into the research folder", "depends_on": 3}}
+]
+
+User: "Open Firefox and go to youtube.com, then open the GülDür channel"
+<thinking>
+Step 1: Goal is to open Firefox, navigate to YouTube, then navigate to a specific channel.
+Step 2: This is a GUI automation task. Use browser_control for all steps. action=open to launch Firefox, action=navigate to go to YouTube, action=navigate again for the channel page.
+Step 3: Double-Check: I must use browser_control with action=open NOT summarizer. The params MUST include "action" key.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "open", "app": "firefox", "wait": 3.0}}, "description": "Open Firefox browser", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": 1}},
+  {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com/@GulDur", "wait": 2.5}}, "description": "Go to GülDür channel", "depends_on": 2}}
+]
+
+User: "Go to YouTube and search for funny cats"
+<thinking>
+Step 1: Goal is to navigate to YouTube then search.
+Step 2: Use browser_control. Navigate to YouTube, then use type_in_element with site=youtube so it uses the direct search URL.
+Step 3: Pass site= hint so type_in_element constructs the direct YouTube search URL internally.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "funny cats", "site": "youtube", "press_enter": "true"}}, "description": "Search YouTube for funny cats", "depends_on": 1}}
+]
+
+User: "Search for 'Python tutorial' on Google"
+<thinking>
+Step 1: Goal is to go to Google and search.
+Step 2: Navigate to Google, then type_in_element with site=google.
+Step 3: site= hint lets type_in_element use the direct Google search URL.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.google.com", "wait": 2.0}}, "description": "Navigate to Google", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search input", "text": "Python tutorial", "site": "google", "press_enter": "true"}}, "description": "Search on Google", "depends_on": 1}}
+]
+
+User: "open me a dr strange video on youtube" (or "find X video on youtube", "play X on youtube")
+<thinking>
+Step 1: Goal is to find and play a video on YouTube. This needs: navigate to YouTube search results for "dr strange", wait for results to load, then find and click the first video.
+Step 2: browser_control for all steps. type_in_element with site=youtube uses direct search URL. wait_for_load waits for results. find_and_click uses VLM to find the first video result.
+Step 3: 3 steps total — search, wait, click first result.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "dr strange", "site": "youtube", "press_enter": "false"}}, "description": "Navigate to YouTube search results for dr strange", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "wait_for_load", "app": "firefox", "max_wait": 8.0}}, "description": "Wait for search results to load", "depends_on": 1}},
+  {{"step": 3, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "firefox", "target": "first video result", "site": "youtube", "wait_load": "false"}}, "description": "Click the first video result", "depends_on": 2}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -243,13 +295,41 @@ class PlannerAgent:
                 depends_on=s.get("depends_on"),
             ))
 
+        # Normalise tool names — LLMs sometimes return "firefox", "browser", etc.
+        _PLANNER_ALIASES: dict[str, str] = {
+            "firefox": "browser_control",
+            "chrome": "browser_control",
+            "chromium": "browser_control",
+            "browser": "browser_control",
+            "browse": "browser_control",
+            "navigate": "browser_control",
+            "email": "gmail",
+            "mail": "gmail",
+            "bash": "shell",
+            "terminal": "shell",
+            "file": "filesystem",
+            "files": "filesystem",
+            "search": "web_search",
+            "google": "web_search",
+            "news_tool": "news",
+            "remind": "reminder",
+            "events": "calendar",
+        }
+        for s in steps:
+            normed = _PLANNER_ALIASES.get(s.tool.lower())
+            if normed and s.tool != normed:
+                log.info("Planner normalised tool '%s' → '%s' (step %d)", s.tool, normed, s.step)
+                s.tool = normed
+
         # Validate: each step must reference a known tool or virtual tool
         _virtual_tools = {"process_text", "summarizer", "read_url"}
         allowed = set(tool_names) | _virtual_tools
-        valid_steps = [s for s in steps if s.tool in allowed]
-        if len(valid_steps) < len(steps):
-            dropped = len(steps) - len(valid_steps)
-            log.warning("Planner dropped %d steps with unknown tools", dropped)
+        valid_steps = []
+        for s in steps:
+            if s.tool in allowed:
+                valid_steps.append(s)
+            else:
+                log.warning("Planner dropped step %d: unknown tool '%s'", s.step, s.tool)
 
         return valid_steps
 

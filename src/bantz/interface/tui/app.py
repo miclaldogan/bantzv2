@@ -9,6 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bantz.agent.interventions import Intervention, Outcome
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -27,6 +31,7 @@ from bantz.interface.tui.panels.header import (
     ServiceHealthChanged,
     ServiceStatus,
     MemoryCountUpdated,
+    VoiceStatusChanged,
 )
 from bantz.interface.tui.widgets.toast import (
     ToastContainer,
@@ -507,7 +512,7 @@ class BantzApp(App):
         except Exception as exc:
             log.debug("Intervention processing failed: %s", exc)
 
-    def _send_rl_feedback(self, iv: "Intervention", outcome: "Outcome") -> None:
+    def _send_rl_feedback(self, iv: Intervention, outcome: Outcome) -> None:
         """Send reward feedback to the affinity engine based on intervention outcome."""
         try:
             from bantz.agent.affinity_engine import affinity_engine
@@ -613,6 +618,19 @@ class BantzApp(App):
         except Exception:
             pass
 
+    def _set_voice_status(self, text: str) -> None:
+        """Update the transient voice status shown in the header bar.
+
+        Pass empty string to clear (idle).  Always safe to call from
+        the main thread (all EventBus event handlers run on it via
+        ``call_from_thread``).
+        """
+        try:
+            header = self.query_one("#ops-header", OperationsHeader)
+            header.post_message(VoiceStatusChanged(text))
+        except Exception:
+            pass
+
     # ── Input handler ──────────────────────────────────────────────────────
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -682,7 +700,7 @@ class BantzApp(App):
             self._remove_intervention_toast(iv)
         return False
 
-    def _remove_intervention_toast(self, iv: "Intervention") -> None:
+    def _remove_intervention_toast(self, iv: Intervention) -> None:
         """Remove the toast widget showing this intervention (#137)."""
         try:
             container = self.query_one("#toast-container", ToastContainer)
@@ -731,19 +749,34 @@ class BantzApp(App):
                     accumulated += token
                     chat.stream_token(token)
 
-                    # (#273) Paragraph-buffered TTS: fire on \n\n
+                    # Paragraph & sentence-buffered TTS (#273 + enhancement).
+                    # Fire on paragraph breaks (\n\n) OR sentence endings (. ? !)
+                    # so Bantz starts speaking while still generating the rest.
                     if tts_active:
                         tts_buffer += token
+                        # Check for paragraph break first (stronger boundary)
                         if "\n\n" in tts_buffer:
-                            # Split on paragraph breaks, speak completed paragraphs
                             parts = tts_buffer.split("\n\n")
-                            for para in parts[:-1]:
-                                para_clean = strip_markdown_for_tts(para.strip())
-                                if para_clean:
+                            for chunk in parts[:-1]:
+                                chunk_clean = strip_markdown_for_tts(chunk.strip())
+                                if chunk_clean:
                                     asyncio.create_task(
-                                        tts_engine.speak_background(para_clean)
+                                        tts_engine.speak_background(chunk_clean)
                                     )
-                            tts_buffer = parts[-1]  # keep incomplete tail
+                            tts_buffer = parts[-1]
+                        else:
+                            # Sentence boundary: ". ", "? ", "! " with enough context
+                            # (min 40 chars to avoid firing on "Dr. Smith" etc.)
+                            import re as _re
+                            m = _re.search(r'(?<=[.?!])\s', tts_buffer)
+                            if m and m.start() >= 40:
+                                sentence = tts_buffer[:m.start() + 1]
+                                tts_buffer = tts_buffer[m.end():]
+                                sentence_clean = strip_markdown_for_tts(sentence.strip())
+                                if sentence_clean:
+                                    asyncio.create_task(
+                                        tts_engine.speak_background(sentence_clean)
+                                    )
             except Exception as exc:
                 chat.stream_end()
                 self._busy = False
@@ -849,10 +882,13 @@ class BantzApp(App):
             area.update("[dim cyan]  ⟳ thinking...[/]")
         else:
             area.update("")
-            # Also hide the thinking panel when processing is done
+            # ThinkingPanel is hidden via thinking_done bus event.
+            # Only force-hide here if thinking events never fired
+            # (e.g. quick_route path that skips CoT entirely).
             try:
                 panel = self.query_one("#thinking-panel", ThinkingPanel)
-                panel.finish()
+                if "visible" in panel.classes:
+                    panel.finish()
             except Exception:
                 pass
 
@@ -1001,9 +1037,17 @@ class BantzApp(App):
     def _on_brain_toast(
         self, title: str, reason: str = "", toast_type: str = "info",
     ) -> None:
-        """Receive toast events from brain context (possibly threaded)."""
+        """Receive toast events from brain context (possibly threaded).
+
+        Textual v8: call_from_thread raises RuntimeError on the main thread.
+        Detect thread context and call push_toast directly when on main thread.
+        """
+        import threading as _threading
         try:
-            self.call_from_thread(self.push_toast, title, reason, toast_type)
+            if _threading.current_thread() is _threading.main_thread():
+                self.push_toast(title, reason, toast_type)
+            else:
+                self.call_from_thread(self.push_toast, title, reason, toast_type)
         except Exception:
             pass
 
@@ -1061,20 +1105,27 @@ class BantzApp(App):
         bus.on("thinking_token", self._bus_relay)
         bus.on("thinking_done", self._bus_relay)
         bus.on("planner_step", self._bus_relay)
+        bus.on("pre_tool_message", self._bus_relay)
 
-        log.debug("EventBus → TUI bridge active (15 subscriptions)")
+        log.debug("EventBus → TUI bridge active (16 subscriptions)")
 
     def _relay_bus_event(self, event: Event) -> None:
         """Relay a single bus Event into the Textual message loop.
 
-        Called by the EventBus dispatcher task — NOT the main thread.
-        ``call_from_thread`` schedules ``post_message`` on Textual's
-        own event loop so we never hit a ``ThreadError``.
+        Textual v8 raises RuntimeError if call_from_thread is called from
+        the same thread as the app (the EventBus dispatcher IS on the main
+        thread as an asyncio Task).  post_message() is thread-safe and works
+        from any context — use it directly.
         """
+        import threading as _threading
         try:
-            self.call_from_thread(self.post_message, BantzEventMessage(event))
+            if _threading.current_thread() is _threading.main_thread():
+                # Dispatcher is an asyncio task on the main thread — post directly.
+                self.post_message(BantzEventMessage(event))
+            else:
+                # Genuinely called from a background thread (rare) — use the safe bridge.
+                self.call_from_thread(self.post_message, BantzEventMessage(event))
         except Exception:
-            # App shutting down or not yet mounted — silently discard
             log.debug("Bus relay failed for event: %s", event.name)
 
     def _unsubscribe_event_bus(self) -> None:
@@ -1135,6 +1186,8 @@ class BantzApp(App):
                 self._on_bus_thinking_done(event)
             elif name == "planner_step":
                 self._on_bus_planner_step(event)
+            elif name == "pre_tool_message":
+                self._on_bus_pre_tool_message(event)
             else:
                 log.debug("Unhandled bus event: %s", name)
         except Exception:
@@ -1143,10 +1196,13 @@ class BantzApp(App):
     # ── per-event handlers (main thread safe) ─────────────────────────
 
     def _on_bus_wake_word(self, event: Event) -> None:
-        """Wake word detected via bus → focus input + greet."""
-        chat = self.query_one("#chat-log", ChatLog)
-        chat.add_bantz("Yes boss? 🎤")
-        chat.scroll_end()
+        """Wake word detected → show transient header indicator + focus input.
+
+        We no longer write to the chat log here — ghost_loop_listening fires
+        immediately after and the header status bar is the right place for
+        transient pipeline state.
+        """
+        self._set_voice_status("[bold green]🎤 Wake word...[/]")
         self.query_one("#chat-input", Input).focus()
 
     def _on_bus_ambient_change(self, event: Event) -> None:
@@ -1170,10 +1226,19 @@ class BantzApp(App):
     # ── Thinking stream handlers (#273) ───────────────────────────────
 
     def _on_bus_thinking_start(self, event: Event) -> None:
-        """LLM started generating <thinking> block → show panel."""
+        """LLM started generating <thinking> block → show ThinkingPanel, hide spinner.
+
+        The static ``#thinking-area`` shows "⟳ thinking..." but is redundant
+        once the ThinkingPanel is streaming live content.  Hide it so both
+        indicators don't compete for attention.
+        """
         try:
             panel = self.query_one("#thinking-panel", ThinkingPanel)
             panel.start()
+        except Exception:
+            pass
+        try:
+            self.query_one("#thinking-area", Static).update("")
         except Exception:
             pass
 
@@ -1189,40 +1254,77 @@ class BantzApp(App):
             pass
 
     def _on_bus_thinking_done(self, event: Event) -> None:
-        """Thinking block completed → finish panel."""
+        """Thinking block completed → finish panel, restore spinner briefly.
+
+        The spinner is restored so the user sees feedback during the gap
+        between thinking_done and the first streaming token arriving.
+        """
         try:
             panel = self.query_one("#thinking-panel", ThinkingPanel)
             panel.finish()
         except Exception:
             pass
+        # Briefly show spinner again while the LLM generates its final answer
+        try:
+            self.query_one("#thinking-area", Static).update("[dim cyan]  ⟳ thinking...[/]")
+        except Exception:
+            pass
 
     def _on_bus_planner_step(self, event: Event) -> None:
-        """Planner step progress → display in chat (#273)."""
+        """Planner step progress → toasts for start (speed illusion), chat for results.
+
+        "Start" events are shown as ephemeral toasts so the user sees
+        instant feedback without polluting the chat log.  Completion and
+        failure are written to chat so there is a permanent audit trail.
+        """
         step = event.data.get("step", 0)
         total = event.data.get("total", 0)
-        description = event.data.get("description", "")
+        description = event.data.get("description", "")[:60]
         status = event.data.get("status", "start")
+
+        if status == "start":
+            # Ephemeral toast — disappears automatically
+            self.push_toast(
+                f"⚙️ Step {step}/{total}",
+                description,
+                "info",
+            )
+        else:
+            # Permanent record in chat for completed/failed steps
+            try:
+                chat = self.query_one("#chat-log", ChatLog)
+                if status == "done":
+                    result_preview = event.data.get("result", "")[:100]
+                    suffix = f" — {result_preview}" if result_preview else ""
+                    chat.add_system(f"  ✓ Step {step}/{total}: {description}{suffix}")
+                elif status == "failed":
+                    error = event.data.get("error", "unknown error")
+                    chat.add_error(f"  ✗ Step {step}/{total}: {error}")
+                chat.scroll_end()
+            except Exception:
+                pass
+
+    def _on_bus_pre_tool_message(self, event: Event) -> None:
+        """Tool about to run → show immediate 'Let me check...' message."""
+        msg = event.data.get("message", "")
+        if not msg:
+            return
         try:
             chat = self.query_one("#chat-log", ChatLog)
-            if status == "start":
-                chat.add_system(f"⚙ Step {step}/{total}: {description}...")
-            elif status == "done":
-                result_preview = event.data.get("result", "")[:100]
-                chat.add_system(f"  ✓ Step {step}: {result_preview}")
-            elif status == "failed":
-                error = event.data.get("error", "unknown error")
-                chat.add_error(f"  ✗ Step {step}: {error}")
-            chat.scroll_end()
+            chat.add_bantz(msg)
         except Exception:
             pass
 
     # ── Ghost Loop handlers (#36) ─────────────────────────────────────
 
     def _on_bus_voice_input(self, event: Event) -> None:
-        """Voice transcription arrived → display in chat + process."""
+        """Voice transcription arrived → clear header status, display in chat + process."""
         text = event.data.get("text", "").strip()
         if not text:
             return
+
+        # Clear transient voice status — transcription is done
+        self._set_voice_status("")
 
         # Guard against concurrent voice + typed input processing
         if self._busy:
@@ -1237,29 +1339,20 @@ class BantzApp(App):
         self._start_processing(text, chat)
 
     def _on_bus_ghost_listening(self, event: Event) -> None:
-        """Ghost Loop is recording → show indicator."""
-        try:
-            chat = self.query_one("#chat-log", ChatLog)
-            chat.add_system("🎙️ Listening...")
-            chat.scroll_end()
-        except Exception:
-            pass
+        """Ghost Loop is recording → update header status bar (not chat)."""
+        self._set_voice_status("[bold green]🎙️ Listening...[/]")
 
     def _on_bus_ghost_transcribing(self, event: Event) -> None:
-        """Ghost Loop is running STT → show indicator."""
-        try:
-            chat = self.query_one("#chat-log", ChatLog)
-            chat.add_system("⏳ Transcribing...")
-            chat.scroll_end()
-        except Exception:
-            pass
+        """Ghost Loop is running STT → update header status bar (not chat)."""
+        self._set_voice_status("[bold yellow]⚙️ Transcribing...[/]")
 
     def _on_bus_ghost_idle(self, event: Event) -> None:
-        """Ghost Loop returned to idle — no visual action needed."""
-        pass
+        """Ghost Loop returned to idle → clear the voice status indicator."""
+        self._set_voice_status("")
 
     def _on_bus_voice_no_speech(self, event: Event) -> None:
         """Ghost Loop couldn't capture or transcribe speech → tell user."""
+        self._set_voice_status("")  # clear header indicator
         try:
             chat = self.query_one("#chat-log", ChatLog)
             reason = event.data.get("reason", "")
