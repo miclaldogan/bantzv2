@@ -61,6 +61,7 @@ class PlanExecutionResult:
     """Aggregate result of executing an entire plan."""
     step_results: list[StepResult] = field(default_factory=list)
     aborted: bool = False
+    replanned: bool = False   # True when Plan B was attempted (#216)
 
     @property
     def succeeded(self) -> int:
@@ -126,6 +127,8 @@ class PlanExecutor:
         *,
         on_step_start: Any = None,  # optional callback(step_number, description)
         llm_fn: Callable[..., Awaitable[str]] | None = None,
+        original_request: str = "",
+        _replanned: bool = False,   # internal guard — prevents replan recursion
     ) -> PlanExecutionResult:
         """Execute all steps in order.
 
@@ -133,6 +136,10 @@ class PlanExecutor:
           step N+1 declares ``depends_on: N``.
         - **Circuit breaker (#255):** If a step fails, execution stops
           immediately.  All remaining steps are marked as aborted.
+        - **Dynamic replanning (#216):** On first failure, if ``original_request``
+          is provided, the LLM is asked for a Plan B.  The Plan B steps are then
+          executed in a recursive call with ``_replanned=True`` to prevent
+          infinite loops.
         - ``on_step_start`` is an optional async callback for progress updates.
         - ``llm_fn`` is an async callable used by the virtual ``process_text``
           tool.  Signature: ``await llm_fn(messages) -> str``.
@@ -237,17 +244,17 @@ class PlanExecutor:
                 result.step_results.append(sr)
                 # (#273) Emit step completion event
                 await self._emit_step_result(sr, total_steps)
-                # ── Circuit breaker: abort remaining steps on failure ──
+                # ── Circuit breaker → dynamic replan (#216) ──────────────
                 if self._is_step_failure(sr):
-                    log.warning(
-                        "Circuit breaker tripped at step %d [%s] — "
-                        "aborting %d remaining step(s)",
-                        step_num, tool_name, len(steps) - step_idx - 1,
+                    replan_result = await self._attempt_replan(
+                        sr, steps[step_idx + 1:], result, context_store,
+                        original_request=original_request,
+                        llm_fn=llm_fn,
+                        on_step_start=on_step_start,
+                        already_replanned=_replanned,
                     )
-                    self._abort_remaining(
-                        steps[step_idx + 1:], step_num, result, context_store,
-                    )
-                    result.aborted = True
+                    if replan_result is not None:
+                        return replan_result
                     break
                 continue
 
@@ -321,17 +328,17 @@ class PlanExecutor:
             # (#273) Emit step completion event
             await self._emit_step_result(sr, total_steps)
 
-            # ── Circuit breaker: abort remaining steps on failure ──
+            # ── Circuit breaker → dynamic replan (#216) ──────────────
             if self._is_step_failure(sr):
-                log.warning(
-                    "Circuit breaker tripped at step %d [%s] — "
-                    "aborting %d remaining step(s)",
-                    step_num, tool_name, len(steps) - step_idx - 1,
+                replan_result = await self._attempt_replan(
+                    sr, steps[step_idx + 1:], result, context_store,
+                    original_request=original_request,
+                    llm_fn=llm_fn,
+                    on_step_start=on_step_start,
+                    already_replanned=_replanned,
                 )
-                self._abort_remaining(
-                    steps[step_idx + 1:], step_num, result, context_store,
-                )
-                result.aborted = True
+                if replan_result is not None:
+                    return replan_result
                 break
 
         return result
@@ -354,6 +361,90 @@ class PlanExecutor:
             await asyncio.sleep(0)  # flush dispatcher so TUI sees result immediately
         except Exception:
             pass
+
+    async def _attempt_replan(
+        self,
+        failed_sr: StepResult,
+        remaining_steps: list[Any],
+        result: PlanExecutionResult,
+        context_store: dict[int, dict[str, Any]],
+        *,
+        original_request: str,
+        llm_fn: Callable[..., Awaitable[str]] | None,
+        on_step_start: Any,
+        already_replanned: bool,
+    ) -> "PlanExecutionResult | None":
+        """Try to recover from a step failure via dynamic replanning (#216).
+
+        If replanning is possible (original_request given, not already attempted,
+        LLM available) ask the planner for a Plan B and execute it.
+
+        Returns:
+            A new PlanExecutionResult if Plan B was generated and run.
+            None if replanning was skipped or produced no steps (caller should
+            then abort normally).
+        """
+        if already_replanned or not original_request:
+            # Guard: only one replan attempt; nothing to replan without a request
+            log.warning(
+                "Circuit breaker tripped at step %d [%s] — "
+                "aborting %d remaining step(s) (no replan: %s)",
+                failed_sr.step_number, failed_sr.tool, len(remaining_steps),
+                "already replanned" if already_replanned else "no original_request",
+            )
+            self._abort_remaining(remaining_steps, failed_sr.step_number, result, context_store)
+            result.aborted = True
+            return None
+
+        log.warning(
+            "Circuit breaker at step %d [%s] — attempting dynamic replan (#216)",
+            failed_sr.step_number, failed_sr.tool,
+        )
+
+        # Notify TUI about replanning attempt
+        try:
+            from bantz.core.notification_manager import notify_toast
+            notify_toast("🔄 Replanning…", f"Step {failed_sr.step_number} failed — devising Plan B")
+        except Exception:
+            pass
+
+        from bantz.agent.planner import planner_agent
+        from bantz.tools import registry
+
+        tool_names = registry.names() + ["process_text", "summarizer"]
+
+        plan_b = await planner_agent.replan(
+            original_request=original_request,
+            failed_step_num=failed_sr.step_number,
+            failed_tool=failed_sr.tool,
+            failed_error=failed_sr.error or failed_sr.output,
+            context_store=context_store,
+            tool_names=tool_names,
+        )
+
+        if not plan_b:
+            log.warning("Replanner produced no steps — aborting")
+            self._abort_remaining(remaining_steps, failed_sr.step_number, result, context_store)
+            result.aborted = True
+            return None
+
+        log.info("Replanner produced %d Plan-B step(s) — executing", len(plan_b))
+        result.replanned = True
+
+        plan_b_result = await self.run(
+            plan_b,
+            on_step_start=on_step_start,
+            llm_fn=llm_fn,
+            original_request=original_request,
+            _replanned=True,  # prevent further recursion
+        )
+
+        # Merge Plan B results into the parent result
+        result.step_results.extend(plan_b_result.step_results)
+        if plan_b_result.aborted:
+            result.aborted = True
+
+        return result
 
     @staticmethod
     def _abort_remaining(

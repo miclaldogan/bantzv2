@@ -355,7 +355,9 @@ async def execute_plan(
     except Exception:
         pass
 
-    exec_result = await plan_executor.run(steps, llm_fn=ollama.chat)
+    exec_result = await plan_executor.run(
+        steps, llm_fn=ollama.chat, original_request=en_input,
+    )
 
     # Butler Lore toast — plan complete
     try:

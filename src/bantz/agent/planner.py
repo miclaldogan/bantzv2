@@ -202,6 +202,37 @@ Step 3: Double-Check: I have the city "Istanbul". I don't need any complex varia
 ]\
 """
 
+REPLAN_SYSTEM = """\
+You are Bantz, a 1920s-era English butler. The original multi-step plan has
+encountered an obstacle at one of its steps.  You must devise a concise Plan B.
+
+ORIGINAL REQUEST: {original_request}
+
+COMPLETED STEPS AND THEIR OUTPUTS:
+{completed_summary}
+
+FAILED STEP:
+  Step {failed_step_num}: tool={failed_tool}, error="{failed_error}"
+
+AVAILABLE TOOLS: {tool_names}
+
+Your task: return a NEW JSON array of steps (Plan B) that accomplishes the
+original request given what has already succeeded.  Number steps from 1.
+Rules:
+- Do NOT repeat already-completed steps.
+- If no alternative exists, return a single step using the "summarizer" tool
+  that honestly reports the failure to the user.
+- Return ONLY valid JSON — no markdown fences, no explanation.
+- Maximum 4 steps.
+
+Example output:
+[
+  {{"step": 1, "tool": "web_search", "params": {{"query": "alternative source"}}, "description": "Try alternative source", "depends_on": null}},
+  {{"step": 2, "tool": "summarizer", "params": {{"instruction": "Summarize: $REF_STEP_1"}}, "description": "Summarize result", "depends_on": 1}}
+]\
+"""
+
+
 @dataclass
 class PlanStep:
     """A single step in the butler's itinerary."""
@@ -377,6 +408,71 @@ class PlannerAgent:
         lines.append("")
         lines.append("Commencing forthwith.")
         return "\n".join(lines)
+
+    async def replan(
+        self,
+        original_request: str,
+        failed_step_num: int,
+        failed_tool: str,
+        failed_error: str,
+        context_store: dict,  # step_num → {"params": ..., "output": ...}
+        tool_names: list[str],
+    ) -> list[PlanStep]:
+        """Ask the LLM to devise a Plan B after a step failure (#216).
+
+        Uses the REPLAN_SYSTEM prompt which includes what succeeded so far,
+        what failed, and why — so the LLM can generate a targeted recovery plan.
+
+        Returns a (possibly empty) list of PlanStep objects.
+        Maximum 1 replan per execution — the caller enforces the guard.
+        """
+        from bantz.core.intent import _stream_and_collect
+
+        # Summarise completed steps for the prompt
+        completed_lines: list[str] = []
+        for step_num in sorted(context_store):
+            entry = context_store[step_num]
+            out = (entry.get("output") or "")[:300].replace("\n", " ")
+            completed_lines.append(
+                f"  Step {step_num}: output='{out}'" if out else f"  Step {step_num}: (no output)"
+            )
+        completed_summary = "\n".join(completed_lines) if completed_lines else "  (none)"
+
+        prompt = REPLAN_SYSTEM.format(
+            original_request=original_request,
+            completed_summary=completed_summary,
+            failed_step_num=failed_step_num,
+            failed_tool=failed_tool,
+            failed_error=failed_error[:300],
+            tool_names=", ".join(tool_names),
+        )
+
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": "Devise Plan B now."},
+        ]
+
+        try:
+            raw = await _stream_and_collect(
+                messages, emit_thinking=True, source="replanner",
+            )
+            steps_data = self._parse_steps(raw)
+        except Exception as exc:
+            log.warning("Replanner failed: %s", exc)
+            return []
+
+        steps: list[PlanStep] = []
+        for i, s in enumerate(steps_data, 1):
+            steps.append(PlanStep(
+                step=s.get("step", i),
+                tool=s.get("tool", ""),
+                params=s.get("params", {}),
+                description=s.get("description", ""),
+                depends_on=s.get("depends_on"),
+            ))
+
+        log.info("Replanner produced %d Plan-B step(s)", len(steps))
+        return steps
 
 
 # ── Singleton ────────────────────────────────────────────────────────────────
