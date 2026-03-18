@@ -91,26 +91,33 @@ ROUTING RULES:
 - input_control: type text, scroll, press keys, move cursor, drag
 - visual_click: click a button, menu, link, icon, tab, or any visible UI element on screen.
               "click X", "open X menu", "press the Y button" → visual_click
-- accessibility: focus window, screen analysis, screenshot, describe UI, list apps
+- screenshot: DELIVER a screenshot image to the user — use this when the user wants to SEE/RECEIVE the photo.
+              "give me a screenshot", "send me a screenshot", "show me the screen", "take a screenshot",
+              "ekran görüntüsü al/gönder/ver", "can I see the screen", "what does my screen look like",
+              "ss al", "/ekran", "screenshot please" → screenshot tool (NOT browser_control).
+              Use browser_control action=screenshot ONLY when analyzing the screen for a click/type task.
+- accessibility: focus window, screen analysis, describe UI, list apps
 - read_url:   fetch and read full content of a specific URL
 - browser_control: For a SINGLE browser action:
-              • "open firefox" → action=open app=firefox
-              • "take screenshot" → action=screenshot
+              • "open firefox/chrome" → action=open app=firefox/google-chrome
+              • "go to X" / "navigate to X" / "open X.com" → action=navigate url=https://X
+              • "write X there" / "open X" (when browser already open) → action=navigate url=https://X.com
               • "new tab" → action=new_tab
+              • "click [element]" when browser context is clear → action=find_and_click target="[element]"
               • FOLLOW-UP after browser action: "open it", "play it", "click it",
                 "aç onu", "aç", "tıkla" → action=find_and_click target="first result"
                 (ONLY when PREVIOUS TOOL RESULT or RECENT CONVERSATION shows a browser/search was just performed)
               DO NOT use for any request that involves navigating AND doing something else.
 - chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
-- planner:    When the request requires TWO OR MORE steps, even using the same tool.
-              USE PLANNER for ALL of these patterns:
-              • "go to [site] and [do something]" → navigate + action = planner
-              • "open [video/page] on youtube" → search + find + click = planner
-              • "find/play/watch [X] on youtube" → search + click = planner
-              • "search for X on [site]" → navigate + search = planner
-              • "open [site] and [do something]" → planner
-              • "and then", "then", "and search", "and click", "and type" → planner
-              • any request that requires seeing the screen after navigation → planner
+- planner:    ONLY when the request contains EXPLICIT multi-step language like "and then", "then", "and search", "and click", "and type", "after that".
+              DO NOT use planner for single-action requests that happen to mention a browser.
+              USE PLANNER ONLY for these patterns:
+              • "go to [site] and [do something else]" — TWO distinct actions
+              • "open [video/page] on youtube" → search + find + click
+              • "find/play/watch [X] on youtube" → search + click
+              • "search for X on [site]" → navigate + search
+              • "and then", "then", "and click", "and type" — explicit chaining keywords present
+              NEVER use planner for: "click X", "go to X", "open X", "give me a screenshot", "write X there" — these are all SINGLE steps.
 
 CRITICAL:
 - If the user's request contains ambiguous pronouns (e.g., 'him', 'her') or refers to unspecified files/reports ('that report'), you MUST ask for clarification. Do NOT invent a fake report, do NOT roleplay sending a message to a fake person, and do not route to a tool until the ambiguity is resolved. Route to "chat" to ask for clarification.

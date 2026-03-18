@@ -143,11 +143,17 @@ Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use $REF_
   {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "$REF_STEP_1_PARAMS_folder_path/quantum_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save summary into the research folder", "depends_on": 3}}
 ]
 
+ANTI-HALLUCINATION RULE (CRITICAL):
+Plan ONLY what the user explicitly requested. NEVER add navigation, searches, or browsing steps that were not asked for.
+If the user says "click X" — plan ONLY a find_and_click step for X.
+If the user says "go to wikipedia" — plan ONLY a navigate step to wikipedia.org.
+Do NOT default to YouTube, Firefox, or any specific site unless the user mentioned it.
+
 User: "Open Firefox and go to youtube.com, then open the GülDür channel"
 <thinking>
 Step 1: Goal is to open Firefox, navigate to YouTube, then navigate to a specific channel.
-Step 2: This is a GUI automation task. Use browser_control for all steps. action=open to launch Firefox, action=navigate to go to YouTube, action=navigate again for the channel page.
-Step 3: Double-Check: I must use browser_control with action=open NOT summarizer. The params MUST include "action" key.
+Step 2: This is a GUI automation task. Use browser_control for all steps.
+Step 3: Double-Check: 3 distinct actions — open, navigate to YT, navigate to channel.
 </thinking>
 [
   {{"step": 1, "tool": "browser_control", "params": {{"action": "open", "app": "firefox", "wait": 3.0}}, "description": "Open Firefox browser", "depends_on": null}},
@@ -155,38 +161,49 @@ Step 3: Double-Check: I must use browser_control with action=open NOT summarizer
   {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com/@GulDur", "wait": 2.5}}, "description": "Go to GülDür channel", "depends_on": 2}}
 ]
 
-User: "Go to YouTube and search for funny cats"
+User: "Go to Wikipedia and then click the search bar"
 <thinking>
-Step 1: Goal is to navigate to YouTube then search.
-Step 2: Use browser_control. Navigate to YouTube, then use type_in_element with site=youtube so it uses the direct search URL.
-Step 3: Pass site= hint so type_in_element constructs the direct YouTube search URL internally.
+Step 1: Goal is to navigate to Wikipedia, then click the search bar.
+Step 2: browser_control navigate, then find_and_click. Two explicit steps.
+Step 3: Only plan what was asked — navigate + click search bar. NOT YouTube, NOT Firefox open.
 </thinking>
 [
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "funny cats", "site": "youtube", "press_enter": "true"}}, "description": "Search YouTube for funny cats", "depends_on": 1}}
-]
-
-User: "Search for 'Python tutorial' on Google"
-<thinking>
-Step 1: Goal is to go to Google and search.
-Step 2: Navigate to Google, then type_in_element with site=google.
-Step 3: site= hint lets type_in_element use the direct Google search URL.
-</thinking>
-[
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.google.com", "wait": 2.0}}, "description": "Navigate to Google", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search input", "text": "Python tutorial", "site": "google", "press_enter": "true"}}, "description": "Search on Google", "depends_on": 1}}
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://www.wikipedia.org", "wait": 2.0}}, "description": "Navigate to Wikipedia", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "chrome", "target": "search bar"}}, "description": "Click the search bar", "depends_on": 1}}
 ]
 
 User: "open me a dr strange video on youtube" (or "find X video on youtube", "play X on youtube")
 <thinking>
-Step 1: Goal is to find and play a video on YouTube. This needs: navigate to YouTube search results for "dr strange", wait for results to load, then find and click the first video.
-Step 2: browser_control for all steps. type_in_element with site=youtube uses direct search URL. wait_for_load waits for results. find_and_click uses VLM to find the first video result.
-Step 3: 3 steps total — search, wait, click first result.
+Step 1: Goal is to find and play a video on YouTube. Explicitly: search for "dr strange" on YouTube, wait for results, click first video.
+Step 2: browser_control for all steps. type_in_element with site=youtube uses direct search URL.
+Step 3: 3 steps — search, wait, click first result. Anti-hallucination: user asked for YouTube, so YouTube is correct here.
 </thinking>
 [
   {{"step": 1, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "dr strange", "site": "youtube", "press_enter": "false"}}, "description": "Navigate to YouTube search results for dr strange", "depends_on": null}},
   {{"step": 2, "tool": "browser_control", "params": {{"action": "wait_for_load", "app": "firefox", "max_wait": 8.0}}, "description": "Wait for search results to load", "depends_on": 1}},
   {{"step": 3, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "firefox", "target": "first video result", "site": "youtube", "wait_load": "false"}}, "description": "Click the first video result", "depends_on": 2}}
+]
+
+User: "click the 'You laugh you lose' video and then take a screenshot"
+<thinking>
+Step 1: Goal is to click a specific video, then take a screenshot. Two explicit steps.
+Step 2: find_and_click for the video, then screenshot.
+Step 3: Anti-hallucination — user didn't ask to open YouTube or search. Just click + screenshot.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "firefox", "target": "You laugh you lose video"}}, "description": "Click the video", "depends_on": null}},
+  {{"step": 2, "tool": "screenshot", "params": {{}}, "description": "Take a screenshot", "depends_on": 1}}
+]
+
+User: "Go to YouTube and search for funny cats"
+<thinking>
+Step 1: Goal is to navigate to YouTube then search. Explicit: YouTube + funny cats search.
+Step 2: Navigate to YouTube, then type_in_element.
+Step 3: Anti-hallucination: user asked for YouTube, using YouTube is correct.
+</thinking>
+[
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "funny cats", "site": "youtube", "press_enter": "true"}}, "description": "Search YouTube for funny cats", "depends_on": 1}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"

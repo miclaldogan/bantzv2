@@ -222,8 +222,14 @@ class BrowserControlTool(BaseTool):
         if not img_b64:
             return ToolResult(success=False, output="", error="Screenshot captured no data (display server issue?)")
 
-        img_bytes = len(base64.b64decode(img_b64))
-        result_data = {"screenshot_b64": img_b64, "size_bytes": img_bytes}
+        raw_bytes = base64.b64decode(img_b64)
+        img_bytes = len(raw_bytes)
+        result_data = {
+            "screenshot_b64": img_b64,
+            "screenshot": raw_bytes,   # raw JPEG bytes for Telegram attachment promotion (#189)
+            "size_bytes": img_bytes,
+            "mime_type": "image/jpeg",
+        }
 
         description = ""
         if describe and config.vlm_enabled:
