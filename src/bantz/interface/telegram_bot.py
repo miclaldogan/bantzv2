@@ -31,6 +31,7 @@ import os
 import random
 import time
 from collections import defaultdict
+from io import BytesIO
 from typing import Callable, Coroutine, Any
 
 from telegram import Update
@@ -266,6 +267,54 @@ async def _safe_edit(placeholder, text: str) -> bool:
             return False
 
 
+_SCREENSHOT_RATE: dict[int, list[float]] = defaultdict(list)
+_SCREENSHOT_MIN_INTERVAL = 5.0   # seconds between screenshots per user
+_SCREENSHOT_MAX_PER_MIN = 10
+
+
+def _screenshot_rate_ok(user_id: int) -> bool:
+    """Return True if user is within screenshot rate limits."""
+    now = time.monotonic()
+    ts = _SCREENSHOT_RATE[user_id]
+    # Remove entries older than 60s
+    _SCREENSHOT_RATE[user_id] = [t for t in ts if now - t < 60]
+    if len(_SCREENSHOT_RATE[user_id]) >= _SCREENSHOT_MAX_PER_MIN:
+        return False
+    if ts and now - ts[-1] < _SCREENSHOT_MIN_INTERVAL:
+        return False
+    _SCREENSHOT_RATE[user_id].append(now)
+    return True
+
+
+async def _send_photo(
+    update: Update,
+    image_data: bytes,
+    caption: str = "",
+) -> None:
+    """Dispatch a daguerreotype (JPEG photo) to the user via Telegram.
+
+    Telegram captions are limited to 1024 chars; longer captions are sent
+    as a separate follow-up text message.
+    """
+    bio = BytesIO(image_data)
+    bio.name = "daguerreotype.jpg"
+    _CAPTION_LIMIT = 1024
+    try:
+        if len(caption) > _CAPTION_LIMIT:
+            await update.message.reply_photo(
+                photo=bio,
+                caption=caption[:_CAPTION_LIMIT - 1] + "…",
+            )
+            await _safe_reply(update, caption)
+        else:
+            await update.message.reply_photo(
+                photo=bio,
+                caption=caption or None,
+            )
+    except Exception as exc:
+        log.warning("_send_photo failed: %s", exc)
+
+
 async def _stream_to_placeholder(placeholder, stream, *, interval: float = _STREAM_INTERVAL) -> str:
     """Consume *stream*, updating *placeholder* every *interval* seconds.
 
@@ -318,7 +367,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/haber — latest news\n"
         "/hatirlatici — list reminders\n"
         "/digest — evening daily digest\n"
-        "/weekly — weekly summary"
+        "/weekly — weekly summary\n"
+        "/ekran — desktop daguerreotype 📷"
         + llm_hint
     )
 
@@ -445,6 +495,96 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 @_authorized
+async def cmd_ekran(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On-demand desktop daguerreotype — /ekran [app_name]."""
+    _active_chats.add(update.effective_chat.id)
+    user_id = update.effective_user.id if update.effective_user else 0
+
+    if not _screenshot_rate_ok(user_id):
+        await update.message.reply_text(
+            "⏳ One moment, ma'am — the daguerreotype apparatus requires a brief interval "
+            "between exposures. The silver plates, as it were, are not inexhaustible."
+        )
+        return
+
+    app_name = " ".join(context.args) if context.args else ""
+    placeholder = await update.message.reply_text(
+        "📷 One moment, ma'am. I am preparing the daguerreotype apparatus…"
+    )
+
+    try:
+        from bantz.tools.screenshot_tool import ScreenshotTool
+        result = await ScreenshotTool().execute(app=app_name)
+
+        if result.success and result.data and result.data.get("screenshot"):
+            await _send_photo(update, result.data["screenshot"], result.output)
+            try:
+                await placeholder.delete()
+            except Exception:
+                pass
+        else:
+            await _safe_edit(placeholder, f"⚠️ {result.error}")
+    except Exception as exc:
+        await _safe_edit(placeholder, f"⚠️ Daguerreotype error: {exc}")
+
+
+@_authorized
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle incoming photos — pass to VLM for description/analysis.
+
+    Ma'am can send a screenshot to Bantz and ask him to analyse it.
+    The caption (if any) becomes the user's question about the image.
+    """
+    if not config.telegram_llm_mode:
+        return
+
+    user_id = update.effective_user.id if update.effective_user else 0
+    if _is_rate_limited(user_id):
+        await update.message.reply_text("⏳ Too many messages — please wait a moment.")
+        return
+
+    _active_chats.add(update.effective_chat.id)
+
+    caption = (update.message.caption or "What do you see in this image?").strip()
+    placeholder = await update.message.reply_text(
+        "📟 Examining the daguerreotype you have dispatched, ma'am…"
+    )
+
+    try:
+        # Download the largest available photo size
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        bio = BytesIO()
+        await file.download_to_memory(bio)
+        bio.seek(0)
+
+        import base64
+        image_b64 = base64.b64encode(bio.read()).decode()
+
+        from bantz.vision.remote_vlm import describe_screen
+        vlm_result = await describe_screen(image_b64)
+        description = vlm_result.raw if hasattr(vlm_result, "raw") else str(vlm_result)
+
+        # Now ask the LLM to answer the user's question about the described image
+        async with _msg_lock:
+            from bantz.core.brain import brain
+            combined = f"[Image description: {description}]\n\nUser question: {caption}"
+            result = await brain.process(combined, is_remote=True)
+            response = result.response or description
+
+        if not await _safe_edit(placeholder, response.strip()):
+            try:
+                await placeholder.delete()
+            except Exception:
+                pass
+            await _safe_reply(update, response.strip())
+
+    except Exception as exc:
+        log.warning("handle_photo error: %s", exc)
+        await _safe_edit(placeholder, f"⚠️ I was unable to examine the daguerreotype, ma'am: {exc}")
+
+
+@_authorized
 async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """On-demand weekly digest."""
     _active_chats.add(update.effective_chat.id)
@@ -553,14 +693,21 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _is_maintenance_spam(result) -> bool:
-    """Return True for ANY maintenance result on Telegram.
+    """Return True only for noisy/empty maintenance results on Telegram.
 
-    Maintenance output is noisy and irrelevant on mobile — suppress ALL of it.
-    Users can run /briefing to see system health if they want.
+    Suppresses maintenance responses that are empty or only report
+    "all systems nominal" — but lets through useful content (e.g. if the
+    maintenance tool surfaces an actionable warning or data).
     """
     if getattr(result, "tool_used", None) != "maintenance":
         return False
-    return True
+    response = getattr(result, "response", "") or ""
+    # Let through if there's meaningful content (not just a green-light phrase)
+    _NOISE_PHRASES = ("all systems nominal", "all clear", "✓", "ok")
+    stripped = response.strip().lower()
+    if not stripped:
+        return True
+    return any(stripped == p or stripped.startswith(p + " ") for p in _NOISE_PHRASES)
 
 
 def _is_rate_limited(user_id: int) -> bool:
@@ -635,26 +782,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else:
                 response = result.response
 
+            # ── Dispatch image attachments (daguerreotypes) (#189) ─────────
+            user_id = update.effective_user.id if update.effective_user else 0
+            for att in getattr(result, "attachments", []):
+                if att.type == "image" and _screenshot_rate_ok(user_id):
+                    await _send_photo(update, att.data, att.caption)
+
             if response and response.strip():
                 cleaned = response.strip()
 
-                # Step 3: Edit placeholder with actual response (#181)
-                chunks = _chunk_text(cleaned)
-                if not await _safe_edit(placeholder, chunks[0]):
-                    # Fallback: delete placeholder, send via reply_text
+                # If we already sent the response as an image caption, skip
+                # duplicate text — unless the caption was truncated.
+                has_attachment = bool(getattr(result, "attachments", []))
+                if has_attachment and cleaned == (getattr(result.attachments[0], "caption", "") if result.attachments else ""):
+                    # Caption IS the response — skip separate text
                     try:
                         await placeholder.delete()
                     except Exception:
                         pass
-                    await _safe_reply(update, cleaned)
                 else:
-                    # Remaining chunks as new messages
-                    for extra in chunks[1:]:
-                        await update.message.reply_text(extra)
+                    # Step 3: Edit placeholder with actual response (#181)
+                    chunks = _chunk_text(cleaned)
+                    if not await _safe_edit(placeholder, chunks[0]):
+                        # Fallback: delete placeholder, send via reply_text
+                        try:
+                            await placeholder.delete()
+                        except Exception:
+                            pass
+                        await _safe_reply(update, cleaned)
+                    else:
+                        # Remaining chunks as new messages
+                        for extra in chunks[1:]:
+                            await update.message.reply_text(extra)
 
-                # ── Persist streamed response to memory + graph (#178 fix) ────
+                # ── Persist streamed response to memory + graph (#178 fix) ─
                 # Brain only auto-saves non-streaming responses; for streams the
-                # consumer is responsible (mirrors TUI behaviour in app.py L718).
+                # consumer is responsible (mirrors TUI behaviour in app.py).
                 if result.stream:
                     try:
                         from bantz.data import data_layer
@@ -671,8 +834,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except Exception:
                         log.debug("Failed to persist Telegram response to graph")
             else:
-                if not await _safe_edit(placeholder, "…"):
-                    await update.message.reply_text("…")
+                if not getattr(result, "attachments", []):
+                    if not await _safe_edit(placeholder, "…"):
+                        await update.message.reply_text("…")
+                else:
+                    try:
+                        await placeholder.delete()
+                    except Exception:
+                        pass
         except Exception as exc:
             log.exception("Cognitive wire error for user %d", user_id)
             if not await _safe_edit(placeholder, f"⚠️ Error: {exc}"):
@@ -706,9 +875,13 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("hatirlatici", cmd_hatirlatici))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("weekly", cmd_weekly))
+    app.add_handler(CommandHandler("ekran", cmd_ekran))          # daguerreotype (#189)
 
     # Cognitive Wire — free text → LLM (#178)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Incoming photo handler — VLM analysis (#189)
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Proactive reminder check — runs every 30 seconds
     app.job_queue.run_repeating(

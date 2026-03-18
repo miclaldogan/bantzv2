@@ -15,6 +15,21 @@ from typing import Any, AsyncIterator
 
 
 @dataclass
+class Attachment:
+    """File attachment produced by a tool (e.g. a screenshot / daguerreotype).
+
+    Carried by BrainResult so Telegram (and future interfaces) can deliver
+    the bytes directly to the user without writing anything to disk.
+    """
+
+    type: str               # "image" | "document"
+    data: bytes             # raw bytes (JPEG for screenshots)
+    caption: str = ""       # butler's description
+    filename: str = "bantz_attachment"
+    mime_type: str = "image/jpeg"
+
+
+@dataclass
 class BrainResult:
     """Standard response payload returned by the Brain orchestrator.
 
@@ -30,3 +45,4 @@ class BrainResult:
     pending_tool: str = ""
     pending_args: dict = field(default_factory=dict)
     stream: AsyncIterator[str] | None = None
+    attachments: list = field(default_factory=list)  # list[Attachment]
