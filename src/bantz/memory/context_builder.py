@@ -15,6 +15,10 @@ from typing import Callable, Awaitable
 
 log = logging.getLogger("bantz.context_builder")
 
+# Token budget for build_context() output (#219)
+MAX_CONTEXT_TOKENS: int = 2000
+_MAX_CONTEXT_CHARS: int = MAX_CONTEXT_TOKENS * 4  # ~1 token ≈ 4 chars
+
 # Stop-words for keyword extraction
 _STOP_WORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "do", "does",
@@ -150,7 +154,13 @@ async def build_context(
         if not parts:
             return ""
 
-        return "=== Graph Memory ===\n" + "\n".join(parts) + "\n=== End Graph ==="
+        result = "=== Graph Memory ===\n" + "\n".join(parts) + "\n=== End Graph ==="
+
+        # Enforce token budget (#219)
+        if len(result) > _MAX_CONTEXT_CHARS:
+            result = result[:_MAX_CONTEXT_CHARS] + "\n…"
+
+        return result
 
     except Exception as exc:
         log.debug("Graph context error: %s", exc)
