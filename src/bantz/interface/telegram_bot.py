@@ -94,6 +94,102 @@ _STREAM_INTERVAL: float = 2.0  # seconds between edit_text updates
 _msg_lock = asyncio.Lock()
 
 
+# ── Telegram Spam Filter (#184) ───────────────────────────────────────────────
+
+class _TelegramSpamFilter:
+    """Aggregates rapid-fire system/maintenance messages into a single summary.
+
+    User messages always pass through immediately.
+    System messages are buffered: if ≥ SPAM_THRESHOLD arrive within
+    WINDOW_SECONDS, they are collapsed into one butler-style summary.
+    """
+
+    WINDOW_SECONDS: float = 60.0
+    SPAM_THRESHOLD: int = 5
+
+    def __init__(self) -> None:
+        self._buffer: list[str] = []
+        self._window_start: float = 0.0
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    async def should_send(self, message: str, *, is_system: bool = False) -> str | None:
+        """Return the message to send, or None if it was buffered.
+
+        Non-system messages always return immediately.
+        System messages are rate-checked against the sliding window.
+        When the threshold is reached the buffer is flushed as a summary.
+        """
+        if not is_system:
+            return message
+
+        async with self._lock:
+            now = time.monotonic()
+
+            if now - self._window_start > self.WINDOW_SECONDS:
+                self._buffer.clear()
+                self._window_start = now
+
+            self._buffer.append(message)
+
+            if len(self._buffer) >= self.SPAM_THRESHOLD:
+                count = len(self._buffer)
+                summary = (
+                    f"Ma'am, the machines have been undergoing routine maintenance. "
+                    f"{count} tasks completed in the past minute. All systems nominal."
+                )
+                self._buffer.clear()
+                self._window_start = now
+                log.info("_TelegramSpamFilter: bundled %d system messages into summary", count)
+                return summary
+
+            return message
+
+    async def flush(self) -> str | None:
+        """Flush any buffered messages (e.g. on shutdown). Returns summary or None."""
+        async with self._lock:
+            if not self._buffer:
+                return None
+            count = len(self._buffer)
+            summary = f"Ma'am, {count} maintenance tasks completed. All quiet now."
+            self._buffer.clear()
+            return summary
+
+
+_spam_filter = _TelegramSpamFilter()
+
+
+async def send_system_notification(text: str) -> None:
+    """Send a system/background notification to all active chats, via spam filter.
+
+    Use this instead of raw bot.send_message() for proactive/background sends
+    so that rapid-fire maintenance messages are automatically bundled (#184).
+    Silently no-ops when no bot application is running or no chats are active.
+    """
+    filtered = await _spam_filter.should_send(text, is_system=True)
+    if filtered is None:
+        return  # buffered, not yet due for sending
+
+    if not _active_chats:
+        return
+
+    try:
+        from telegram.ext import Application as _TgApp
+        app: _TgApp | None = _current_app
+        if app is None:
+            return
+        for chat_id in _active_chats:
+            try:
+                await app.bot.send_message(chat_id=chat_id, text=filtered)
+            except Exception as exc:
+                log.debug("send_system_notification: failed for %d: %s", chat_id, exc)
+    except Exception as exc:
+        log.debug("send_system_notification: %s", exc)
+
+
+# Module-level reference to the running Application, set in run_bot()
+_current_app = None
+
+
 def _authorized(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
     """Decorator: silently drop messages from non-whitelisted users (#178)."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -441,9 +537,14 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             text = f"⏰ Reminder: {title}"
 
+        # Route through spam filter so burst reminders are bundled (#184)
+        filtered = await _spam_filter.should_send(text, is_system=True)
+        if filtered is None:
+            continue
+
         for chat_id in _active_chats:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text)
+                await context.bot.send_message(chat_id=chat_id, text=filtered)
             except Exception as exc:
                 log.debug("Failed to send reminder to %d: %s", chat_id, exc)
 
@@ -588,7 +689,9 @@ def run_bot() -> None:
         print("   → or run: bantz --setup telegram")
         return
 
+    global _current_app
     app = Application.builder().token(token).build()
+    _current_app = app
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
