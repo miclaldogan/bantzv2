@@ -479,7 +479,7 @@ class Brain:
             "class": "classroom", "homework": "classroom",
             "firefox": "browser_control", "chrome": "browser_control",
             "chromium": "browser_control", "browser": "browser_control",
-            "screenshot": "browser_control", "accessibility": "accessibility",
+            "accessibility": "accessibility",
         }
         if tool_name:
             # Pass 1: fuzzy registry lookup (handles "Web Search" → "web_search")
@@ -634,9 +634,19 @@ class Brain:
         # Try streaming finalize for long tool output (#67)
         fin_stream = await self._finalize_stream(en_input, result, tc)
         if fin_stream is not None:
+            # Screenshot bytes must be promoted even on the streaming path (#189)
+            stream_attachments: list[Attachment] = []
+            if result.success and result.data and result.data.get("screenshot"):
+                stream_attachments.append(Attachment(
+                    type="image",
+                    data=result.data["screenshot"],
+                    caption="",
+                    mime_type=result.data.get("mime_type", "image/jpeg"),
+                ))
             return BrainResult(
                 response="", tool_used=tool_name,
                 tool_result=result, stream=fin_stream,
+                attachments=stream_attachments,
             )
 
         # Short output — non-streaming finalize
@@ -654,10 +664,12 @@ class Brain:
         # screenshot trigger word, auto-append a screenshot after the action.
         attachments: list[Attachment] = []
         if result.success and result.data and result.data.get("screenshot"):
+            # Caption is empty — butler response is sent as a separate text
+            # message in telegram_bot so the photo renders cleanly (#189).
             attachments.append(Attachment(
                 type="image",
                 data=result.data["screenshot"],
-                caption=resp,
+                caption="",
                 mime_type=result.data.get("mime_type", "image/jpeg"),
             ))
         elif self._is_remote and result.success:
