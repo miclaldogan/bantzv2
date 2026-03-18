@@ -111,6 +111,10 @@ class Config(BaseSettings):
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
     telegram_proxy: str = Field("", alias="TELEGRAM_PROXY")
     telegram_llm_mode: bool = Field(True, alias="TELEGRAM_LLM_MODE")
+    telegram_screenshot_enabled: bool = Field(True, alias="TELEGRAM_SCREENSHOT_ENABLED")
+    telegram_screenshot_quality: int = Field(80, alias="TELEGRAM_SCREENSHOT_QUALITY")
+    telegram_screenshot_max_dimension: int = Field(1920, alias="TELEGRAM_SCREENSHOT_MAX_DIM")
+    screenshot_auto_after_action: bool = Field(True, alias="SCREENSHOT_AUTO_AFTER_ACTION")
 
     # ── Background Observer (#124) ────────────────────────────────────────
     observer_enabled: bool = Field(False, alias="BANTZ_OBSERVER_ENABLED")

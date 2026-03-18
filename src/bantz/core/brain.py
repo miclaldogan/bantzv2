@@ -24,7 +24,7 @@ from bantz.core.finalizer import (
 from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 from bantz.core.context import BantzContext  # noqa: F401  — re-export for compat
-from bantz.core.types import BrainResult  # noqa: F401  — canonical def in types.py
+from bantz.core.types import BrainResult, Attachment  # noqa: F401  — canonical def in types.py
 from bantz.core.routing_engine import (
     quick_route as _quick_route_fn,
     dispatch_internal as _dispatch_internal,
@@ -645,7 +645,46 @@ class Brain:
         await self._graph_store(user_input, resp, tool_name,
                                 result.data if result else None)
         self._fire_embeddings()
-        return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
+
+        # ── Screenshot → Attachment promotion (#189) ──────────────────────
+        # If the tool returned image bytes, wrap them in an Attachment so
+        # Telegram (and future image-capable interfaces) can dispatch the
+        # daguerreotype without writing anything to disk.
+        # Also: if the user is on Telegram and their message contains a
+        # screenshot trigger word, auto-append a screenshot after the action.
+        attachments: list[Attachment] = []
+        if result.success and result.data and result.data.get("screenshot"):
+            attachments.append(Attachment(
+                type="image",
+                data=result.data["screenshot"],
+                caption=resp,
+                mime_type=result.data.get("mime_type", "image/jpeg"),
+            ))
+        elif self._is_remote and result.success:
+            from bantz.tools.screenshot_tool import SCREENSHOT_TRIGGERS
+            from bantz.config import config as _cfg
+            if _cfg.screenshot_auto_after_action and any(
+                t in user_input.lower() for t in SCREENSHOT_TRIGGERS
+            ):
+                try:
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(2)  # let the action settle before capture
+                    from bantz.vision import screenshot as _ss
+                    shot = await _ss.capture()
+                    if shot and shot.data:
+                        attachments.append(Attachment(
+                            type="image",
+                            data=shot.data,
+                            caption=resp,
+                            mime_type="image/jpeg",
+                        ))
+                except Exception as _exc:
+                    log.debug("Auto-screenshot after action failed: %s", _exc)
+
+        return BrainResult(
+            response=resp, tool_used=tool_name,
+            tool_result=result, attachments=attachments,
+        )
 
     @staticmethod
     def _dedup_history(history: list[dict]) -> list[dict]:
