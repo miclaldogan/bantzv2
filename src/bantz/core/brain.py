@@ -120,6 +120,10 @@ class Brain:
         self._turn_counter: int = 0
         self._context_turn: int = 0  # turn when context was last stored
         self._CONTEXT_TTL: int = 3   # expire after 3 turns of no related queries
+        # Screen vision context (#189+): VLM description of last screenshot
+        self._last_screen_description: str = ""
+        self._screen_description_turn: int = -1
+        self._pending_vlm_task: object = None  # asyncio.Task | None
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
@@ -295,6 +299,17 @@ class Brain:
             parts.append("\n".join(lines))
             self._context_turn = self._turn_counter  # refresh TTL on use
 
+        # Screen vision context: inject VLM description of last screenshot
+        # Expires after _CONTEXT_TTL turns so stale screen state doesn't confuse routing
+        if self._last_screen_description and (
+            self._turn_counter - self._screen_description_turn <= self._CONTEXT_TTL
+        ):
+            parts.append(
+                f"CURRENT SCREEN STATE (from last screenshot — use this to resolve "
+                f"'there', 'here', 'it', 'that element', 'the page'):\n"
+                f"{self._last_screen_description[:700]}"
+            )
+
         # Generic: inject last tool output for any follow-up referencing it
         if self._last_tool_output and not parts:
             # Check if user is asking a follow-up about the previous result
@@ -316,6 +331,23 @@ class Brain:
                 self._context_turn = self._turn_counter  # refresh TTL on use
 
         return "\n\n".join(parts)
+
+    async def _vlm_describe_screen(self, img_bytes: bytes) -> None:
+        """Run VLM screen description in background and store for next CoT call."""
+        try:
+            import base64 as _b64
+            from bantz.config import config as _cfg
+            if not _cfg.vlm_enabled:
+                return
+            from bantz.vision.remote_vlm import describe_screen
+            b64 = _b64.b64encode(img_bytes).decode()
+            result = await describe_screen(b64, timeout=12)
+            if result.success and result.raw_text:
+                self._last_screen_description = result.raw_text
+                self._screen_description_turn = self._turn_counter
+                log.debug("VLM screen description stored (%d chars)", len(result.raw_text))
+        except Exception as exc:
+            log.debug("VLM screen describe failed: %s", exc)
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
@@ -398,6 +430,19 @@ class Brain:
 
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
+
+        # Await pending VLM screen description (started after last screenshot).
+        # User typically takes 2-5s to read the photo before typing — VLM usually done.
+        if self._pending_vlm_task is not None:
+            import asyncio as _asyncio
+            if not self._pending_vlm_task.done():
+                try:
+                    await _asyncio.wait_for(
+                        _asyncio.shield(self._pending_vlm_task), timeout=3.0,
+                    )
+                except (_asyncio.TimeoutError, Exception):
+                    pass
+            self._pending_vlm_task = None
 
         recent_history = data_layer.conversations.context(n=6)
 
@@ -666,12 +711,22 @@ class Brain:
         if result.success and result.data and result.data.get("screenshot"):
             # Caption is empty — butler response is sent as a separate text
             # message in telegram_bot so the photo renders cleanly (#189).
+            img_bytes = result.data["screenshot"]
             attachments.append(Attachment(
                 type="image",
-                data=result.data["screenshot"],
+                data=img_bytes,
                 caption="",
                 mime_type=result.data.get("mime_type", "image/jpeg"),
             ))
+            # Kick off VLM screen description in background so the NEXT
+            # command has screen-aware context ("there" = visible search box etc.)
+            try:
+                import asyncio as _asyncio
+                self._pending_vlm_task = _asyncio.create_task(
+                    self._vlm_describe_screen(img_bytes)
+                )
+            except Exception:
+                pass
         elif self._is_remote and result.success:
             from bantz.tools.screenshot_tool import SCREENSHOT_TRIGGERS
             from bantz.config import config as _cfg
