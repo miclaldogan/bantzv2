@@ -165,6 +165,12 @@ def estimate_element_coords(
     x0, y0, w, h = bounds["x"], bounds["y"], bounds["w"], bounds["h"]
     el = element_description.lower()
 
+    # Normalize site_hint: if it looks like a URL extract the hostname so that a
+    # crafted URL such as "evil.com/path/google.com" cannot spoof site detection
+    # via a plain substring check (CWE-184).
+    import urllib.parse as _up
+    _sh = _up.urlparse(site_hint).hostname or site_hint if "://" in site_hint else site_hint
+
     # Browser chrome estimates (relative to window top)
     BROWSER_CHROME_H = 75  # approx height of tabs + address bar
 
@@ -184,7 +190,7 @@ def estimate_element_coords(
     content_h = h - BROWSER_CHROME_H
 
     # YouTube-specific heuristics
-    if "youtube" in site_hint or "youtube" in el:
+    if "youtube" in _sh or "youtube" in el:
         if any(k in el for k in ("search", "search bar", "search box", "arama")):
             # YouTube search bar: centered, near top of content
             return (content_x + content_w // 2, content_y + 45)
@@ -195,7 +201,7 @@ def estimate_element_coords(
             return (content_x + content_w // 2, content_y + content_h // 2)
 
     # Google-specific heuristics
-    if "google" in site_hint or "google.com" in el:
+    if "google" in _sh or "google" in el:
         if any(k in el for k in ("search", "search bar", "search box")):
             return (content_x + content_w // 2, content_y + content_h // 3)
         if any(k in el for k in ("first result", "top result")):

@@ -444,18 +444,27 @@ class BrowserControlTool(BaseTool):
             encoded = urllib.parse.quote_plus(text)
             search_url = None
 
-            combined = site_hint + " " + current_url
-            if "youtube" in combined:
+            # Parse hostname from current_url to prevent substring-in-URL spoofing (CWE-184).
+            # Simple `in` checks on a raw URL string can be bypassed by crafted paths such as
+            # "evil.com/page/youtube.com".  Comparing against the parsed hostname is safe.
+            _url_host = urllib.parse.urlparse(current_url).hostname or ""
+
+            def _on_site(*domains: str) -> bool:
+                return any(d in site_hint for d in domains) or any(
+                    _url_host == d or _url_host.endswith("." + d) for d in domains
+                )
+
+            if _on_site("youtube", "youtube.com"):
                 search_url = f"https://www.youtube.com/results?search_query={encoded}"
-            elif "google" in combined:
+            elif _on_site("google", "google.com"):
                 search_url = f"https://www.google.com/search?q={encoded}"
-            elif "bing" in combined:
+            elif _on_site("bing", "bing.com"):
                 search_url = f"https://www.bing.com/search?q={encoded}"
-            elif "github" in combined:
+            elif _on_site("github", "github.com"):
                 search_url = f"https://github.com/search?q={encoded}"
-            elif "duckduckgo" in combined or "ddg" in combined:
+            elif _on_site("duckduckgo", "duckduckgo.com") or "ddg" in site_hint:
                 search_url = f"https://duckduckgo.com/?q={encoded}"
-            elif "twitter" in combined or "x.com" in combined:
+            elif _on_site("twitter", "twitter.com", "x.com"):
                 search_url = f"https://twitter.com/search?q={encoded}"
 
             if search_url:
