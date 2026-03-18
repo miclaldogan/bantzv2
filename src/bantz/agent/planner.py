@@ -161,14 +161,14 @@ Step 3: Double-Check: 3 distinct actions — open, navigate to YT, navigate to c
   {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com/@GulDur", "wait": 2.5}}, "description": "Go to GülDür channel", "depends_on": 2}}
 ]
 
-User: "Go to Wikipedia and then click the search bar"
+User: "write wiki there and then click the search bar"
 <thinking>
-Step 1: Goal is to navigate to Wikipedia, then click the search bar.
-Step 2: browser_control navigate, then find_and_click. Two explicit steps.
-Step 3: Only plan what was asked — navigate + click search bar. NOT YouTube, NOT Firefox open.
+Step 1: "write X there" = type into address bar. Goal: type "wiki" in address bar, then click search bar.
+Step 2: type_in_element target="address bar" + find_and_click. Two explicit steps.
+Step 3: "write X there" → type_in_element address bar, NOT navigate URL. Real typing automation.
 </thinking>
 [
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://www.wikipedia.org", "wait": 2.0}}, "description": "Navigate to Wikipedia", "depends_on": null}},
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "chrome", "target": "address bar", "text": "wiki", "press_enter": "true"}}, "description": "Type 'wiki' in address bar and press Enter", "depends_on": null}},
   {{"step": 2, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "chrome", "target": "search bar"}}, "description": "Click the search bar", "depends_on": 1}}
 ]
 

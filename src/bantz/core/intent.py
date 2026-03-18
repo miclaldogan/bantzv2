@@ -101,7 +101,8 @@ ROUTING RULES:
 - browser_control: For a SINGLE browser action:
               • "open firefox/chrome" → action=open app=firefox/google-chrome
               • "go to X" / "navigate to X" / "open X.com" → action=navigate url=https://X
-              • "write X there" / "open X" (when browser already open) → action=navigate url=https://X.com
+              • "write X there" / "type X there" / "ora X yaz" — type X into address bar and press Enter:
+                action=type_in_element target="address bar" text="X" press_enter=true
               • "new tab" → action=new_tab
               • "click [element]" when browser context is clear → action=find_and_click target="[element]"
               • FOLLOW-UP after browser action: "open it", "play it", "click it",
