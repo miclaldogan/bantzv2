@@ -93,6 +93,8 @@ class GraphMemory:
             "CREATE INDEX IF NOT EXISTS FOR (dc:Document)  ON (dc.path)",
             "CREATE INDEX IF NOT EXISTS FOR (r:Reminder)   ON (r.title)",
             "CREATE INDEX IF NOT EXISTS FOR (c:Commitment) ON (c.what)",
+            "CREATE INDEX IF NOT EXISTS FOR (pr:Project)   ON (pr.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (f:Fact)       ON (f.text)",
         ]
         async with self._driver.session() as s:
             for q in queries:
@@ -100,6 +102,18 @@ class GraphMemory:
                     await s.run(q)
                 except Exception:
                     pass  # index may already exist
+            # Full-text index (migration 002)
+            try:
+                await s.run(
+                    "CALL db.index.fulltext.createNodeIndex("
+                    "  'bantz_fulltext',"
+                    "  ['Person','Topic','Decision','Task','Event',"
+                    "   'Location','Document','Reminder','Commitment','Project','Fact'],"
+                    "  ['name','title','description','what','text','path','context']"
+                    ")"
+                )
+            except Exception:
+                pass  # already exists
 
     # ── Writing — extract entities from conversation ───────────────────────
 
