@@ -166,6 +166,7 @@ class Config(BaseSettings):
     tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
     tts_speak_all_responses: bool = Field(False, alias="BANTZ_TTS_SPEAK_ALL_RESPONSES")
     tts_animatronic_filter: bool = Field(False, alias="BANTZ_TTS_ANIMATRONIC_FILTER")
+    tts_gain: float = Field(12.0, alias="BANTZ_TTS_GAIN")  # dB boost via sox gain (both paths)
 
     # ── Audio Ducking (#171) ──────────────────────────────────────────────
     audio_duck_enabled: bool = Field(False, alias="BANTZ_AUDIO_DUCK_ENABLED")

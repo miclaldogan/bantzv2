@@ -526,15 +526,20 @@ class TTSEngine:
     # ── Internal: Playback ──────────────────────────────────────────────
 
     async def _play(self, wav_data: bytes) -> None:
-        """Play raw WAV data via aplay, optionally through SoX (#248).
+        """Play raw WAV data via aplay, optionally through SoX.
 
-        When ``config.tts_animatronic_filter`` is enabled **and** ``sox`` is
-        available, the pipeline becomes:
-            stdin → sox (pitch/reverb/overdrive) → aplay
-        Otherwise falls back to direct aplay playback.
+        Three modes depending on config and sox availability:
 
-        Sets PULSE_PROP so PulseAudio/PipeWire labels this stream as
-        'BantzTTS' — the audio ducker uses this to skip Bantz's own audio.
+        1. Animatronic (``tts_animatronic_filter=true`` + sox found):
+               stdin → sox (pitch/reverb/overdrive/gain) → aplay
+        2. Gain-only (sox found, animatronic off, ``tts_gain > 0``):
+               stdin → sox (gain only) → aplay
+           Boosts volume without any colouring effects.
+        3. Direct (sox not found or ``tts_gain == 0``):
+               stdin → aplay  (no processing)
+
+        Sets PULSE_PROP so PulseAudio/PipeWire labels the stream as
+        'BantzTTS' so the audio ducker skips Bantz's own output.
         """
         if not wav_data or not self._aplay_path:
             return
@@ -543,42 +548,57 @@ class TTSEngine:
         env = os.environ.copy()
         env["PULSE_PROP"] = "application.name='BantzTTS'"
 
-        # Determine if animatronic SoX filter should be active
-        use_sox = False
         try:
             from bantz.config import config
-            use_sox = config.tts_animatronic_filter and bool(self._sox_path)
+            gain_db = config.tts_gain
+            use_animatronic = config.tts_animatronic_filter and bool(self._sox_path)
         except Exception:
-            pass
+            gain_db = 12.0
+            use_animatronic = False
+
+        # Use sox for gain-only boost when animatronic is off
+        use_gain_only = (
+            not use_animatronic
+            and bool(self._sox_path)
+            and gain_db > 0
+        )
+
+        # Raw format args shared by all sox invocations
+        _raw_fmt = [
+            "-t", "raw",
+            "-r", str(self._sample_rate),
+            "-e", "signed",
+            "-b", "16",
+            "-c", "1",
+        ]
 
         try:
-            if use_sox:
-                # Two-stage: stdin → sox (effects) → memory → aplay
-                # NOTE: asyncio.StreamReader can't be passed as stdin
-                # to another subprocess, so we collect sox output first.
+            if use_animatronic or use_gain_only:
+                # Build sox effects chain
+                if use_animatronic:
+                    effects = [
+                        "tempo", "0.80",
+                        "pitch", "-200",
+                        "highpass", "300",
+                        "lowpass", "3500",
+                        "phaser", "0.8", "0.7", "2", "0.2", "1", "-t",
+                        "echo", "0.8", "0.8", "8", "0.6",
+                        "tremolo", "12", "20",
+                        "overdrive", "8",
+                        "gain", f"+{gain_db:g}",
+                    ]
+                else:
+                    # Gain-only: clean boost, no colouring
+                    effects = ["gain", f"+{gain_db:g}"]
+
                 sox_proc = await asyncio.create_subprocess_exec(
                     self._sox_path,
-                    "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
-                    "-b", "16", "-c", "1", "-",   # input spec
-                    "-t", "raw", "-r", str(self._sample_rate), "-e", "signed",
-                    "-b", "16", "-c", "1", "-",   # output spec (explicit)
-                    # ── Bozuk Robot (sesi bozan efektler) ──
-                    # ── Upbeat & Loud Retro Robot ──
-                    "tempo", "0.80",               # Uykulu hali gitti, daha enerjik ve normal konuşma hızına yakın.
-                    "pitch", "-200",                # Kalınlık bitti! Ses biraz yukarı çekildi, daha pozitif ve aydınlık bir tını.
-                    "highpass", "300",             # Alt frekanslar kesik (radyo hissi devam).
-                    "lowpass", "3500",             
-                    "phaser", "0.8", "0.7", "2", "0.2", "1", "-t", 
-                    # THE JOY: Phaser hızı 2'den 3'e çıktı. Robotun sesi daha "kıpır kıpır" ve dalgalı çıkacak (neşeli bilimkurgu hissi).
-                    "echo", "0.8", "0.8", "8", "0.6", 
-                    # Eko 10'dan 8'e düştü: Teneke kutu hissi biraz daha inceldi, daha tatlı bir tını oldu.
-                    "tremolo", "12", "20",         # Arıza/Titreme efekti biraz yumuşatıldı (hala bozuk ama daha az can çekişiyor).
-                    "overdrive", "8",              # Analog radyo sıcaklığı biraz artırıldı.
-                    "gain", "+5",                  # BOOM! SES SEVİYESİ CİDDİ ŞEKİLDE ARTIRILDI (Eski -2'yi sildik, +5 verdik).
+                    *_raw_fmt, "-",          # input: stdin, raw PCM
+                    *_raw_fmt, "-",          # output: stdout, raw PCM
+                    *effects,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                  
                     env=env,
                 )
                 self._sox_proc = sox_proc
@@ -588,17 +608,18 @@ class TTSEngine:
                 )
                 self._sox_proc = None
 
+                mode = "animatronic" if use_animatronic else f"gain+{gain_db:g}dB"
                 log.info(
-                    "TTS-SOX: rc=%s in=%d out=%d stderr=%s",
-                    sox_proc.returncode, len(wav_data), len(processed) if processed else 0,
-                    (sox_err or b"").decode(errors="replace")[:300],
+                    "TTS-SOX(%s): rc=%s in=%d out=%d stderr=%s",
+                    mode, sox_proc.returncode,
+                    len(wav_data), len(processed) if processed else 0,
+                    (sox_err or b"").decode(errors="replace")[:200],
                 )
 
                 if not processed:
-                    log.warning("TTS: sox produced no output")
-                    return
+                    log.warning("TTS: sox produced no output — falling back to direct playback")
+                    processed = wav_data  # fallback: play original
 
-                # Play processed audio via aplay
                 proc = await asyncio.create_subprocess_exec(
                     self._aplay_path,
                     "-r", str(self._sample_rate),
@@ -612,14 +633,15 @@ class TTSEngine:
                 )
                 self._playing = proc
                 _, aplay_err = await proc.communicate(input=processed)
-                log.info(
+                log.debug(
                     "TTS-APLAY(sox): rc=%s stderr=%s",
                     proc.returncode,
-                    (aplay_err or b"").decode(errors="replace")[:300],
+                    (aplay_err or b"").decode(errors="replace")[:200],
                 )
                 self._playing = None
+
             else:
-                # Direct: stdin → aplay
+                # Direct: no sox — raw Piper output straight to aplay
                 proc = await asyncio.create_subprocess_exec(
                     self._aplay_path,
                     "-r", str(self._sample_rate),
@@ -634,6 +656,7 @@ class TTSEngine:
                 self._playing = proc
                 await proc.communicate(input=wav_data)
                 self._playing = None
+
         except asyncio.CancelledError:
             self._kill_playback()
             raise

@@ -1262,7 +1262,7 @@ class TestPlayPipeline:
 
     @pytest.mark.asyncio
     async def test_clean_play_no_sox(self):
-        """When filter disabled, only aplay is spawned (no sox)."""
+        """When filter disabled AND gain=0, only aplay is spawned (no sox)."""
         from bantz.agent.tts import TTSEngine
 
         eng = TTSEngine()
@@ -1276,6 +1276,7 @@ class TestPlayPipeline:
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec, \
              patch("bantz.config.config") as mock_cfg:
             mock_cfg.tts_animatronic_filter = False
+            mock_cfg.tts_gain = 0  # explicitly no gain → direct aplay path
 
             await eng._play(b"\x00" * 100)
 
@@ -1283,6 +1284,49 @@ class TestPlayPipeline:
         assert mock_exec.call_count == 1
         cmd = mock_exec.call_args[0]
         assert cmd[0] == "/usr/bin/aplay"
+
+    @pytest.mark.asyncio
+    async def test_gain_only_uses_sox(self):
+        """When filter disabled but gain > 0 and sox available, sox gain + aplay."""
+        from bantz.agent.tts import TTSEngine
+
+        eng = TTSEngine()
+        eng._aplay_path = "/usr/bin/aplay"
+        eng._sox_path = "/usr/bin/sox"
+        eng._sample_rate = 22050
+
+        mock_sox = AsyncMock()
+        mock_sox.communicate = AsyncMock(return_value=(b"\x00" * 100, b""))
+        mock_sox.returncode = 0
+
+        mock_aplay = AsyncMock()
+        mock_aplay.communicate = AsyncMock(return_value=(b"", b""))
+        mock_aplay.returncode = 0
+
+        call_count = {"n": 0}
+
+        async def mock_exec(*args, **kwargs):
+            call_count["n"] += 1
+            return mock_sox if call_count["n"] == 1 else mock_aplay
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_exec) as mock_exec_fn, \
+             patch("bantz.config.config") as mock_cfg:
+            mock_cfg.tts_animatronic_filter = False
+            mock_cfg.tts_gain = 12.0
+
+            await eng._play(b"\x00" * 100)
+
+        # Two processes: sox (gain only) + aplay
+        assert mock_exec_fn.call_count == 2
+        sox_cmd = mock_exec_fn.call_args_list[0][0]
+        aplay_cmd = mock_exec_fn.call_args_list[1][0]
+        assert sox_cmd[0] == "/usr/bin/sox"
+        assert "gain" in sox_cmd
+        assert "+12" in sox_cmd
+        # No animatronic effects
+        assert "pitch" not in sox_cmd
+        assert "overdrive" not in sox_cmd
+        assert aplay_cmd[0] == "/usr/bin/aplay"
 
     @pytest.mark.asyncio
     async def test_animatronic_play_uses_sox(self):
@@ -1315,6 +1359,7 @@ class TestPlayPipeline:
         with patch("asyncio.create_subprocess_exec", side_effect=mock_exec) as mock_exec_fn, \
              patch("bantz.config.config") as mock_cfg:
             mock_cfg.tts_animatronic_filter = True
+            mock_cfg.tts_gain = 12.0
 
             await eng._play(b"\x00" * 100)
 
