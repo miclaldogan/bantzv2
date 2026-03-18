@@ -179,6 +179,99 @@ class OmniMemoryManager:
             total_tokens_approx=total_tokens_approx,
         )
 
+    # ── CRUD interface ────────────────────────────────────────────────
+
+    async def store(self, key: str, value: str, ttl: int | None = None) -> None:
+        """Persist *key → value* to the SQLite KV store.
+
+        Args:
+            key:   Unique string identifier.
+            value: String value to store (serialise complex objects before calling).
+            ttl:   Optional time-to-live in seconds.  The entry is still written
+                   but is treated as expired after *ttl* seconds when read back
+                   via :meth:`recall` or retrieved directly.  Pass ``None`` for
+                   no expiry.
+        """
+        import asyncio
+        import json
+        import time as _time
+
+        payload = value
+        if ttl is not None:
+            payload = json.dumps({"_v": value, "_exp": _time.time() + ttl})
+
+        def _write() -> None:
+            try:
+                from bantz.data import data_layer
+                if data_layer.kv is not None:
+                    data_layer.kv.set(key, payload)
+            except Exception as exc:
+                log.debug("OmniMemory.store failed: %s", exc)
+
+        await asyncio.get_event_loop().run_in_executor(None, _write)
+
+    async def forget(self, key: str) -> None:
+        """Remove *key* from the SQLite KV store.
+
+        Silently no-ops if the key does not exist.
+        """
+        import asyncio
+
+        def _delete() -> None:
+            try:
+                from bantz.data import data_layer
+                if data_layer.kv is not None:
+                    data_layer.kv.delete(key)
+            except Exception as exc:
+                log.debug("OmniMemory.forget failed: %s", exc)
+
+        await asyncio.get_event_loop().run_in_executor(None, _delete)
+
+    async def summarize(self, conversation_id: int) -> str:
+        """Distil a conversation into a compressed memory summary.
+
+        Delegates to :mod:`bantz.memory.distiller`.  Returns the summary
+        text, or an empty string if distillation fails or produces nothing.
+        """
+        try:
+            from bantz.memory.distiller import distill_session
+            result = await distill_session(conversation_id)
+            return result.get("summary", "") if isinstance(result, dict) else ""
+        except Exception as exc:
+            log.debug("OmniMemory.summarize failed: %s", exc)
+            return ""
+
+    async def graph_query(self, cypher: str, **params: Any) -> list[dict]:
+        """Run an arbitrary Cypher query against the Neo4j graph.
+
+        Thin wrapper around ``graph_memory.query()``.  Returns an empty list
+        when Neo4j is disabled or unavailable.
+        """
+        try:
+            from bantz.memory.graph import graph_memory
+            if graph_memory and graph_memory.enabled:
+                return await graph_memory.query(cypher, **params)
+        except Exception as exc:
+            log.debug("OmniMemory.graph_query failed: %s", exc)
+        return []
+
+    def transaction(self) -> "_OmniTransaction":
+        """Return an async context manager for best-effort atomic writes.
+
+        Within the transaction block all :meth:`store` / :meth:`forget` calls
+        are buffered and applied as a single SQLite write-transaction on
+        ``__aexit__``.  If an exception is raised the SQLite transaction is
+        rolled back; operations on other backends (Neo4j, ChromaDB) are
+        already committed and cannot be undone.
+
+        Usage::
+
+            async with omni_memory.transaction() as tx:
+                await tx.store("key_a", "value_a")
+                await tx.forget("key_b")
+        """
+        return _OmniTransaction()
+
     # ── Private: individual search methods ────────────────────────────
 
     @staticmethod
@@ -359,6 +452,67 @@ class MemoryRecallResult:
     @property
     def is_empty(self) -> bool:
         return not self.combined
+
+
+class _OmniTransaction:
+    """Async context manager for buffered SQLite writes (#219).
+
+    Collects ``store`` / ``forget`` operations and applies them inside a
+    single SQLite write-transaction on ``__aexit__``.  On exception the
+    SQLite transaction is rolled back.
+    """
+
+    def __init__(self) -> None:
+        self._ops: list[tuple[str, str | None]] = []  # (key, value|None)
+
+    async def __aenter__(self) -> "_OmniTransaction":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if exc_type is not None:
+            log.debug("_OmniTransaction: rolling back due to %s", exc_type)
+            return  # ops discarded — SQLite never wrote
+
+        import asyncio
+        import json
+        import time as _time
+
+        ops = list(self._ops)
+
+        def _apply() -> None:
+            try:
+                from bantz.data import data_layer
+                from bantz.data.connection_pool import get_pool
+                if data_layer.kv is None:
+                    return
+                with get_pool().connection(write=True) as conn:
+                    for key, value in ops:
+                        if value is None:
+                            conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
+                        else:
+                            now = _time.strftime("%Y-%m-%dT%H:%M:%S")
+                            conn.execute(
+                                "INSERT OR REPLACE INTO kv_store(key, value, updated_at)"
+                                " VALUES (?,?,?)",
+                                (key, value, now),
+                            )
+            except Exception as exc2:
+                log.warning("_OmniTransaction._apply failed: %s", exc2)
+
+        await asyncio.get_event_loop().run_in_executor(None, _apply)
+
+    async def store(self, key: str, value: str, ttl: int | None = None) -> None:
+        """Buffer a store operation."""
+        import json
+        import time as _time
+        payload = value
+        if ttl is not None:
+            payload = json.dumps({"_v": value, "_exp": _time.time() + ttl})
+        self._ops.append((key, payload))
+
+    async def forget(self, key: str) -> None:
+        """Buffer a forget operation."""
+        self._ops.append((key, None))
 
 
 # Module singleton
