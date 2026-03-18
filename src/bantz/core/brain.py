@@ -647,6 +647,52 @@ class Brain:
         self._fire_embeddings()
         return BrainResult(response=resp, tool_used=tool_name, tool_result=result)
 
+    @staticmethod
+    def _dedup_history(history: list[dict]) -> list[dict]:
+        """Collapse repeated assistant responses to prevent context-window echo loops (#184).
+
+        If the same assistant message appears ≥ LOOP_THRESHOLD times in the
+        supplied history, all duplicates are removed (keeping the first copy)
+        and a system-level anti-loop warning is appended so the LLM knows to
+        say something new.
+
+        User messages are never touched.
+        Comparison is case-insensitive and whitespace-normalised.
+        """
+        from collections import Counter
+
+        LOOP_THRESHOLD = 3
+
+        assistant_msgs = [
+            m["content"].strip().lower()
+            for m in history if m["role"] == "assistant"
+        ]
+        counts = Counter(assistant_msgs)
+        repeated = {msg for msg, count in counts.items() if count >= LOOP_THRESHOLD}
+
+        if not repeated:
+            return history
+
+        seen_repeated: set[str] = set()
+        deduped: list[dict] = []
+        for m in history:
+            key = m["content"].strip().lower() if m["role"] == "assistant" else None
+            if key and key in repeated:
+                if key in seen_repeated:
+                    continue  # drop duplicate
+                seen_repeated.add(key)
+            deduped.append(m)
+
+        deduped.append({
+            "role": "system",
+            "content": (
+                "[WARNING: You have been repeating the same response. "
+                "Say something NEW and relevant. Do NOT repeat previous messages.]"
+            ),
+        })
+        log.warning("_dedup_history: collapsed %d repeated assistant message(s)", len(repeated))
+        return deduped
+
     async def _chat(self, en_input: str, tc: dict) -> str:
         """
         Chat mode with conversation history.
@@ -655,6 +701,7 @@ class Brain:
         """
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
+        prior = self._dedup_history(prior)
 
         # Concurrent context injection (#227)
         ctx = BantzContext(en_input=en_input)
@@ -703,6 +750,7 @@ class Brain:
         """
         history = data_layer.conversations.context(n=12)
         prior = history[:-1] if (history and history[-1]["role"] == "user") else history
+        prior = self._dedup_history(prior)
 
         # Concurrent context injection (#227)
         ctx = BantzContext(en_input=en_input)
