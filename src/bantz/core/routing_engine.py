@@ -85,6 +85,71 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
 
+    # ── GUI fast-path: app launch / navigation / desktop click ────────
+    # These MUST bypass the LLM — small models routinely misroute them
+    # to web_search, filesystem, or planner.
+
+    # Fast-path 1: "open/launch/start [known_app]" → browser_control action=open
+    _launch_m = re.search(
+        r"(?:open|launch|start|run|aç|başlat)\s+"
+        r"(google\s+chrome|chromium|firefox|chrome"
+        r"|files?|file\s*manager|nautilus|dosya"
+        r"|terminal|bash|konsole|vscode|gedit)\b",
+        both, re.IGNORECASE,
+    )
+    if _launch_m:
+        _APP_MAP = {
+            "chrome": "chrome", "google chrome": "chrome", "chromium": "chrome",
+            "firefox": "firefox", "mozilla": "firefox",
+            "files": "files", "files": "files", "file manager": "files",
+            "nautilus": "files", "dosya": "files",
+            "terminal": "terminal", "bash": "terminal", "konsole": "terminal",
+            "vscode": "vscode", "code": "vscode",
+            "gedit": "gedit",
+        }
+        app_key = _APP_MAP.get(_launch_m.group(1).lower().strip(),
+                               _launch_m.group(1).lower().strip())
+        _args: dict = {"action": "open", "app": app_key}
+        # Inline URL? e.g. "open firefox and go to wikipedia.org"
+        _url_m = re.search(
+            r"(?:go\s+to|navigate\s+to)\s+"
+            r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)",
+            both, re.IGNORECASE,
+        )
+        if _url_m:
+            _u = _url_m.group(1)
+            _args["url"] = _u if _u.startswith("http") else "https://" + _u
+        return {"tool": "browser_control", "args": _args}
+
+    # Fast-path 2: "go to X" / "navigate to X" (whole utterance is navigation)
+    _nav_m = re.match(
+        r"^(?:go\s+to|navigate\s+to)\s+"
+        r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)$",
+        e.strip(), re.IGNORECASE,
+    ) or re.match(
+        r"^(?:go\s+to|navigate\s+to)\s+"
+        r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)$",
+        o.strip(), re.IGNORECASE,
+    )
+    if _nav_m and len(e.strip()) < 80:
+        _u = _nav_m.group(1)
+        return {"tool": "browser_control", "args": {
+            "action": "navigate",
+            "url": _u if _u.startswith("http") else "https://" + _u,
+        }}
+
+    # Fast-path 3: "click [known desktop element]" → visual_click
+    _DESKTOP_TARGETS = frozenset({
+        "chrome", "firefox", "chromium", "files", "file manager",
+        "terminal", "vscode", "nautilus", "trash", "settings",
+    })
+    _click_m = re.match(r"^click\s+(.+)$", e.strip(), re.IGNORECASE) or \
+               re.match(r"^click\s+(.+)$", o.strip(), re.IGNORECASE)
+    if _click_m:
+        _target = _click_m.group(1).strip().lower()
+        if _target in _DESKTOP_TARGETS:
+            return {"tool": "visual_click", "args": {"target": _target}}
+
     return None
 
 

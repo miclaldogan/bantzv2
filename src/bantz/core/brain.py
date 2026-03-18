@@ -450,19 +450,56 @@ class Brain:
         # NEW PIPELINE (#272): quick_route → cot_route → branch
         # ═══════════════════════════════════════════════════════════════
 
-        # ── Step 1: Quick-route — hardware/UI controls ONLY ──────────
+        # ── Step 1: Quick-route — hardware/UI controls + GUI fast-path ─
         quick = self._quick_route(user_input, en_input)
         if quick:
-            internal = await _dispatch_internal(
-                quick["tool"], quick["args"],
-                user_input, en_input, tc,
-                is_remote=is_remote,
-            )
-            if internal is not None:
-                return internal
-            # If dispatch_internal returns None, the tool isn't internal.
-            # This shouldn't happen with the stripped quick_route, but
-            # fall through to cot_route as a safety net.
+            q_tool = quick["tool"]
+            q_args  = quick["args"]
+
+            if q_tool.startswith("_"):
+                # Internal tool (TTS, wake-word, etc.) — existing path
+                internal = await _dispatch_internal(
+                    q_tool, q_args,
+                    user_input, en_input, tc,
+                    is_remote=is_remote,
+                )
+                if internal is not None:
+                    return internal
+                # dispatch_internal returned None — fall through to cot_route
+            else:
+                # External tool fast-path (browser_control, visual_click)
+                # bypasses the LLM entirely for reliable GUI command dispatch
+                q_reg = registry.get(q_tool)
+                if q_reg:
+                    log.info("quick_route fast-dispatch: %s %s", q_tool, q_args)
+                    q_result = await q_reg.execute(**q_args)
+                    self._rl_reward_hook(q_tool, q_result)
+                    if q_result.success:
+                        self._store_tool_context(q_tool, q_result)
+                    q_resp = await self._finalize(en_input, q_result, tc)
+                    data_layer.conversations.add("assistant", q_resp, tool_used=q_tool)
+                    await self._graph_store(user_input, q_resp, q_tool,
+                                            q_result.data if q_result else None)
+                    self._fire_embeddings()
+                    q_attachments: list[Attachment] = []
+                    if q_result.success and q_result.data and q_result.data.get("screenshot"):
+                        _img = q_result.data["screenshot"]
+                        q_attachments.append(Attachment(
+                            type="image", data=_img, caption="",
+                            mime_type=q_result.data.get("mime_type", "image/jpeg"),
+                        ))
+                        try:
+                            import asyncio as _ai
+                            self._pending_vlm_task = _ai.create_task(
+                                self._vlm_describe_screen(_img)
+                            )
+                        except Exception:
+                            pass
+                    return BrainResult(
+                        response=q_resp, tool_used=q_tool,
+                        tool_result=q_result, attachments=q_attachments,
+                    )
+                log.warning("quick_route: external tool '%s' not in registry — falling through", q_tool)
 
         # ── Step 2: cot_route — LLM decides everything ───────────────
         tool_ctx = self._build_tool_context(en_input)

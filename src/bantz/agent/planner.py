@@ -115,6 +115,11 @@ Step 3: Double-Check: I must not hallucinate the output of tool_A. I will use $R
   ...
 ]
 
+CRITICAL: The examples below are ILLUSTRATIONS ONLY. Their topics ("quantum computing",
+YouTube, etc.) are placeholders. Your output MUST reflect the user's ACTUAL request.
+NEVER copy example content into your plan. If the user says "open X", plan ONLY
+steps for X — do not substitute quantum computing, YouTube, or any other example topic.
+
 EXAMPLES:
 
 User: "Search for articles about quantum computing, summarize the best one, and save to a file"
@@ -296,6 +301,15 @@ class PlannerAgent:
         Returns:
             List of PlanStep objects. Empty list if decomposition fails.
         """
+        import re as _re
+        _SINGLE_BROWSER_RE = _re.compile(
+            r"^(?:open|go\s+to|navigate\s+to|launch)\s+\S+(?:\s+and\s+(?:go\s+to|open|navigate)\s+\S+)?$",
+            _re.IGNORECASE,
+        )
+        if _SINGLE_BROWSER_RE.match(en_input.strip()):
+            log.info("Planner guard: single-browser pattern, aborting — '%s'", en_input[:60])
+            return []
+
         from bantz.core.intent import _stream_and_collect
 
         history_block = self._format_recent_history(recent_history)

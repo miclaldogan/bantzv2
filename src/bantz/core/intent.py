@@ -91,6 +91,8 @@ ROUTING RULES:
 - input_control: type text, scroll, press keys, move cursor, drag
 - visual_click: click a button, menu, link, icon, tab, or any visible UI element on screen.
               "click X", "open X menu", "press the Y button" → visual_click
+              CRITICAL: "click files", "click chrome", "click terminal", "click firefox" →
+              visual_click target="[app name]". NEVER route "click [app]" to filesystem.
 - screenshot: DELIVER a screenshot image to the user — use this when the user wants to SEE/RECEIVE the photo.
               "give me a screenshot", "send me a screenshot", "show me the screen", "take a screenshot",
               "ekran görüntüsü al/gönder/ver", "can I see the screen", "what does my screen look like",
@@ -118,7 +120,9 @@ ROUTING RULES:
               • "find/play/watch [X] on youtube" → search + click
               • "search for X on [site]" → navigate + search
               • "and then", "then", "and click", "and type" — explicit chaining keywords present
-              NEVER use planner for: "click X", "go to X", "open X", "give me a screenshot", "write X there" — these are all SINGLE steps.
+              NEVER use planner for: "click X", "open X", "go to X", "write X there", "give me a screenshot".
+              NEVER use planner when all actions use the same browser. "open chrome and go to wikipedia.org" =
+              browser_control action=open app=chrome url=https://en.wikipedia.org — ONE step, not planner.
 
 SCREEN CONTEXT (when CURRENT SCREEN STATE is provided in tool_context):
 - Use the screen description to resolve "there", "here", "it", "that", "the page", "the bar", "the box"
@@ -136,6 +140,8 @@ CRITICAL:
 - If the user asks about ANY person, place, thing, concept, movie character,
   historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
 - "do your search", "can you find", "look it up", "research it on the internet" → web_search.
+  EXCEPTION: "open chrome/firefox/files/terminal", "launch [app]", "click chrome/files/terminal"
+  are ALWAYS browser_control or visual_click — NEVER web_search. App names are not search queries.
 - "click X", "open X menu", "press the Y button" → visual_click (NOT shell, NOT accessibility).
 - If the request clearly needs multiple DIFFERENT tools in sequence, use route "planner".
 - IMPORTANT: tool_name must be the exact registered name (e.g. "web_search" not "Web Search", "visual_click" not "Visual Click"). Always use snake_case.
