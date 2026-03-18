@@ -17,6 +17,7 @@ from datetime import datetime
 NODE_LABELS = (
     "Person", "Topic", "Decision", "Task", "Event",
     "Location", "Document", "Reminder", "Commitment",
+    "Project", "Fact",
 )
 
 REL_TYPES = {
@@ -29,6 +30,11 @@ REL_TYPES = {
     "REFERENCES":   (None, "Document"),
     "COMMITTED_TO": ("Person", "Task"),
     "FOLLOWS_UP":   ("Task", "Decision"),
+    # #293 additions
+    "ABOUT":        (None, "Topic"),
+    "DECIDED_BY":   ("Decision", "Person"),
+    "DEPENDS_ON":   ("Task", "Task"),
+    "HAPPENED_AT":  ("Event", "Location"),
 }
 
 # Words that look like names but aren't
@@ -282,6 +288,42 @@ def extract_entities(
                         "context": user_msg[:200],
                     },
                     "rels": rels,
+                })
+            break
+
+    # ── Projects — "project X", "working on X", "building X" ──
+    project_patterns = [
+        r"(?:project|working\s+on|building|developing)\s+[\"']?([A-Za-z][\w\s\-]{2,30})[\"']?",
+    ]
+    for pat in project_patterns:
+        m = re.search(pat, combined)
+        if m:
+            name = m.group(1).strip()
+            if len(name) > 2:
+                entities.append({
+                    "label": "Project",
+                    "key": "name",
+                    "props": {"name": name,
+                              "updated_at": datetime.now().isoformat()},
+                    "rels": [],
+                })
+            break
+
+    # ── Facts — "X is Y", "did you know" assertions ──
+    fact_patterns = [
+        r"(?:note\s+that|fact:|remember\s+that|fyi[,:]?\s+)(.+?)(?:\.|$|!)",
+    ]
+    for pat in fact_patterns:
+        m = re.search(pat, combined)
+        if m:
+            text = m.group(1).strip()[:200]
+            if len(text) > 5:
+                entities.append({
+                    "label": "Fact",
+                    "key": "text",
+                    "props": {"text": text,
+                              "created_at": datetime.now().isoformat()},
+                    "rels": [],
                 })
             break
 
