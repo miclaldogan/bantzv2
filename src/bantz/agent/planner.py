@@ -154,16 +154,16 @@ If the user says "click X" — plan ONLY a find_and_click step for X.
 If the user says "go to wikipedia" — plan ONLY a navigate step to wikipedia.org.
 Do NOT default to YouTube, Firefox, or any specific site unless the user mentioned it.
 
-User: "Open Firefox and go to youtube.com, then open the GülDür channel"
+User: "Open Chrome and go to github.com, then navigate to the trending page"
 <thinking>
-Step 1: Goal is to open Firefox, navigate to YouTube, then navigate to a specific channel.
-Step 2: This is a GUI automation task. Use browser_control for all steps.
-Step 3: Double-Check: 3 distinct actions — open, navigate to YT, navigate to channel.
+Step 1: Goal is to open Chrome, navigate to GitHub, then go to trending page.
+Step 2: GUI automation — browser_control for all steps.
+Step 3: 3 distinct actions — open, navigate to GitHub, navigate to trending.
 </thinking>
 [
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "open", "app": "firefox", "wait": 3.0}}, "description": "Open Firefox browser", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": 1}},
-  {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com/@GulDur", "wait": 2.5}}, "description": "Go to GülDür channel", "depends_on": 2}}
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "open", "app": "chrome", "wait": 3.0}}, "description": "Open Chrome browser", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://github.com", "wait": 2.5}}, "description": "Navigate to GitHub", "depends_on": 1}},
+  {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://github.com/trending", "wait": 2.5}}, "description": "Go to GitHub trending page", "depends_on": 2}}
 ]
 
 User: "write wiki there and then click the search bar"
@@ -200,15 +200,15 @@ Step 3: Anti-hallucination — user didn't ask to open YouTube or search. Just c
   {{"step": 2, "tool": "screenshot", "params": {{}}, "description": "Take a screenshot", "depends_on": 1}}
 ]
 
-User: "Go to YouTube and search for funny cats"
+User: "Go to Wikipedia and search for artificial intelligence"
 <thinking>
-Step 1: Goal is to navigate to YouTube then search. Explicit: YouTube + funny cats search.
-Step 2: Navigate to YouTube, then type_in_element.
-Step 3: Anti-hallucination: user asked for YouTube, using YouTube is correct.
+Step 1: Goal is to navigate to Wikipedia then search for a specific topic.
+Step 2: Navigate to Wikipedia, then type in the search box.
+Step 3: Anti-hallucination: user asked for Wikipedia and AI, using exactly those.
 </thinking>
 [
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.youtube.com", "wait": 2.5}}, "description": "Navigate to YouTube", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "funny cats", "site": "youtube", "press_enter": "true"}}, "description": "Search YouTube for funny cats", "depends_on": 1}}
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.wikipedia.org", "wait": 2.5}}, "description": "Navigate to Wikipedia", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "artificial intelligence", "press_enter": "true"}}, "description": "Search Wikipedia for artificial intelligence", "depends_on": 1}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
