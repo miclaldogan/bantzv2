@@ -43,6 +43,62 @@ class OllamaClient:
         self.base_url = base
         self.model = config.ollama_model
 
+        # Layer 1: instant URL format check — no I/O, safe in __init__
+        from urllib.parse import urlparse
+        parsed = urlparse(self.base_url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError(
+                f"Invalid BANTZ_OLLAMA_BASE_URL: '{self.base_url}'. "
+                f"Expected format: http://<host>:<port>"
+            )
+
+    async def verify_connection(self) -> None:
+        """Layers 2+3: connectivity + model availability check.
+
+        Call at startup or via `bantz --doctor`. Never call from __init__
+        (network I/O on the main thread would freeze the TUI).
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{self.base_url}/api/tags")
+                r.raise_for_status()
+                data = r.json()
+        except httpx.ConnectError:
+            is_remote = "localhost" not in self.base_url and "127.0.0.1" not in self.base_url
+            tunnel_hint = (
+                f"\n  Is the SSH tunnel active?\n"
+                f"  ssh -N -L 11434:localhost:11434 root@<VPS_IP>"
+                if is_remote
+                else ""
+            )
+            raise RuntimeError(
+                f"Cannot reach Ollama at {self.base_url}.{tunnel_hint}"
+            )
+        except httpx.TimeoutException:
+            raise RuntimeError(
+                f"Ollama at {self.base_url} timed out after 5s. "
+                f"Server may be overloaded or tunnel may be down."
+            )
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"Ollama returned HTTP {exc.response.status_code}. "
+                f"Check if '{self.base_url}' is actually an Ollama instance."
+            )
+        except (ValueError, KeyError):
+            raise RuntimeError(
+                f"Invalid response from {self.base_url}. "
+                f"Wrong host URL or captive portal intercept."
+            )
+
+        # Layer 3: model availability
+        available = [m["name"] for m in data.get("models", [])]
+        if self.model not in available:
+            raise RuntimeError(
+                f"Model '{self.model}' not found on {self.base_url}.\n"
+                f"  Available: {available or ['(none)']}\n"
+                f"  Run: ollama pull {self.model}"
+            )
+
     async def chat(self, messages: list[dict], stream: bool = False) -> str:
         """Simple chat — returns a single string."""
         try:

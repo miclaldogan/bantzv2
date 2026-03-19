@@ -1,0 +1,25 @@
+[Unit]
+Description=Bantz — SSH tunnel to GPU VPS (%i)
+Documentation=https://github.com/miclaldogan/bantzv2/issues/270
+After=network-online.target
+Wants=network-online.target
+
+# Restart if tunnel drops; wait for Ollama to bind before starting Bantz
+Before=bantz@%u.service
+
+[Service]
+Type=simple
+# %i is the VPS IP/hostname passed via systemctl start bantz-ssh-tunnel@<VPS_IP>
+ExecStart=/usr/bin/ssh \
+    -N \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=accept-new \
+    -L 11434:localhost:11434 \
+    root@%i
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -724,11 +724,13 @@ async def _doctor() -> None:
     print("─" * 52)
 
     # Ollama
-    ok = await ollama.is_available()
-    if ok:
-        print(f"✅ Ollama: connected ({config.ollama_model})")
-    else:
-        print(f"❌ Ollama: UNREACHABLE ({config.ollama_base_url})")
+    is_remote = "localhost" not in config.ollama_base_url and "127.0.0.1" not in config.ollama_base_url
+    mode_label = "remote (GPU VPS)" if is_remote else "local"
+    try:
+        await ollama.verify_connection()
+        print(f"✅ Ollama [{mode_label}]: connected — {config.ollama_model} @ {config.ollama_base_url}")
+    except RuntimeError as _e:
+        print(f"❌ Ollama [{mode_label}]: {_e}")
 
     # Gemini
     from bantz.llm.gemini import gemini as _gem
