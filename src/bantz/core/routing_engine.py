@@ -138,6 +138,10 @@ def quick_route(orig: str, en: str) -> dict | None:
             "url": _u if _u.startswith("http") else "https://" + _u,
         }}
 
+    # Fast-path 2b: "new tab" / "open a new tab" → browser_control action=new_tab
+    if re.search(r"\bnew\s+tab\b", both, re.IGNORECASE):
+        return {"tool": "browser_control", "args": {"action": "new_tab"}}
+
     # Fast-path 3: "click [known desktop element]" → visual_click
     _DESKTOP_TARGETS = frozenset({
         "chrome", "firefox", "chromium", "files", "file manager",

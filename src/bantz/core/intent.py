@@ -435,7 +435,32 @@ async def cot_route(
 
     raw: str = ""
 
-    # ── Attempt 1 (streaming) ──────────────────────────────────────────
+    # ── Attempt 0: Gemini 2.0 Flash (fast, smart, no streaming needed) ──
+    # Gemini is much smarter than llama3.1:8b for routing.
+    # 5s timeout so we don't block if Gemini is slow.
+    import asyncio as _asyncio
+    try:
+        from bantz.llm.gemini import gemini as _gemini
+        if _gemini.is_enabled():
+            _raw_g = await _asyncio.wait_for(_gemini.chat(messages, temperature=0.1), timeout=5.0)
+            if _raw_g and not _is_refusal(_raw_g):
+                try:
+                    _plan_g = _extract_json(_raw_g)
+                    log.info(
+                        "Gemini route: route=%s tool=%s conf=%.2f",
+                        _plan_g.get("route"), _plan_g.get("tool_name"),
+                        _plan_g.get("confidence", 0),
+                    )
+                    if _plan_g.get("confidence", 0.8) >= confidence_threshold:
+                        return _plan_g, None
+                except (json.JSONDecodeError, AttributeError):
+                    log.warning("Gemini returned non-JSON, falling back to Ollama: %.150s", _raw_g)
+    except _asyncio.TimeoutError:
+        log.warning("Gemini routing timed out — falling back to Ollama")
+    except Exception as _gem_exc:
+        log.warning("Gemini routing unavailable (%s) — falling back to Ollama", _gem_exc)
+
+    # ── Attempt 1 (Ollama streaming, fallback) ────────────────────────
     try:
         raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
 
