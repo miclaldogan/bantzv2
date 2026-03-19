@@ -159,18 +159,23 @@ ANTI-FALSE-POSITIVE RULES (critical — read carefully):
   "come on man") are ALWAYS "chat" — never trigger any tool.
 
 Return your response in exactly two parts:
-1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit using these exact steps:
-   - Step 1: Information Extraction: What exactly does the user want? What hard data (file paths, names, cities) did they provide?
-   - Step 2: Tool Matching: Is there a tool meant exactly for this? (e.g. if reading a file, I need 'document' or 'filesystem').
-   - Step 3: Multi-Step Check: Does this need 2+ DIFFERENT tools in sequence? If yes → route "planner".
-   - Step 4: Double-Check / Self-Correction: Am I about to invent an answer without using a tool? I am a digital entity; I cannot see files, weather, or websites without using my tools. If I lack information to use a tool, my tool is 'chat' to ask for clarification.
-2. After the thinking block, output ONLY the valid JSON object exactly as specified below.
+1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block:
+   - Step 1: What does the user want in one sentence?
+   - Step 2: Which tool exactly? (check ROUTING RULES above)
+   - Step 3: Is this 2+ DIFFERENT tools? If yes → route="planner". If just one → route="tool".
+   - Step 4: Am I sure? Never invent answers — use tools.
+2. After the thinking block, output ONLY a JSON object.
 
-For single tool: {{"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95,"reasoning":"Brief explanation"}}
+CRITICAL JSON RULES:
+- "route" MUST be exactly one of: "tool", "planner", "chat" — NEVER a tool name like "web_search"
+- "tool_name" is where you put the tool name (e.g. "weather", "web_search", "browser_control")
+- If route="tool", tool_name MUST be filled. If route="chat" or "planner", tool_name=null.
 
-For multi-step: {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Needs X then Y then Z"}}
-
-For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting/small talk"}}\
+Examples of CORRECT JSON:
+- Weather: {{"route":"tool","tool_name":"weather","tool_args":{{"city":""}},"risk_level":"safe","confidence":0.95,"reasoning":"User asked about weather"}}
+- Search:  {{"route":"tool","tool_name":"web_search","tool_args":{{"query":"iron man"}},"risk_level":"safe","confidence":0.95,"reasoning":"User wants web search"}}
+- Chat:    {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting"}}
+- Plan:    {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Multi-step"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -218,13 +223,30 @@ def _is_refusal(text: str) -> bool:
     return any(p in t for p in _REFUSAL_PATTERNS)
 
 
+_VALID_ROUTES = frozenset({"tool", "planner", "chat"})
+
 def _extract_json(text: str) -> dict:
-    """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks."""
+    """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks.
+
+    Also normalises common llama3.1 mistakes:
+    - route field contains a tool name instead of "tool"/"planner"/"chat"
+    """
     text = strip_thinking(text)
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text)
     m = re.search(r"\{.*\}", text, re.DOTALL)
-    return json.loads(m.group() if m else text)
+    data = json.loads(m.group() if m else text)
+
+    # Fix: if 'route' is not one of the valid values, the model likely put the
+    # tool name there. Move it to tool_name and set route="tool".
+    if isinstance(data, dict) and data.get("route") not in _VALID_ROUTES:
+        wrong_route = data.get("route", "")
+        if wrong_route:
+            log.debug("_extract_json: normalising route=%r → route='tool' tool_name=%r", wrong_route, wrong_route)
+            data["tool_name"] = data.get("tool_name") or wrong_route
+            data["route"] = "tool"
+
+    return data
 
 
 def _log_thinking(raw: str, tag: str = "") -> None:
@@ -435,32 +457,7 @@ async def cot_route(
 
     raw: str = ""
 
-    # ── Attempt 0: Gemini 2.0 Flash (fast, smart, no streaming needed) ──
-    # Gemini is much smarter than llama3.1:8b for routing.
-    # 5s timeout so we don't block if Gemini is slow.
-    import asyncio as _asyncio
-    try:
-        from bantz.llm.gemini import gemini as _gemini
-        if _gemini.is_enabled():
-            _raw_g = await _asyncio.wait_for(_gemini.chat(messages, temperature=0.1), timeout=5.0)
-            if _raw_g and not _is_refusal(_raw_g):
-                try:
-                    _plan_g = _extract_json(_raw_g)
-                    log.info(
-                        "Gemini route: route=%s tool=%s conf=%.2f",
-                        _plan_g.get("route"), _plan_g.get("tool_name"),
-                        _plan_g.get("confidence", 0),
-                    )
-                    if _plan_g.get("confidence", 0.8) >= confidence_threshold:
-                        return _plan_g, None
-                except (json.JSONDecodeError, AttributeError):
-                    log.warning("Gemini returned non-JSON, falling back to Ollama: %.150s", _raw_g)
-    except _asyncio.TimeoutError:
-        log.warning("Gemini routing timed out — falling back to Ollama")
-    except Exception as _gem_exc:
-        log.warning("Gemini routing unavailable (%s) — falling back to Ollama", _gem_exc)
-
-    # ── Attempt 1 (Ollama streaming, fallback) ────────────────────────
+    # ── Attempt 1 (Ollama streaming) ──────────────────────────────────
     try:
         raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
 
