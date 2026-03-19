@@ -107,7 +107,22 @@ class BrowserControlTool(BaseTool):
 
     async def execute(self, action: str = "", **kwargs: Any) -> ToolResult:
         if not action:
-            return ToolResult(success=False, output="", error="Specify action: open, screenshot, navigate, new_tab, wait_for_load, find_and_click, type_in_element, hotkey, type, scroll")
+            # Smart action inference from available kwargs
+            url    = str(kwargs.get("url",    "") or "")
+            target = str(kwargs.get("target", "") or "")
+            text   = str(kwargs.get("text",   "") or "")
+            app    = str(kwargs.get("app",    "") or "")
+            if url:
+                action = "navigate"
+            elif target:
+                action = "find_and_click"
+            elif text:
+                action = "type"
+            elif app:
+                action = "open"
+            else:
+                return ToolResult(success=False, output="", error="Specify action: open, screenshot, navigate, new_tab, wait_for_load, find_and_click, type_in_element, hotkey, type, scroll")
+            log.info("browser_control: inferred action=%s from kwargs", action)
 
         action = action.lower().strip()
 
@@ -256,6 +271,22 @@ class BrowserControlTool(BaseTool):
     async def _navigate(self, kwargs: dict) -> ToolResult:
         """Navigate to a URL in the current browser window using Ctrl+L."""
         url = kwargs.get("url", "")
+        # Normalise bare site names to full URLs
+        _SITE_MAP = {
+            "wikipedia": "https://en.wikipedia.org",
+            "youtube": "https://www.youtube.com",
+            "google": "https://www.google.com",
+            "github": "https://github.com",
+            "reddit": "https://www.reddit.com",
+            "twitter": "https://twitter.com",
+            "instagram": "https://www.instagram.com",
+            "stackoverflow": "https://stackoverflow.com",
+            "netflix": "https://www.netflix.com",
+            "amazon": "https://www.amazon.com",
+        }
+        if url and not url.startswith("http") and "." not in url:
+            url = _SITE_MAP.get(url.lower(), f"https://{url}.com")
+            kwargs = {**kwargs, "url": url}
         if not url:
             return ToolResult(success=False, output="", error="Provide url=https://...")
 

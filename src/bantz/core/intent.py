@@ -91,6 +91,8 @@ ROUTING RULES:
 - input_control: type text, scroll, press keys, move cursor, drag
 - visual_click: click a button, menu, link, icon, tab, or any visible UI element on screen.
               "click X", "open X menu", "press the Y button" → visual_click
+              CRITICAL: "click files", "click chrome", "click terminal", "click firefox" →
+              visual_click target="[app name]". NEVER route "click [app]" to filesystem.
 - screenshot: DELIVER a screenshot image to the user — use this when the user wants to SEE/RECEIVE the photo.
               "give me a screenshot", "send me a screenshot", "show me the screen", "take a screenshot",
               "ekran görüntüsü al/gönder/ver", "can I see the screen", "what does my screen look like",
@@ -118,7 +120,9 @@ ROUTING RULES:
               • "find/play/watch [X] on youtube" → search + click
               • "search for X on [site]" → navigate + search
               • "and then", "then", "and click", "and type" — explicit chaining keywords present
-              NEVER use planner for: "click X", "go to X", "open X", "give me a screenshot", "write X there" — these are all SINGLE steps.
+              NEVER use planner for: "click X", "open X", "go to X", "write X there", "give me a screenshot".
+              NEVER use planner when all actions use the same browser. "open chrome and go to wikipedia.org" =
+              browser_control action=open app=chrome url=https://en.wikipedia.org — ONE step, not planner.
 
 SCREEN CONTEXT (when CURRENT SCREEN STATE is provided in tool_context):
 - Use the screen description to resolve "there", "here", "it", "that", "the page", "the bar", "the box"
@@ -136,6 +140,8 @@ CRITICAL:
 - If the user asks about ANY person, place, thing, concept, movie character,
   historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
 - "do your search", "can you find", "look it up", "research it on the internet" → web_search.
+  EXCEPTION: "open chrome/firefox/files/terminal", "launch [app]", "click chrome/files/terminal"
+  are ALWAYS browser_control or visual_click — NEVER web_search. App names are not search queries.
 - "click X", "open X menu", "press the Y button" → visual_click (NOT shell, NOT accessibility).
 - If the request clearly needs multiple DIFFERENT tools in sequence, use route "planner".
 - IMPORTANT: tool_name must be the exact registered name (e.g. "web_search" not "Web Search", "visual_click" not "Visual Click"). Always use snake_case.
@@ -153,18 +159,23 @@ ANTI-FALSE-POSITIVE RULES (critical — read carefully):
   "come on man") are ALWAYS "chat" — never trigger any tool.
 
 Return your response in exactly two parts:
-1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block and perform a strict Self-Audit using these exact steps:
-   - Step 1: Information Extraction: What exactly does the user want? What hard data (file paths, names, cities) did they provide?
-   - Step 2: Tool Matching: Is there a tool meant exactly for this? (e.g. if reading a file, I need 'document' or 'filesystem').
-   - Step 3: Multi-Step Check: Does this need 2+ DIFFERENT tools in sequence? If yes → route "planner".
-   - Step 4: Double-Check / Self-Correction: Am I about to invent an answer without using a tool? I am a digital entity; I cannot see files, weather, or websites without using my tools. If I lack information to use a tool, my tool is 'chat' to ask for clarification.
-2. After the thinking block, output ONLY the valid JSON object exactly as specified below.
+1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block:
+   - Step 1: What does the user want in one sentence?
+   - Step 2: Which tool exactly? (check ROUTING RULES above)
+   - Step 3: Is this 2+ DIFFERENT tools? If yes → route="planner". If just one → route="tool".
+   - Step 4: Am I sure? Never invent answers — use tools.
+2. After the thinking block, output ONLY a JSON object.
 
-For single tool: {{"route":"tool","tool_name":"<name>","tool_args":{{...}},"risk_level":"safe|moderate|destructive","confidence":0.95,"reasoning":"Brief explanation"}}
+CRITICAL JSON RULES:
+- "route" MUST be exactly one of: "tool", "planner", "chat" — NEVER a tool name like "web_search"
+- "tool_name" is where you put the tool name (e.g. "weather", "web_search", "browser_control")
+- If route="tool", tool_name MUST be filled. If route="chat" or "planner", tool_name=null.
 
-For multi-step: {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Needs X then Y then Z"}}
-
-For chat: {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting/small talk"}}\
+Examples of CORRECT JSON:
+- Weather: {{"route":"tool","tool_name":"weather","tool_args":{{"city":""}},"risk_level":"safe","confidence":0.95,"reasoning":"User asked about weather"}}
+- Search:  {{"route":"tool","tool_name":"web_search","tool_args":{{"query":"iron man"}},"risk_level":"safe","confidence":0.95,"reasoning":"User wants web search"}}
+- Chat:    {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting"}}
+- Plan:    {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Multi-step"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -212,13 +223,30 @@ def _is_refusal(text: str) -> bool:
     return any(p in t for p in _REFUSAL_PATTERNS)
 
 
+_VALID_ROUTES = frozenset({"tool", "planner", "chat"})
+
 def _extract_json(text: str) -> dict:
-    """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks."""
+    """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks.
+
+    Also normalises common llama3.1 mistakes:
+    - route field contains a tool name instead of "tool"/"planner"/"chat"
+    """
     text = strip_thinking(text)
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text)
     m = re.search(r"\{.*\}", text, re.DOTALL)
-    return json.loads(m.group() if m else text)
+    data = json.loads(m.group() if m else text)
+
+    # Fix: if 'route' is not one of the valid values, the model likely put the
+    # tool name there. Move it to tool_name and set route="tool".
+    if isinstance(data, dict) and data.get("route") not in _VALID_ROUTES:
+        wrong_route = data.get("route", "")
+        if wrong_route:
+            log.debug("_extract_json: normalising route=%r → route='tool' tool_name=%r", wrong_route, wrong_route)
+            data["tool_name"] = data.get("tool_name") or wrong_route
+            data["route"] = "tool"
+
+    return data
 
 
 def _log_thinking(raw: str, tag: str = "") -> None:
@@ -429,7 +457,7 @@ async def cot_route(
 
     raw: str = ""
 
-    # ── Attempt 1 (streaming) ──────────────────────────────────────────
+    # ── Attempt 1 (Ollama streaming) ──────────────────────────────────
     try:
         raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
 

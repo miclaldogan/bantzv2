@@ -151,6 +151,13 @@ class STTEngine:
 
             result = " ".join(texts).strip()
 
+            # Whisper sometimes regurgitates the initial_prompt verbatim when
+            # audio is unclear or silent. Detect and discard those.
+            _PROMPT_ECHO = "The user is speaking a command to Bantz"
+            if _PROMPT_ECHO.lower() in result.lower():
+                log.warning("STT: discarding prompt-echo transcript: %r", result[:80])
+                return None
+
             if result:
                 log.info("STT: transcribed %d chars (lang=%s, prob=%.2f)",
                          len(result), info.language, info.language_probability)

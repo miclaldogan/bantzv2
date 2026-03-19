@@ -102,9 +102,9 @@ class VisualClickTool(BaseTool):
         if not nav_result.found:
             return ToolResult(
                 success=False,
-                output=(
-                    f"I peered through the glass pane but could not locate "
-                    f"'{target}', ma'am. Perhaps it is obscured."
+                output="",
+                error=(
+                    f"Could not find '{target}' via AT-SPI or VLM. Is the element visible on screen?"
                 ),
                 data=nav_result.to_dict(),
             )
