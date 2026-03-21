@@ -6,7 +6,6 @@ Path security check - cannot go outside the home directory (by default).
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Literal
 

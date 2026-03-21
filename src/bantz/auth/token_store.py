@@ -14,12 +14,9 @@ Usage:
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import stat
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +54,6 @@ class TokenStore:
     def __init__(self) -> None:
         self._dir = Path.home() / ".local" / "share" / "bantz" / "tokens"
         self._dir.mkdir(parents=True, exist_ok=True)
-        # Enforce strict 0o700 permissions to prevent unauthorized access
-        self._dir.chmod(0o700)
 
     def token_path(self, service: str) -> Path:
         # Resolve alias (calendar → gmail)

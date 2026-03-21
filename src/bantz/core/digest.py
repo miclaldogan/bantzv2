@@ -204,7 +204,7 @@ class DigestManager:
                 for r in fired_today[:5]:
                     lines.append(f"  • {r['title']}")
             if upcoming:
-                lines.append(f"Upcoming:")
+                lines.append("Upcoming:")
                 for r in upcoming[:5]:
                     fire = datetime.fromisoformat(r["fire_at"])
                     place = r.get("trigger_place")
@@ -234,7 +234,7 @@ class DigestManager:
                 f"Still active: {scheduler.count_active()}",
             ]
             if upcoming:
-                lines.append(f"Next up:")
+                lines.append("Next up:")
                 for r in upcoming[:5]:
                     lines.append(f"  • {r['title']}")
             return "\n".join(lines)

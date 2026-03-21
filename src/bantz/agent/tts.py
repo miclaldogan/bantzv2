@@ -33,9 +33,7 @@ import logging
 import re
 import shutil
 import signal
-import subprocess
 from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger(__name__)
 

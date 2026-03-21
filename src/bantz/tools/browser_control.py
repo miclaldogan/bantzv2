@@ -27,7 +27,6 @@ import asyncio
 import base64
 import logging
 import subprocess
-import time
 from typing import Any
 
 from bantz.config import config
@@ -218,7 +217,7 @@ class BrowserControlTool(BaseTool):
     async def _screenshot(self, kwargs: dict) -> ToolResult:
         """Take a screenshot and optionally describe what's visible."""
         try:
-            from bantz.vision.screenshot import capture_base64, capture
+            from bantz.vision.screenshot import capture_base64
         except ImportError:
             return ToolResult(success=False, output="", error="Screenshot module not available.")
 

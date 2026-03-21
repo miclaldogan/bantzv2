@@ -18,9 +18,7 @@ Mood history: SQLite rolling log (max 500 entries) for `bantz --mood-history`.
 """
 from __future__ import annotations
 
-import json
 import logging
-import threading
 import time
 from datetime import datetime, timedelta
 from enum import Enum

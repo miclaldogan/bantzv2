@@ -30,7 +30,6 @@ expires and the wake-word listener is resumed.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
