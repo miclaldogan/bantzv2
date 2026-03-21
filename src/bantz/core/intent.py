@@ -237,14 +237,14 @@ def _extract_json(text: str) -> dict:
     m = re.search(r"\{.*\}", text, re.DOTALL)
     data = json.loads(m.group() if m else text)
 
-    # Fix: if 'route' is not one of the valid values, the model likely put the
-    # tool name there. Move it to tool_name and set route="tool".
+    # Fix: if 'route' is missing or not one of the valid values, the model likely
+    # put the tool name there. Move it to tool_name and set route="tool".
     if isinstance(data, dict) and data.get("route") not in _VALID_ROUTES:
-        wrong_route = data.get("route", "")
-        if wrong_route:
-            log.debug("_extract_json: normalising route=%r → route='tool' tool_name=%r", wrong_route, wrong_route)
+        wrong_route = data.get("route")
+        log.debug("_extract_json: normalising route=%r → route='tool'", wrong_route)
+        if isinstance(wrong_route, str) and wrong_route:
             data["tool_name"] = data.get("tool_name") or wrong_route
-            data["route"] = "tool"
+        data["route"] = "tool"
 
     return data
 
