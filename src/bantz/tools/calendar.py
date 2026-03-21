@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from bantz.auth.token_store import token_store, TokenNotFoundError

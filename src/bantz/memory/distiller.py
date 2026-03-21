@@ -358,6 +358,7 @@ def search_distillations(
     min_score: float = 0.3,
 ) -> list[dict]:
     """Search distillation summaries by vector similarity."""
+    import struct
 
     from bantz.data.connection_pool import get_pool
     with get_pool().connection() as conn:

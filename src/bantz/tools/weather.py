@@ -71,7 +71,7 @@ class WeatherTool(BaseTool):
                 day_desc = day["hourly"][4]["weatherDesc"][0]["value"]  # noon
                 forecast_lines.append(f"  {date}: {min_c}°C–{max_c}°C, {day_desc}")
 
-            location_note = " (auto-detected)" if auto else ""
+            location_note = f" (auto-detected)" if auto else ""
             forecast_str = "\n".join(forecast_lines) if forecast_lines else "  No forecast data"
 
             return (

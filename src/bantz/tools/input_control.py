@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -115,7 +116,7 @@ def _get_pynput():
     global _pynput_mouse_controller, _pynput_keyboard_controller
     if _pynput_mouse_controller is None:
         from pynput.mouse import Controller as MouseCtrl
-        from pynput.keyboard import Controller as KeyCtrl
+        from pynput.keyboard import Controller as KeyCtrl, Key
         _pynput_mouse = MouseCtrl
         _pynput_keyboard = KeyCtrl
         _pynput_mouse_controller = MouseCtrl()

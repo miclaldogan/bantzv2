@@ -28,6 +28,7 @@ Extracted from ``brain.py`` in Part 5 of epic #218.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
 
@@ -37,7 +38,7 @@ from bantz.core.date_parser import resolve_date
 from bantz.core.prompt_builder import COMMAND_SYSTEM
 from bantz.data import data_layer
 from bantz.llm.ollama import ollama
-from bantz.tools import registry
+from bantz.tools import registry, ToolResult
 
 log = logging.getLogger("bantz.routing_engine")
 
@@ -250,7 +251,7 @@ async def dispatch_internal(
     elif tool == "_proactive_status":
         try:
             from bantz.agent.proactive import (
-                _get_daily_count, _compute_adaptive_max,
+                proactive_engine, _get_daily_count, _compute_adaptive_max,
             )
             from bantz.agent.affinity_engine import affinity_engine
             kv = data_layer.kv

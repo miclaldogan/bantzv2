@@ -223,7 +223,7 @@ def _setup_gemini() -> None:
     # Remove old gemini entries
     lines = [l for l in lines if not l.startswith("BANTZ_GEMINI_")]
 
-    lines.append("BANTZ_GEMINI_ENABLED=true")
+    lines.append(f"BANTZ_GEMINI_ENABLED=true")
     lines.append(f"BANTZ_GEMINI_API_KEY={api_key}")
     lines.append(f"BANTZ_GEMINI_MODEL={model}")
 
@@ -239,6 +239,8 @@ async def _setup_places() -> None:
     First place (or explicit choice) becomes default location in .env.
     """
     import json
+    import urllib.request
+    from pathlib import Path
     from bantz.core.places import places
     from bantz.core.location import location_service
 
@@ -331,7 +333,7 @@ async def _setup_places() -> None:
                     print("  Results found:")
                     for i, r in enumerate(results, 1):
                         print(f"    [{i}] {r['display_name'][:80]}")
-                    idx = input("  Choice [1]: ").strip() or "1"
+                    idx = input(f"  Choice [1]: ").strip() or "1"
                     try:
                         pick = results[int(idx) - 1]
                     except (ValueError, IndexError):
@@ -526,7 +528,7 @@ def _setup_schedule() -> None:
         classes = list(existing)  # keep existing
         while True:
             try:
-                raw = input("  New class (blank=skip): ").strip()
+                raw = input(f"  New class (blank=skip): ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
             if not raw:
@@ -705,6 +707,18 @@ async def _doctor() -> None:
     from bantz.config import config
     from bantz.tools import registry
     from bantz.auth.token_store import token_store
+    import bantz.tools.shell
+    import bantz.tools.system
+    import bantz.tools.filesystem
+    import bantz.tools.weather
+    import bantz.tools.news
+    import bantz.tools.web_reader
+    import bantz.tools.gmail
+    import bantz.tools.calendar
+    import bantz.tools.classroom
+    import bantz.tools.reminder
+    import bantz.tools.contacts
+    import bantz.tools.input_control
 
     print("Bantz v2 — System Check")
     print("─" * 52)
@@ -725,9 +739,9 @@ async def _doctor() -> None:
         if gem_ok:
             print(f"✅ Gemini: connected ({config.gemini_model})")
         else:
-            print("❌ Gemini: UNREACHABLE")
+            print(f"❌ Gemini: UNREACHABLE")
     else:
-        print("⚪ Gemini: disabled  → bantz --setup gemini")
+        print(f"⚪ Gemini: disabled  → bantz --setup gemini")
 
     # Neo4j
     if config.neo4j_enabled:
@@ -736,15 +750,15 @@ async def _doctor() -> None:
             _lay.init(config.db_path)
             print(f"✅ Neo4j: connected ({config.neo4j_uri})")
         except Exception:
-            print("❌ Neo4j: enabled but connection failed")
+            print(f"❌ Neo4j: enabled but connection failed")
     else:
-        print("⚪ Neo4j: disabled  → BANTZ_NEO4J_ENABLED=true")
+        print(f"⚪ Neo4j: disabled  → BANTZ_NEO4J_ENABLED=true")
 
     # Vision / VLM
     if config.vlm_enabled:
         print(f"✅ Vision/VLM: enabled ({config.vlm_endpoint})")
     else:
-        print("⚪ Vision/VLM: disabled  → BANTZ_VLM_ENABLED=true")
+        print(f"⚪ Vision/VLM: disabled  → BANTZ_VLM_ENABLED=true")
 
     # psutil
     import psutil
@@ -770,7 +784,7 @@ async def _doctor() -> None:
     if loc.is_live:
         print(f"✅ Location: {loc.display}  (via {loc.source})")
     else:
-        print("⚪ Location: unknown  → enable phone GPS relay")
+        print(f"⚪ Location: unknown  → enable phone GPS relay")
 
     # Google integrations
     g_status = token_store.status()
@@ -791,14 +805,14 @@ async def _doctor() -> None:
     if config.embedding_enabled:
         print(f"✅ Embeddings: {config.embedding_model}  (weight={config.vector_search_weight})")
     else:
-        print("⚪ Embeddings: disabled  → BANTZ_EMBEDDING_ENABLED=true")
+        print(f"⚪ Embeddings: disabled  → BANTZ_EMBEDDING_ENABLED=true")
 
     # Profile
     from bantz.core.profile import profile as _prof
     if _prof.is_configured():
         print(f"✅ Profile: {_prof.status_line()}")
     else:
-        print("⚪ Profile: not configured  → bantz --setup profile")
+        print(f"⚪ Profile: not configured  → bantz --setup profile")
 
     # Input Control (#122)
     if config.input_control_enabled:
@@ -807,9 +821,9 @@ async def _doctor() -> None:
             ic_backend = _detect_backend()
             print(f"✅ Input Control: {ic_backend}  (confirm_destructive={config.input_confirm_destructive})")
         except Exception:
-            print("❌ Input Control: enabled but detection failed")
+            print(f"❌ Input Control: enabled but detection failed")
     else:
-        print("⚪ Input Control: disabled  → BANTZ_INPUT_CONTROL_ENABLED=true")
+        print(f"⚪ Input Control: disabled  → BANTZ_INPUT_CONTROL_ENABLED=true")
 
     # Spatial Cache (#121)
     try:
@@ -831,7 +845,7 @@ async def _doctor() -> None:
             summary = ', '.join(f"{m['method']}={m['successes']}/{m['attempts']}" for m in methods)
             print(f"✅ Navigator: {total} attempts  ({summary})")
         else:
-            print("✅ Navigator: ready (no attempts yet)")
+            print(f"✅ Navigator: ready (no attempts yet)")
     except Exception:
         print("⚪ Navigator: not initialized")
 
@@ -839,7 +853,7 @@ async def _doctor() -> None:
     if config.observer_enabled:
         print(f"✅ Observer: threshold={config.observer_severity_threshold}, model={config.observer_analysis_model}")
     else:
-        print("⚪ Observer: disabled  → BANTZ_OBSERVER_ENABLED=true")
+        print(f"⚪ Observer: disabled  → BANTZ_OBSERVER_ENABLED=true")
 
     # Affinity Engine (#221)
     if config.rl_enabled:
@@ -848,9 +862,9 @@ async def _doctor() -> None:
             _ae.init(config.db_path)
             print(f"✅ Affinity Engine: {_ae.status_line()}")
         except Exception:
-            print("❌ Affinity Engine: enabled but init failed")
+            print(f"❌ Affinity Engine: enabled but init failed")
     else:
-        print("⚪ Affinity Engine: disabled  → BANTZ_RL_ENABLED=true")
+        print(f"⚪ Affinity Engine: disabled  → BANTZ_RL_ENABLED=true")
 
     # Intervention Queue (#126)
     if config.rl_enabled:
@@ -859,9 +873,9 @@ async def _doctor() -> None:
             _ivq.init(config.db_path, rate_limit=config.intervention_rate_limit, default_ttl=config.intervention_toast_ttl)
             print(f"✅ Interventions: {_ivq.status_line()}")
         except Exception:
-            print("❌ Interventions: enabled but init failed")
+            print(f"❌ Interventions: enabled but init failed")
     else:
-        print("⚪ Interventions: disabled (requires RL)")
+        print(f"⚪ Interventions: disabled (requires RL)")
 
     # App Detector (#127)
     if config.app_detector_enabled:
@@ -873,9 +887,9 @@ async def _doctor() -> None:
             )
             print(f"✅ App Detector: {_ad.status_line()}")
         except Exception:
-            print("❌ App Detector: enabled but init failed")
+            print(f"❌ App Detector: enabled but init failed")
     else:
-        print("⚪ App Detector: disabled  → BANTZ_APP_DETECTOR_ENABLED=true")
+        print(f"⚪ App Detector: disabled  → BANTZ_APP_DETECTOR_ENABLED=true")
 
     # Desktop Notifications (#153)
     if config.desktop_notifications:
@@ -888,15 +902,15 @@ async def _doctor() -> None:
             )
             print(f"✅ Notifications: {_dn.status_line()}")
         except Exception:
-            print("❌ Notifications: enabled but init failed")
+            print(f"❌ Notifications: enabled but init failed")
     else:
-        print("⚪ Notifications: disabled  → BANTZ_DESKTOP_NOTIFICATIONS=true")
+        print(f"⚪ Notifications: disabled  → BANTZ_DESKTOP_NOTIFICATIONS=true")
 
     # ── Voice Pipeline (#277 — consolidated diagnostics) ───────────────
     print()
     _voice_on = config.voice_enabled
     if _voice_on:
-        print("🎙️  Voice Master Switch: ON  (BANTZ_VOICE_ENABLED=true)")
+        print(f"🎙️  Voice Master Switch: ON  (BANTZ_VOICE_ENABLED=true)")
     else:
         _any_voice = any([
             config.tts_enabled, config.wake_word_enabled,
@@ -904,9 +918,9 @@ async def _doctor() -> None:
             config.audio_duck_enabled, config.ambient_enabled,
         ])
         if _any_voice:
-            print("🎙️  Voice (individual flags active)")
+            print(f"🎙️  Voice (individual flags active)")
         else:
-            print("⚪ Voice: disabled  → BANTZ_VOICE_ENABLED=true")
+            print(f"⚪ Voice: disabled  → BANTZ_VOICE_ENABLED=true")
 
     # ── OS-level audio dependency (PortAudio) ────────────────────────
     _portaudio_ok = False
@@ -920,7 +934,7 @@ async def _doctor() -> None:
         if _portaudio_ok:
             print(f"  ✅ PortAudio: found ({_pa_lib})")
         else:
-            print("  ❌ PortAudio: NOT found  → sudo apt install portaudio19-dev")
+            print(f"  ❌ PortAudio: NOT found  → sudo apt install portaudio19-dev")
 
     # ── PyAudio stream test ──────────────────────────────────────────
     _pyaudio_ok = False
@@ -928,9 +942,9 @@ async def _doctor() -> None:
         try:
             import pyaudio  # noqa: F401
             _pyaudio_ok = True
-            print("  ✅ PyAudio: importable")
+            print(f"  ✅ PyAudio: importable")
         except ImportError:
-            print("  ❌ PyAudio: NOT installed  → pip install pyaudio  (requires portaudio19-dev)")
+            print(f"  ❌ PyAudio: NOT installed  → pip install pyaudio  (requires portaudio19-dev)")
 
     # TTS / Audio Briefing (#131)
     if config.tts_enabled:
@@ -939,13 +953,13 @@ async def _doctor() -> None:
             if _tts.available():
                 print(f"  ✅ TTS: ready (model={config.tts_model}, auto_briefing={config.tts_auto_briefing})")
             else:
-                print("  ❌ TTS: enabled but piper/aplay not found")
+                print(f"  ❌ TTS: enabled but piper/aplay not found")
         except Exception:
-            print("  ❌ TTS: enabled but init failed")
+            print(f"  ❌ TTS: enabled but init failed")
     elif _voice_on:
-        print("  ⚪ TTS: master=ON but tts_enabled overridden to false")
+        print(f"  ⚪ TTS: master=ON but tts_enabled overridden to false")
     else:
-        print("  ⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
+        print(f"  ⚪ TTS: disabled  → BANTZ_TTS_ENABLED=true")
 
     # Audio Ducking (#171)
     if config.audio_duck_enabled:
@@ -955,17 +969,17 @@ async def _doctor() -> None:
             if diag["pactl_available"]:
                 print(f"  ✅ Audio Ducking: ready (duck to {config.audio_duck_pct}%)")
             else:
-                print("  ❌ Audio Ducking: enabled but pactl not found")
+                print(f"  ❌ Audio Ducking: enabled but pactl not found")
         except Exception as exc:
             print(f"  ❌ Audio Ducking: init failed — {exc}")
     else:
-        print("  ⚪ Audio Ducking: disabled  → BANTZ_AUDIO_DUCK_ENABLED=true")
+        print(f"  ⚪ Audio Ducking: disabled  → BANTZ_AUDIO_DUCK_ENABLED=true")
 
     # Wake Word Detection (#165)
     if config.wake_word_enabled:
         if not config.picovoice_access_key:
-            print("  ❌ Wake Word: enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
-            print("       → Get free key: https://console.picovoice.ai/")
+            print(f"  ❌ Wake Word: enabled but BANTZ_PICOVOICE_ACCESS_KEY not set")
+            print(f"       → Get free key: https://console.picovoice.ai/")
         else:
             try:
                 from bantz.agent.wake_word import wake_listener
@@ -974,13 +988,13 @@ async def _doctor() -> None:
                     if diag.get("pyaudio_available", _pyaudio_ok):
                         print(f"  ✅ Wake Word: ready (sensitivity={config.wake_word_sensitivity})")
                     else:
-                        print("  ❌ Wake Word: pvporcupine OK but pyaudio not found")
+                        print(f"  ❌ Wake Word: pvporcupine OK but pyaudio not found")
                 else:
-                    print("  ❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
+                    print(f"  ❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
             except Exception as exc:
                 print(f"  ❌ Wake Word: init failed — {exc}")
     else:
-        print("  ⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
+        print(f"  ⚪ Wake Word: disabled  → BANTZ_WAKE_WORD_ENABLED=true")
 
     # Ghost Loop / STT (#36) — Whisper model check
     if config.ghost_loop_enabled and config.stt_enabled:
@@ -1006,14 +1020,14 @@ async def _doctor() -> None:
         except Exception as exc:
             print(f"  ❌ Ghost Loop: init failed — {exc}")
     elif config.ghost_loop_enabled:
-        print("  ❌ Ghost Loop: enabled but BANTZ_STT_ENABLED=false")
+        print(f"  ❌ Ghost Loop: enabled but BANTZ_STT_ENABLED=false")
     else:
-        print("  ⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
+        print(f"  ⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
 
     # Ambient Sound Analysis (#166)
     if config.ambient_enabled:
         if not config.wake_word_enabled:
-            print("  ❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
+            print(f"  ❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
         else:
             try:
                 from bantz.agent.ambient import ambient_analyzer as _amb
@@ -1022,15 +1036,15 @@ async def _doctor() -> None:
             except Exception as exc:
                 print(f"  ❌ Ambient: init failed — {exc}")
     else:
-        print("  ⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
+        print(f"  ⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
 
     print()  # end voice section
 
     # Telegram
     if config.telegram_bot_token:
-        print("✅ Telegram: token set")
+        print(f"✅ Telegram: token set")
     else:
-        print("⚪ Telegram: not configured  → bantz --setup telegram")
+        print(f"⚪ Telegram: not configured  → bantz --setup telegram")
 
     # Habits
     from bantz.core.habits import habits as _hab
@@ -1041,7 +1055,7 @@ async def _doctor() -> None:
     if _plc.is_configured():
         print(f"✅ Places: {_plc.status_line()}")
     else:
-        print("⚪ Places: not configured  → bantz --setup places")
+        print(f"⚪ Places: not configured  → bantz --setup places")
 
     # GPS
     from bantz.core.gps_server import gps_server
@@ -1062,11 +1076,11 @@ async def _doctor() -> None:
             print(f"✅ Job Scheduler: {_js.status_line()}")
             await _js.shutdown()
         except ImportError:
-            print("❌ Job Scheduler: apscheduler not installed  → pip install apscheduler")
+            print(f"❌ Job Scheduler: apscheduler not installed  → pip install apscheduler")
         except Exception as exc:
             print(f"❌ Job Scheduler: enabled but init failed: {exc}")
     else:
-        print("⚪ Job Scheduler: disabled  → BANTZ_JOB_SCHEDULER_ENABLED=true")
+        print(f"⚪ Job Scheduler: disabled  → BANTZ_JOB_SCHEDULER_ENABLED=true")
 
     # systemd service (#173) — quick summary
     import os as _os
@@ -1086,7 +1100,7 @@ async def _doctor() -> None:
         else:
             print(f"⚪ systemd: {_state}  → systemctl --user start bantz.service")
     else:
-        print("⚪ systemd: not installed  → bantz --setup systemd")
+        print(f"⚪ systemd: not installed  → bantz --setup systemd")
 
     print("─" * 52)
 
@@ -1243,7 +1257,7 @@ def _mood_history() -> None:
     # Summary
     summary = history.summary_24h()
     if summary:
-        print("\n⏱ Time in mood (minutes):")
+        print(f"\n⏱ Time in mood (minutes):")
         for mood, mins in sorted(summary.items(), key=lambda x: -x[1]):
             face = MOOD_FACES.get(mood, "(?)")  # type: ignore[arg-type]
             print(f"  {mood:<10} {face}  {mins:.0f} min")
@@ -1406,6 +1420,7 @@ async def _daemon() -> None:
 def _setup_systemd() -> None:
     """Install Bantz systemd user service with linger + verification."""
     import os
+    import subprocess
     from pathlib import Path
 
     print("\n🦌 Bantz — systemd Service Setup")
@@ -1557,7 +1572,7 @@ def _verify_service() -> None:
     )
     state = result.stdout.strip()
     if state == "active":
-        print("✅ bantz.service is running")
+        print(f"✅ bantz.service is running")
         # Show compact status (let output go to terminal)
         subprocess.run(
             ["systemctl", "--user", "status", "bantz.service", "--no-pager", "-l"],
@@ -1584,7 +1599,7 @@ def _systemd_check() -> None:
     if service_path.exists():
         print(f"✅ Service file: {service_path}")
     else:
-        print("❌ Service file: NOT FOUND — run: bantz --setup systemd")
+        print(f"❌ Service file: NOT FOUND — run: bantz --setup systemd")
         return
 
     # 2. Linger
@@ -1600,9 +1615,9 @@ def _systemd_check() -> None:
     )
     state = result.stdout.strip()
     if state == "active":
-        print("✅ Service: active (running)")
+        print(f"✅ Service: active (running)")
     elif state == "inactive":
-        print("⚪ Service: inactive — run: systemctl --user start bantz.service")
+        print(f"⚪ Service: inactive — run: systemctl --user start bantz.service")
     else:
         print(f"❌ Service: {state}")
 
@@ -1635,6 +1650,7 @@ def _systemd_check() -> None:
             ts_raw = prop_map.get("ActiveEnterTimestamp", "")
             if ts_raw:
                 try:
+                    from datetime import datetime
                     # systemd outputs local time like "Thu 2025-01-09 14:30:00 TRT"
                     # Parse with dateutil for flexibility, fall back to showing raw
                     _uptime_str = _format_uptime(ts_raw)
@@ -1664,7 +1680,7 @@ def _systemd_check() -> None:
     )
     en_state = enabled_result.stdout.strip()
     if en_state == "enabled":
-        print("✅ Boot: enabled (starts on login)")
+        print(f"✅ Boot: enabled (starts on login)")
     else:
         print(f"⚪ Boot: {en_state} — run: systemctl --user enable bantz.service")
 
@@ -1673,7 +1689,7 @@ def _systemd_check() -> None:
 
 def _format_uptime(timestamp_str: str) -> str:
     """Parse systemd ActiveEnterTimestamp and return human-readable uptime."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     import re
 
     # Strip timezone abbreviation (e.g. "TRT", "UTC", "CET")

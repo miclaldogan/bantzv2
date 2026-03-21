@@ -24,9 +24,10 @@ Toast types:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 from textual.app import ComposeResult
 from textual.message import Message

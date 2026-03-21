@@ -15,6 +15,7 @@ Flow:
 from __future__ import annotations
 
 import logging
+import webbrowser
 from pathlib import Path
 
 from bantz.auth.token_store import token_store, SERVICE_SCOPES

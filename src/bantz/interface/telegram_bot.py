@@ -32,7 +32,7 @@ import random
 import time
 from collections import defaultdict
 from io import BytesIO
-from typing import Callable, Coroutine
+from typing import Callable, Coroutine, Any
 
 from telegram import Update
 from telegram.constants import ChatAction

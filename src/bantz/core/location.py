@@ -282,8 +282,7 @@ class LocationService:
 
     def _reverse_geocode_sync(self, lat: float, lon: float) -> tuple[str, str, str]:
         """Simple reverse geocode via nominatim (no API key)."""
-        import urllib.request
-        import json as _json
+        import urllib.request, json as _json
         url = (
             f"https://nominatim.openstreetmap.org/reverse"
             f"?lat={lat}&lon={lon}&format=json"

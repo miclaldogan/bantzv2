@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from bantz.tools import BaseTool, ToolResult
+from bantz.tools import BaseTool, ToolResult, registry
 
 log = logging.getLogger("bantz.tools.gui_action")
 

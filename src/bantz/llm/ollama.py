@@ -66,8 +66,8 @@ class OllamaClient:
         except httpx.ConnectError:
             is_remote = "localhost" not in self.base_url and "127.0.0.1" not in self.base_url
             tunnel_hint = (
-                "\n  Is the SSH tunnel active?\n"
-                "  ssh -N -L 11434:localhost:11434 root@<VPS_IP>"
+                f"\n  Is the SSH tunnel active?\n"
+                f"  ssh -N -L 11434:localhost:11434 root@<VPS_IP>"
                 if is_remote
                 else ""
             )

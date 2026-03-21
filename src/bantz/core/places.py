@@ -22,10 +22,11 @@ import json
 import logging
 import math
 import time as _time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from bantz.core.location import location_service
+from bantz.core.location import Location, location_service
 
 if TYPE_CHECKING:
     from bantz.data.store import PlaceStore

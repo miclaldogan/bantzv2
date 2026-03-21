@@ -32,6 +32,12 @@ from bantz.data.store import (
     ScheduleStore,
     SessionStore,
 )
+from bantz.data.json_store import (
+    JSONPlaceStore,
+    JSONProfileStore,
+    JSONScheduleStore,
+    JSONSessionStore,
+)
 from bantz.data.sqlite_store import (
     SQLitePlaceStore,
     SQLiteProfileStore,

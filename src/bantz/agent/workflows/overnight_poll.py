@@ -25,7 +25,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ async def _poll_gmail(last_poll: Optional[str]) -> PollSourceResult:
             result.error_message = str(exc)
             return result
 
-        from bantz.tools.gmail import GmailTool
+        from bantz.tools.gmail import GmailTool, build_query
 
         gmail = GmailTool()
         loop = asyncio.get_event_loop()
