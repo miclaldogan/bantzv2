@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -29,22 +30,30 @@ from typing import Any
 log = logging.getLogger("bantz.system_tool")
 
 # ── Denylist patterns ─────────────────────────────────────────────────────────
-# These are regex patterns matched against the full command string.
-# Matches in safe_mode → DangerousCommandError raised before execution.
 
-DENYLIST: list[str] = [
-    r"rm\s+-rf\s+/",        # rm -rf /  (recursive root deletion)
-    r"rm\s+.*--no-preserve-root",
-    r"dd\s+if=",            # disk-level writes
-    r"mkfs",                # filesystem formatting
-    r">\s*/dev/sd",         # direct writes to block device
-    r":\(\)\s*\{",          # fork bomb  :(){:|:&};:
-    r"chmod\s+-R\s+777\s+/",# world-write root
-    r">\s*/etc/passwd",     # overwrite passwd
-    r">\s*/etc/shadow",     # overwrite shadow
+# Commands that are strictly forbidden as the primary executable
+BLOCKED_EXECUTABLES: frozenset[str] = frozenset({
+    "mkfs", "dd", "fdisk", "parted", "shred", "format",
+})
+
+# Dangerous argument combinations (regex on the parsed argument list)
+# We check if any argument matches these.
+BLOCKED_ARG_PATTERNS: list[re.Pattern] = [
+    re.compile(r"^--no-preserve-root$"),
+    re.compile(r"^:(\(\)\s*\{|.*\(\)\s*\{)"), # Potential fork bomb start
 ]
 
-_COMPILED_DENYLIST: list[re.Pattern] = [re.compile(p) for p in DENYLIST]
+# We still use some global regex for patterns that shlex might split but are still dangerous
+# e.g. redirection to sensitive files (if we were using shell=True)
+# Since we are moving to shell=False, many of these won't work anyway,
+# but we keep them for defense-in-depth during validation.
+GLOBAL_DENYLIST: list[re.Pattern] = [
+    re.compile(r"rm\s+.*-rf\s+/"),          # rm -rf /
+    re.compile(r"chmod\s+.*-R\s+777\s+/"),  # world-write root
+    re.compile(r">\s*/etc/(passwd|shadow)"), # overwrite sensitive files
+    re.compile(r">\s*/dev/sd"),             # direct write to block device
+]
+
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
 _AUDIT_LOG: Path = Path.home() / ".bantz" / "logs" / "system_audit.log"
@@ -95,12 +104,12 @@ class SystemTool:
         timeout: int = 30,
         safe_mode: bool = True,
     ) -> ShellResult:
-        """Run a shell command and return a structured ShellResult.
+        """Run a command and return a structured ShellResult.
 
         Args:
-            cmd:        Shell command string (passed to bash -c).
+            cmd:        Command string (parsed via shlex.split).
             timeout:    Maximum execution time in seconds.
-            safe_mode:  If True, commands matching DENYLIST raise
+            safe_mode:  If True, commands matching security checks raise
                         DangerousCommandError before execution.
 
         Returns:
@@ -110,19 +119,41 @@ class SystemTool:
             DangerousCommandError: if safe_mode=True and cmd is dangerous.
             subprocess.TimeoutExpired: re-raised after logging.
         """
+        if not cmd.strip():
+            return ShellResult(
+                stdout="",
+                stderr="Command cannot be empty.",
+                returncode=1,
+                duration_ms=0,
+            )
+
+        try:
+            args = shlex.split(cmd)
+        except ValueError as exc:
+            log.warning("SystemTool.run: shlex.split failed for cmd: %s", cmd)
+            if safe_mode:
+                raise DangerousCommandError(f"Invalid command string: {exc}") from exc
+            # Fallback for safe_mode=False
+            args = cmd.split()
+
+        if not args:
+             return ShellResult(
+                stdout="",
+                stderr="No command arguments found.",
+                returncode=1,
+                duration_ms=0,
+            )
+
         if safe_mode:
-            for pattern in _COMPILED_DENYLIST:
-                if pattern.search(cmd):
-                    log.warning("SystemTool.run: BLOCKED dangerous command: %s", cmd)
-                    raise DangerousCommandError(
-                        f"Command blocked by safety denylist: {cmd!r}"
-                    )
+            self._validate_command(cmd, args)
 
         t0 = time.monotonic()
         try:
+            # shell=False is preferred for security.
+            # args is already a list from shlex.split.
             proc = subprocess.run(
-                cmd,
-                shell=True,
+                args,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -138,9 +169,50 @@ class SystemTool:
             duration_ms = int((time.monotonic() - t0) * 1000)
             self._audit(cmd, -1, duration_ms, note="TIMEOUT")
             raise
+        except FileNotFoundError as exc:
+            # Executable not found
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            result = ShellResult(
+                stdout="",
+                stderr=str(exc),
+                returncode=127,
+                duration_ms=duration_ms,
+            )
 
         self._audit(cmd, result.returncode, result.duration_ms)
         return result
+
+    def _validate_command(self, cmd: str, args: list[str]) -> None:
+        """Check command and arguments against security policies."""
+        if not args:
+            return
+
+        exe = args[0]
+        # 1. Blocked executables
+        if any(blocked in exe for blocked in BLOCKED_EXECUTABLES):
+            self._block(cmd, f"Executable {exe!r} is blocked")
+
+        # 2. Argument patterns
+        for arg in args:
+            for pattern in BLOCKED_ARG_PATTERNS:
+                if pattern.search(arg):
+                    self._block(cmd, f"Argument {arg!r} matches blocked pattern")
+
+        # 3. rm -rf / check (more robustly)
+        if exe == "rm":
+            combined_args = "".join(args[1:])
+            if ("r" in combined_args and "f" in combined_args) or "-recursive" in args:
+                if "/" in args or "//" in args:
+                    self._block(cmd, "Attempted recursive root deletion")
+
+        # 4. Global regex patterns (fallback/defense-in-depth)
+        for pattern in GLOBAL_DENYLIST:
+            if pattern.search(cmd):
+                self._block(cmd, f"Command matches blocked pattern: {pattern.pattern}")
+
+    def _block(self, cmd: str, reason: str) -> None:
+        log.warning("SystemTool.run: BLOCKED dangerous command: %s (Reason: %s)", cmd, reason)
+        raise DangerousCommandError(f"Command blocked: {reason}")
 
     # ── Process listing ───────────────────────────────────────────────────
 

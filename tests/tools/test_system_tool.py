@@ -107,9 +107,17 @@ class TestRunSafeMode:
     def test_failed_command_captures_returncode(self):
         from bantz.tools.system_tool import SystemTool
         tool = SystemTool()
-        result = tool.run("exit 42", safe_mode=False)
-        assert result.returncode == 42
+        result = tool.run("ls /nonexistent/path/for/bantz/test", safe_mode=False)
+        assert result.returncode != 0
         assert not result.success
+
+    def test_empty_command_returns_error(self):
+        from bantz.tools.system_tool import SystemTool
+        tool = SystemTool()
+        result = tool.run("   ")
+        assert not result.success
+        assert result.returncode == 1
+        assert "Command cannot be empty" in result.stderr
 
 
 # ── SystemTool.run() — timeout ────────────────────────────────────────────────
