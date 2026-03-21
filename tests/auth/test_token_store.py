@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock, patch
 from bantz.auth.token_store import TokenStore, TokenNotFoundError
 
