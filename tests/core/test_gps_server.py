@@ -1,9 +1,5 @@
 import json
-import socket
-import threading
-import urllib.request
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,7 +8,6 @@ from bantz.core.gps_server import (
     GPSServer,
     _ensure_relay_token,
     _get_local_ip,
-    GPS_PORT,
     NTFY_BASE,
     TTL_SECONDS,
 )
