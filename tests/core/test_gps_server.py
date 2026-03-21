@@ -1,7 +1,6 @@
 import json
 import socket
 import sys
-import threading
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -9,65 +8,81 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# We need a proper way to isolate tests without globally mutating sys.modules.
-# Because the file imports bantz.core.location which imports places, we must patch
-# things safely without breaking imports for the rest of Pytest.
-# By patching at the test level we avoid side effects.
+@pytest.fixture(autouse=True)
+def isolated_modules():
+    mock_config_mod = MagicMock()
+    mock_config_mod.config.gps_relay_token = ""
+    mock_places_mod = MagicMock()
+    mock_places_mod.places = MagicMock()
 
-from bantz.core.gps_server import (
-    GPSServer,
-    _ensure_relay_token,
-    _get_local_ip,
-    GPS_PORT,
-    NTFY_BASE,
-    TTL_SECONDS,
-)
+    orig_config = sys.modules.get("bantz.config")
+    orig_places = sys.modules.get("bantz.core.places")
+
+    sys.modules["bantz.config"] = mock_config_mod
+    sys.modules["bantz.core.places"] = mock_places_mod
+
+    yield
+
+    if orig_config:
+        sys.modules["bantz.config"] = orig_config
+    else:
+        sys.modules.pop("bantz.config", None)
+
+    if orig_places:
+        sys.modules["bantz.core.places"] = orig_places
+    else:
+        sys.modules.pop("bantz.core.places", None)
+
+@pytest.fixture
+def gps_server_module(isolated_modules):
+    # Important: import module AFTER sys.modules is manipulated
+    # to avoid ImportError and to load mocked module properly
+    import bantz.core.gps_server as mod
+    return mod
 
 @pytest.fixture
 def mock_config():
-    with patch("bantz.core.gps_server.getattr") as mock_getattr:
-        mock_getattr.return_value = "config-token-123"
-        yield mock_getattr
+    return sys.modules["bantz.config"].config
 
 @pytest.fixture
-def mock_paths(tmp_path):
+def mock_paths(tmp_path, gps_server_module):
     location_file = tmp_path / "live_location.json"
     token_file = tmp_path / "gps_relay_token"
-    with patch("bantz.core.gps_server.LOCATION_FILE", location_file), \
-         patch("bantz.core.gps_server.TOKEN_FILE", token_file):
+    with patch.object(gps_server_module, "LOCATION_FILE", location_file), \
+         patch.object(gps_server_module, "TOKEN_FILE", token_file):
         yield location_file, token_file
 
-def test_ensure_relay_token_from_config(mock_paths):
-    with patch("bantz.core.gps_server.getattr", return_value="config-token-123"):
-        assert _ensure_relay_token() == "config-token-123"
+def test_ensure_relay_token_from_config(mock_paths, gps_server_module):
+    with patch.object(gps_server_module, "getattr", return_value="config-token-123"):
+        assert gps_server_module._ensure_relay_token() == "config-token-123"
 
-def test_ensure_relay_token_from_disk(mock_paths):
+def test_ensure_relay_token_from_disk(mock_paths, gps_server_module):
     _, token_file = mock_paths
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text("disk-token-456", encoding="utf-8")
-    assert _ensure_relay_token() == "disk-token-456"
+    assert gps_server_module._ensure_relay_token() == "disk-token-456"
 
-def test_ensure_relay_token_generated(mock_paths):
+def test_ensure_relay_token_generated(mock_paths, gps_server_module):
     _, token_file = mock_paths
-    token = _ensure_relay_token()
+    token = gps_server_module._ensure_relay_token()
     assert token.startswith("bantz-gps-")
     assert token_file.read_text(encoding="utf-8") == token
 
-def test_get_local_ip_success():
+def test_get_local_ip_success(gps_server_module):
     with patch("socket.socket") as mock_socket:
         mock_instance = MagicMock()
         mock_socket.return_value = mock_instance
         mock_instance.getsockname.return_value = ("192.168.1.100", 12345)
 
-        assert _get_local_ip() == "192.168.1.100"
+        assert gps_server_module._get_local_ip() == "192.168.1.100"
 
-def test_get_local_ip_failure():
+def test_get_local_ip_failure(gps_server_module):
     with patch("socket.socket", side_effect=Exception("Network error")):
-        assert _get_local_ip() == "localhost"
+        assert gps_server_module._get_local_ip() == "localhost"
 
 @pytest.fixture
-def gps_server(mock_paths):
-    return GPSServer(port=9999)
+def gps_server(mock_paths, gps_server_module):
+    return gps_server_module.GPSServer(port=9999)
 
 def test_gps_server_init(gps_server):
     assert gps_server._port == 9999
@@ -78,11 +93,11 @@ def test_gps_server_init(gps_server):
     assert gps_server._latest is None
     assert gps_server._relay_token is None
 
-def test_relay_topic_and_url(gps_server, mock_paths):
-    with patch("bantz.core.gps_server.getattr", return_value="my-test-topic"):
+def test_relay_topic_and_url(gps_server, mock_paths, gps_server_module):
+    with patch.object(gps_server_module, "getattr", return_value="my-test-topic"):
         gps_server._relay_token = None
         assert gps_server.relay_topic == "my-test-topic"
-        assert gps_server.relay_url == f"{NTFY_BASE}/my-test-topic"
+        assert gps_server.relay_url == f"{gps_server_module.NTFY_BASE}/my-test-topic"
 
 def test_load_from_disk_valid(gps_server, mock_paths):
     location_file, _ = mock_paths
@@ -93,9 +108,9 @@ def test_load_from_disk_valid(gps_server, mock_paths):
     gps_server._load_from_disk()
     assert gps_server._latest == data
 
-def test_load_from_disk_expired(gps_server, mock_paths):
+def test_load_from_disk_expired(gps_server, mock_paths, gps_server_module):
     location_file, _ = mock_paths
-    old_time = datetime.now(timezone.utc) - timedelta(seconds=TTL_SECONDS + 100)
+    old_time = datetime.now(timezone.utc) - timedelta(seconds=gps_server_module.TTL_SECONDS + 100)
     old_iso = old_time.isoformat().replace("+00:00", "Z")
     data = {"lat": 10.0, "lon": 20.0, "timestamp": old_iso}
     location_file.write_text(json.dumps(data), encoding="utf-8")
@@ -107,23 +122,16 @@ def test_save_location(gps_server, mock_paths):
     location_file, _ = mock_paths
     data = {"lat": 12.34, "lon": 56.78, "accuracy": 10.5, "timestamp": "2023-01-01T00:00:00Z"}
 
-    # We patch bantz.core.places.places.update_gps
-    # using sys.modules lookup but dynamically. Since we import bantz.core.gps_server
-    # we know it does not have Places imported at the top level. We can patch it gracefully
-    # by ensuring we patch `bantz.core.places.places.update_gps`.
-    with patch("sys.modules", dict(sys.modules)):
-        mock_places = MagicMock()
-        mock_places_mod = MagicMock()
-        mock_places_mod.places = mock_places
-        sys.modules["bantz.core.places"] = mock_places_mod
+    mock_places_mod = sys.modules["bantz.core.places"]
+    mock_places_mod.places.update_gps.reset_mock()
 
-        gps_server._save_location(data)
+    gps_server._save_location(data)
 
-        assert gps_server._latest == data
-        assert location_file.exists()
-        saved_data = json.loads(location_file.read_text(encoding="utf-8"))
-        assert saved_data == data
-        mock_places.update_gps.assert_called_once_with(12.34, 56.78)
+    assert gps_server._latest == data
+    assert location_file.exists()
+    saved_data = json.loads(location_file.read_text(encoding="utf-8"))
+    assert saved_data == data
+    mock_places_mod.places.update_gps.assert_called_once_with(12.34, 56.78)
 
 def test_latest_property_valid(gps_server):
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -131,8 +139,8 @@ def test_latest_property_valid(gps_server):
     gps_server._latest = data
     assert gps_server.latest == data
 
-def test_latest_property_expired(gps_server):
-    old_time = datetime.now(timezone.utc) - timedelta(seconds=TTL_SECONDS + 100)
+def test_latest_property_expired(gps_server, gps_server_module):
+    old_time = datetime.now(timezone.utc) - timedelta(seconds=gps_server_module.TTL_SECONDS + 100)
     old_iso = old_time.isoformat().replace("+00:00", "Z")
     data = {"lat": 1.0, "lon": 2.0, "timestamp": old_iso}
     gps_server._latest = data
@@ -176,19 +184,19 @@ async def test_start_stop(gps_server):
         assert gps_server._server is None
         assert gps_server._thread is None
 
-def test_send_command(gps_server, mock_paths):
+def test_send_command(gps_server, mock_paths, gps_server_module):
     with patch("urllib.request.urlopen") as mock_urlopen, \
-         patch("bantz.core.gps_server.getattr", return_value="test-topic"):
+         patch.object(gps_server_module, "getattr", return_value="test-topic"):
         gps_server._relay_token = None
         gps_server._send_command("start")
         mock_urlopen.assert_called_once()
         args, kwargs = mock_urlopen.call_args
         req = args[0]
-        assert req.full_url == f"{NTFY_BASE}/test-topic-cmd"
+        assert req.full_url == f"{gps_server_module.NTFY_BASE}/test-topic-cmd"
         assert json.loads(req.data.decode()) == {"command": "start"}
         assert req.method == "POST"
 
-def test_relay_listener_loop(gps_server, mock_paths):
+def test_relay_listener_loop(gps_server, mock_paths, gps_server_module):
     gps_server._relay_running = True
     gps_server._relay_token = None
 
@@ -209,14 +217,14 @@ def test_relay_listener_loop(gps_server, mock_paths):
 
     with patch("urllib.request.urlopen", return_value=mock_resp), \
          patch.object(gps_server, "_save_location") as mock_save, \
-         patch("bantz.core.gps_server.getattr", return_value="test-topic"):
+         patch.object(gps_server_module, "getattr", return_value="test-topic"):
         gps_server._relay_listener_loop()
 
         mock_save.assert_called_once_with({"lat": 40.0, "lon": -74.0})
 
-def test_url_and_status_line(gps_server, mock_paths):
-    with patch("bantz.core.gps_server._get_local_ip", return_value="10.0.0.5"), \
-         patch("bantz.core.gps_server.getattr", return_value="my-test-topic"):
+def test_url_and_status_line(gps_server, mock_paths, gps_server_module):
+    with patch.object(gps_server_module, "_get_local_ip", return_value="10.0.0.5"), \
+         patch.object(gps_server_module, "getattr", return_value="my-test-topic"):
         gps_server._relay_token = None
         assert gps_server.url == "http://10.0.0.5:9999"
 
