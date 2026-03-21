@@ -6,7 +6,10 @@ import time
 
 import pytest
 
-from bantz.interface.telegram_bot import _TelegramSpamFilter
+try:
+    from bantz.interface.telegram_bot import _TelegramSpamFilter
+except ImportError:
+    pytest.skip("python-telegram-bot is not installed", allow_module_level=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

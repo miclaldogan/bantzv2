@@ -1,24 +1,31 @@
 import json
+import socket
+import sys
+import threading
+import urllib.request
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# We need a proper way to isolate tests without globally mutating sys.modules.
+# Because the file imports bantz.core.location which imports places, we must patch
+# things safely without breaking imports for the rest of Pytest.
+# By patching at the test level we avoid side effects.
 
 from bantz.core.gps_server import (
     GPSServer,
     _ensure_relay_token,
     _get_local_ip,
+    GPS_PORT,
     NTFY_BASE,
     TTL_SECONDS,
 )
 
 @pytest.fixture
 def mock_config():
-    # Since _ensure_relay_token catches exception and falls back if `from bantz.config import config` fails
-    # or if we patch the exact getattr sequence, let's patch the entire bantz.config.config in sys.modules
-    # or just patch it within the function itself using patch.dict
     with patch("bantz.core.gps_server.getattr") as mock_getattr:
-        # We need to ensure that it returns the mocked token
         mock_getattr.return_value = "config-token-123"
         yield mock_getattr
 
@@ -73,6 +80,7 @@ def test_gps_server_init(gps_server):
 
 def test_relay_topic_and_url(gps_server, mock_paths):
     with patch("bantz.core.gps_server.getattr", return_value="my-test-topic"):
+        gps_server._relay_token = None
         assert gps_server.relay_topic == "my-test-topic"
         assert gps_server.relay_url == f"{NTFY_BASE}/my-test-topic"
 
@@ -99,8 +107,15 @@ def test_save_location(gps_server, mock_paths):
     location_file, _ = mock_paths
     data = {"lat": 12.34, "lon": 56.78, "accuracy": 10.5, "timestamp": "2023-01-01T00:00:00Z"}
 
-    with patch("bantz.core.places.places.update_gps", create=True) as mock_update_gps:
-        mock_update_gps.return_value = None
+    # We patch bantz.core.places.places.update_gps
+    # using sys.modules lookup but dynamically. Since we import bantz.core.gps_server
+    # we know it does not have Places imported at the top level. We can patch it gracefully
+    # by ensuring we patch `bantz.core.places.places.update_gps`.
+    with patch("sys.modules", dict(sys.modules)):
+        mock_places = MagicMock()
+        mock_places_mod = MagicMock()
+        mock_places_mod.places = mock_places
+        sys.modules["bantz.core.places"] = mock_places_mod
 
         gps_server._save_location(data)
 
@@ -108,7 +123,7 @@ def test_save_location(gps_server, mock_paths):
         assert location_file.exists()
         saved_data = json.loads(location_file.read_text(encoding="utf-8"))
         assert saved_data == data
-        mock_update_gps.assert_called_once_with(12.34, 56.78)
+        mock_places.update_gps.assert_called_once_with(12.34, 56.78)
 
 def test_latest_property_valid(gps_server):
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -164,6 +179,7 @@ async def test_start_stop(gps_server):
 def test_send_command(gps_server, mock_paths):
     with patch("urllib.request.urlopen") as mock_urlopen, \
          patch("bantz.core.gps_server.getattr", return_value="test-topic"):
+        gps_server._relay_token = None
         gps_server._send_command("start")
         mock_urlopen.assert_called_once()
         args, kwargs = mock_urlopen.call_args
@@ -174,6 +190,7 @@ def test_send_command(gps_server, mock_paths):
 
 def test_relay_listener_loop(gps_server, mock_paths):
     gps_server._relay_running = True
+    gps_server._relay_token = None
 
     mock_resp = MagicMock()
     mock_resp.__enter__.return_value = mock_resp
@@ -200,6 +217,7 @@ def test_relay_listener_loop(gps_server, mock_paths):
 def test_url_and_status_line(gps_server, mock_paths):
     with patch("bantz.core.gps_server._get_local_ip", return_value="10.0.0.5"), \
          patch("bantz.core.gps_server.getattr", return_value="my-test-topic"):
+        gps_server._relay_token = None
         assert gps_server.url == "http://10.0.0.5:9999"
 
         assert "GPS: waiting" in gps_server.status_line()
