@@ -28,7 +28,6 @@ from bantz.core.types import BrainResult, Attachment  # noqa: F401  — canonica
 from bantz.core.routing_engine import (
     quick_route as _quick_route_fn,
     dispatch_internal as _dispatch_internal,
-    generate_command as _generate_command_fn,
     execute_plan as _execute_plan_fn,
     handle_maintenance as _handle_maintenance_fn,
     handle_list_reflections as _handle_list_reflections_fn,
@@ -37,7 +36,6 @@ from bantz.core.routing_engine import (
 from bantz.core.memory_injector import (
     inject as _inject_memory,
     style_hint as _style_hint,
-    persona_hint as _persona_hint,
     formality_hint as _formality_hint,
     graph_context as _graph_ctx_fn,
     deep_memory_context as _deep_memory_ctx_fn,

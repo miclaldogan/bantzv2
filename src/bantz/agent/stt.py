@@ -31,10 +31,9 @@ from __future__ import annotations
 
 import logging
 import tempfile
-import struct
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 log = logging.getLogger("bantz.stt")
 
@@ -126,7 +125,7 @@ class STTEngine:
 
         return self._transcribe_array(samples)
 
-    def _transcribe_array(self, audio: "np.ndarray") -> Optional[str]:
+    def _transcribe_array(self, audio: Any) -> Optional[str]:
         """Run inference on a float32 numpy array."""
         try:
             segments, info = self._model.transcribe(

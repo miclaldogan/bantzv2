@@ -25,7 +25,7 @@ from bantz.core.types import BrainResult
 from bantz.core.event_bus import bus, Event
 from bantz.config import config
 from bantz.interface.tui.panels.system import SystemStatus
-from bantz.interface.tui.panels.chat import ChatLog, ThinkingLabel, ThinkingPanel
+from bantz.interface.tui.panels.chat import ChatLog, ThinkingPanel
 from bantz.interface.tui.panels.header import (
     OperationsHeader,
     ServiceHealthChanged,
@@ -417,10 +417,6 @@ class BantzApp(App):
         """
         try:
             from bantz.agent.affinity_engine import affinity_engine
-            from bantz.agent.interventions import (
-                intervention_queue,
-                intervention_from_rl,
-            )
             from bantz.core.time_context import time_ctx
 
             if not affinity_engine.initialized:

@@ -474,7 +474,6 @@ class _OmniTransaction:
             return  # ops discarded — SQLite never wrote
 
         import asyncio
-        import json
         import time as _time
 
         ops = list(self._ops)

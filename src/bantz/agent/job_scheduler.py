@@ -38,13 +38,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
-import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 log = logging.getLogger("bantz.job_scheduler")
 
@@ -573,7 +571,6 @@ class JobScheduler:
             return
 
         from apscheduler.triggers.interval import IntervalTrigger
-        from datetime import timedelta
 
         hours = max(config.proactive_interval_hours, 1.0)
         jitter_sec = config.proactive_jitter_minutes * 60

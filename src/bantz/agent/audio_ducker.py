@@ -32,14 +32,12 @@ Key decisions:
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 import shutil
 import subprocess
 import threading
 import time
-from typing import Optional
 
 log = logging.getLogger("bantz.audio_ducker")
 

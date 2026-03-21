@@ -266,7 +266,6 @@ async def find_element(
     # ── Strategy 1: VLM pixel-coordinate output (llava/bakllava) ──
     if screenshot_b64:
         try:
-            from bantz.vision.remote_vlm import _call_ollama_vlm
 
             # Try models that can return pixel coordinates
             coord_models = ["llava", "bakllava", "llava-llama3"]
@@ -302,7 +301,6 @@ async def find_element(
     # ── Strategy 2: VLM region detection (moondream) → approximate coords ──
     if screenshot_b64:
         try:
-            from bantz.vision.remote_vlm import _call_ollama_vlm
             import httpx
             from bantz.config import config as _cfg
             url = f"{_cfg.ollama_base_url.rstrip('/')}/api/generate"

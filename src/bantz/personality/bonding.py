@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from typing import Optional
 
 from bantz.config import config
 

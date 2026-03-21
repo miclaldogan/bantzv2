@@ -48,7 +48,6 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
 
 log = logging.getLogger("bantz.reflection")
 
