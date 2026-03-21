@@ -18,6 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip('textual')
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers

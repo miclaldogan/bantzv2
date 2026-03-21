@@ -36,6 +36,8 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
+pytest.importorskip('telegram')
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures

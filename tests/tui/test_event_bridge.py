@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, AsyncMock, patch, call
 
 import pytest
 
+pytest.importorskip('textual')
+
 from bantz.core.event_bus import Event, EventBus
 
 

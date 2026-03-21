@@ -18,6 +18,8 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+pytest.importorskip('textual')
+
 from bantz.tools.input_control import (
     classify_action,
     _log_action,

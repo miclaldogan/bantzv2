@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 import pytest
 
+pytest.importorskip('textual')
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ToastType enum & constants

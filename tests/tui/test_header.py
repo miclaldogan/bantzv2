@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
+pytest.importorskip('telegram')
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ServiceStatus enum & constants
