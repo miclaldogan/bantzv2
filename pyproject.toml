@@ -19,6 +19,7 @@ dependencies = [
     "rich>=13.0.0",
     "apscheduler>=3.10.0",
     "sqlalchemy>=2.0.0",
+    "python-telegram-bot>=20.0",
 ]
 
 [project.optional-dependencies]

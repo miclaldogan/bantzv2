@@ -28,7 +28,6 @@ Extracted from ``brain.py`` in Part 5 of epic #218.
 """
 from __future__ import annotations
 
-import asyncio
 import re
 import logging
 
@@ -38,7 +37,7 @@ from bantz.core.date_parser import resolve_date
 from bantz.core.prompt_builder import COMMAND_SYSTEM
 from bantz.data import data_layer
 from bantz.llm.ollama import ollama
-from bantz.tools import registry, ToolResult
+from bantz.tools import registry
 
 log = logging.getLogger("bantz.routing_engine")
 
@@ -101,7 +100,7 @@ def quick_route(orig: str, en: str) -> dict | None:
         _APP_MAP = {
             "chrome": "chrome", "google chrome": "chrome", "chromium": "chrome",
             "firefox": "firefox", "mozilla": "firefox",
-            "files": "files", "files": "files", "file manager": "files",
+            "files": "files", "file manager": "files",
             "nautilus": "files", "dosya": "files",
             "terminal": "terminal", "bash": "terminal", "konsole": "terminal",
             "vscode": "vscode", "code": "vscode",
@@ -251,7 +250,7 @@ async def dispatch_internal(
     elif tool == "_proactive_status":
         try:
             from bantz.agent.proactive import (
-                proactive_engine, _get_daily_count, _compute_adaptive_max,
+                _get_daily_count, _compute_adaptive_max,
             )
             from bantz.agent.affinity_engine import affinity_engine
             kv = data_layer.kv
