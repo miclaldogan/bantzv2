@@ -1,6 +1,6 @@
 import pytest
 import threading
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
@@ -9,60 +9,56 @@ from bantz.llm.gemini import GeminiClient, _notify_gemini_health
 
 # --- _notify_gemini_health tests ---
 
-def test_notify_gemini_health_main_thread(mocker):
+def test_notify_gemini_health_main_thread():
     # Mock textual App (need to mock where it's imported in the try block, or mock sys.modules)
     import sys
     mock_textual_app = MagicMock()
     mock_app = MagicMock()
     mock_textual_app.App.current = mock_app
-    mocker.patch.dict(sys.modules, {"textual.app": mock_textual_app})
 
     # Mock ServiceStatus
     mock_header = MagicMock()
     mock_header.ServiceStatus.UP = "UP"
     mock_header.ServiceStatus.DOWN = "DOWN"
-    mocker.patch.dict(sys.modules, {"bantz.interface.tui.panels.header": mock_header})
 
-    # Mock threading to return main thread
-    mocker.patch("threading.current_thread", return_value=threading.main_thread())
+    with patch.dict(sys.modules, {"textual.app": mock_textual_app, "bantz.interface.tui.panels.header": mock_header}), \
+         patch("threading.current_thread", return_value=threading.main_thread()):
 
-    _notify_gemini_health(True)
+        _notify_gemini_health(True)
 
-    mock_app.notify_service_health.assert_called_once_with("gemini", "UP")
+        mock_app.notify_service_health.assert_called_once_with("gemini", "UP")
 
 
-def test_notify_gemini_health_worker_thread(mocker):
+def test_notify_gemini_health_worker_thread():
     # Mock textual App
     import sys
     mock_textual_app = MagicMock()
     mock_app = MagicMock()
     mock_textual_app.App.current = mock_app
-    mocker.patch.dict(sys.modules, {"textual.app": mock_textual_app})
 
     # Mock ServiceStatus
     mock_header = MagicMock()
     mock_header.ServiceStatus.UP = "UP"
     mock_header.ServiceStatus.DOWN = "DOWN"
-    mocker.patch.dict(sys.modules, {"bantz.interface.tui.panels.header": mock_header})
 
-    # Mock threading to return a non-main thread
-    mocker.patch("threading.current_thread", return_value=threading.Thread())
-    mocker.patch("threading.main_thread", return_value=threading.main_thread())
+    with patch.dict(sys.modules, {"textual.app": mock_textual_app, "bantz.interface.tui.panels.header": mock_header}), \
+         patch("threading.current_thread", return_value=threading.Thread()), \
+         patch("threading.main_thread", return_value=threading.main_thread()):
 
-    _notify_gemini_health(False)
+        _notify_gemini_health(False)
 
-    mock_app.call_from_thread.assert_called_once_with(mock_app.notify_service_health, "gemini", "DOWN")
+        mock_app.call_from_thread.assert_called_once_with(mock_app.notify_service_health, "gemini", "DOWN")
 
 
 # --- GeminiClient tests ---
 
 @pytest.fixture
-def mock_config(mocker):
-    config = mocker.patch("bantz.llm.gemini.config")
-    config.gemini_api_key = "test_api_key"
-    config.gemini_model = "test_model"
-    config.gemini_enabled = True
-    return config
+def mock_config():
+    with patch("bantz.llm.gemini.config") as config:
+        config.gemini_api_key = "test_api_key"
+        config.gemini_model = "test_model"
+        config.gemini_enabled = True
+        yield config
 
 
 def test_init_and_is_enabled(mock_config):
@@ -93,10 +89,8 @@ async def test_chat_disabled_raises_error(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_chat_success(mock_config, mocker):
+async def test_chat_success(mock_config):
     client = GeminiClient()
-
-    mock_notify = mocker.patch("bantz.llm.gemini._notify_gemini_health")
 
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -117,32 +111,32 @@ async def test_chat_success(mock_config, mocker):
     mock_client_instance.__aenter__.return_value = mock_client_instance
     mock_client_instance.__aexit__.return_value = False
 
-    mocker.patch("httpx.AsyncClient", return_value=mock_client_instance)
+    with patch("bantz.llm.gemini._notify_gemini_health") as mock_notify, \
+         patch("httpx.AsyncClient", return_value=mock_client_instance):
 
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hi"}
-    ]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hi"}
+        ]
 
-    response_text = await client.chat(messages)
+        response_text = await client.chat(messages)
 
-    assert response_text == "Hello, world!"
-    mock_notify.assert_called_once_with(True)
+        assert response_text == "Hello, world!"
+        mock_notify.assert_called_once_with(True)
 
-    # Verify the API payload structure
-    mock_client_instance.post.assert_called_once()
-    _, kwargs = mock_client_instance.post.call_args
-    payload = kwargs["json"]
+        # Verify the API payload structure
+        mock_client_instance.post.assert_called_once()
+        _, kwargs = mock_client_instance.post.call_args
+        payload = kwargs["json"]
 
-    assert payload["systemInstruction"]["parts"][0]["text"] == "You are a helpful assistant."
-    assert payload["contents"][0]["role"] == "user"
-    assert payload["contents"][0]["parts"][0]["text"] == "Hi"
+        assert payload["systemInstruction"]["parts"][0]["text"] == "You are a helpful assistant."
+        assert payload["contents"][0]["role"] == "user"
+        assert payload["contents"][0]["parts"][0]["text"] == "Hi"
 
 
 @pytest.mark.asyncio
-async def test_chat_invalid_response_raises_error(mock_config, mocker):
+async def test_chat_invalid_response_raises_error(mock_config):
     client = GeminiClient()
-    mock_notify = mocker.patch("bantz.llm.gemini._notify_gemini_health")
 
     mock_resp = MagicMock()
     # Invalid structure (missing 'parts')
@@ -158,12 +152,14 @@ async def test_chat_invalid_response_raises_error(mock_config, mocker):
     mock_client_instance.post.return_value = mock_resp
     mock_client_instance.__aenter__.return_value = mock_client_instance
     mock_client_instance.__aexit__.return_value = False
-    mocker.patch("httpx.AsyncClient", return_value=mock_client_instance)
 
-    with pytest.raises(RuntimeError, match="Unexpected Gemini response format:"):
-        await client.chat([{"role": "user", "content": "Hi"}])
+    with patch("bantz.llm.gemini._notify_gemini_health") as mock_notify, \
+         patch("httpx.AsyncClient", return_value=mock_client_instance):
 
-    mock_notify.assert_called_once_with(False)
+        with pytest.raises(RuntimeError, match="Unexpected Gemini response format:"):
+            await client.chat([{"role": "user", "content": "Hi"}])
+
+        mock_notify.assert_called_once_with(False)
 
 
 @pytest.mark.asyncio
@@ -176,7 +172,7 @@ async def test_chat_stream_disabled(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_success(mock_config, mocker):
+async def test_chat_stream_success(mock_config):
     client = GeminiClient()
 
     # Create dummy streaming events
@@ -201,19 +197,19 @@ async def test_chat_stream_success(mock_config, mocker):
     mock_client_instance.stream = mock_stream
     mock_client_instance.__aenter__.return_value = mock_client_instance
     mock_client_instance.__aexit__.return_value = False
-    mocker.patch("httpx.AsyncClient", return_value=mock_client_instance)
 
-    messages = [{"role": "user", "content": "Hi"}]
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        messages = [{"role": "user", "content": "Hi"}]
 
-    chunks = []
-    async for chunk in client.chat_stream(messages):
-        chunks.append(chunk)
+        chunks = []
+        async for chunk in client.chat_stream(messages):
+            chunks.append(chunk)
 
-    assert chunks == ["chunk1 ", "chunk2"]
+        assert chunks == ["chunk1 ", "chunk2"]
 
 
 @pytest.mark.asyncio
-async def test_is_available_success(mock_config, mocker):
+async def test_is_available_success(mock_config):
     client = GeminiClient()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -222,9 +218,9 @@ async def test_is_available_success(mock_config, mocker):
     mock_client_instance.get.return_value = mock_resp
     mock_client_instance.__aenter__.return_value = mock_client_instance
     mock_client_instance.__aexit__.return_value = False
-    mocker.patch("httpx.AsyncClient", return_value=mock_client_instance)
 
-    assert await client.is_available() is True
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        assert await client.is_available() is True
 
 
 @pytest.mark.asyncio
@@ -235,13 +231,13 @@ async def test_is_available_disabled(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_is_available_exception(mock_config, mocker):
+async def test_is_available_exception(mock_config):
     client = GeminiClient()
 
     mock_client_instance = AsyncMock()
     mock_client_instance.get.side_effect = Exception("Network error")
     mock_client_instance.__aenter__.return_value = mock_client_instance
     mock_client_instance.__aexit__.return_value = False
-    mocker.patch("httpx.AsyncClient", return_value=mock_client_instance)
 
-    assert await client.is_available() is False
+    with patch("httpx.AsyncClient", return_value=mock_client_instance):
+        assert await client.is_available() is False
