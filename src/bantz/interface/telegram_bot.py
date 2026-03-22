@@ -701,8 +701,13 @@ def _is_maintenance_spam(result) -> bool:
     """
     if getattr(result, "tool_used", None) != "maintenance":
         return False
-    # Always suppress maintenance on Telegram (#313)
-    return True
+    response = getattr(result, "response", "") or ""
+    # Let through if there's meaningful content (not just a green-light phrase)
+    _NOISE_PHRASES = ("all systems nominal", "all clear", "✓", "ok", "workflow complete")
+    stripped = response.strip().lower()
+    if not stripped:
+        return True
+    return any(stripped == p or stripped.startswith(p + " ") or stripped.startswith(p + ":") for p in _NOISE_PHRASES)
 
 
 def _is_rate_limited(user_id: int) -> bool:
