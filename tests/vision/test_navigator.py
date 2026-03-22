@@ -10,12 +10,10 @@ Covers:
 """
 from __future__ import annotations
 
-import sqlite3
 import tempfile
-import threading
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from bantz.vision.navigator import (
     ActionResult,

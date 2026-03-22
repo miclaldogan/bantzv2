@@ -23,7 +23,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from bantz.auth.token_store import token_store, TokenNotFoundError
 from bantz.tools import BaseTool, ToolResult, registry

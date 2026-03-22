@@ -4,10 +4,8 @@ All VLM/input_control interactions are mocked — no real display or LLM needed.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,7 +14,6 @@ from bantz.vision.computer_use import (
     VisionGoal,
     VisionStep,
     VisionLoopResult,
-    ActionResult,
     WebNavigationMacros,
     _DESTRUCTIVE_HOTKEYS,
 )

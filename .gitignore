@@ -13,3 +13,6 @@ credentials.json
 iclaldogancv.docx.pdf
 memory.db
 .coverage
+
+.ruff_cache/
+.ruff_cache/

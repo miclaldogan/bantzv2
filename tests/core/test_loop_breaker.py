@@ -1,7 +1,6 @@
 """Tests for Brain._dedup_history — context-window loop breaker (#184)."""
 from __future__ import annotations
 
-import pytest
 
 from bantz.core.brain import Brain
 

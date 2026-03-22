@@ -231,7 +231,6 @@ class TestOllamaHealthHook:
     @pytest.mark.asyncio
     async def test_chat_fires_health_on_success(self):
         from bantz.llm.ollama import OllamaClient
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 200

@@ -5,8 +5,6 @@ job_scheduler, maintenance, and reflection (#125-#130 brain wiring).
 from __future__ import annotations
 
 import asyncio
-import re
-import types
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -22,8 +22,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import re
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -47,7 +45,7 @@ class TestCreateFolderAndFile:
     @pytest.mark.asyncio
     async def test_creates_folder_and_file(self, tmp_path):
         """Happy path: folder is created, file is written, paths returned."""
-        from bantz.tools.filesystem import FilesystemTool, SAFE_ROOT
+        from bantz.tools.filesystem import FilesystemTool
         tool = FilesystemTool()
         folder = str(tmp_path / "Stark")
         with patch("bantz.tools.filesystem.SAFE_ROOT", tmp_path):

@@ -4,12 +4,10 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from bantz.data.connection_pool import SQLitePool, get_pool
-from bantz.data import async_executor
 from bantz.data.async_executor import run_read, run_write, run_in_db, shutdown
 
 

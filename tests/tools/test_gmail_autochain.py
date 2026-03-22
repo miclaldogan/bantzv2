@@ -12,11 +12,8 @@ Tests for Issue #183 — Auto-Chaining Gmail Compose & Send Actions.
 from __future__ import annotations
 
 import asyncio
-import re
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

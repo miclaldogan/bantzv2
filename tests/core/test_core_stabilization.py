@@ -7,9 +7,7 @@ C: Weather location extraction (_extract_city with TR/EN patterns)
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any, Optional
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 

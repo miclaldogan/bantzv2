@@ -13,7 +13,6 @@ Tests — Issue #174 + #176: _quick_route web search & shell/disk fixes
 """
 from __future__ import annotations
 
-import pytest
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -27,7 +27,6 @@ import asyncio
 import base64
 import logging
 import subprocess
-import time
 from typing import Any
 
 from bantz.config import config

@@ -18,12 +18,8 @@ Coverage:
 """
 from __future__ import annotations
 
-import asyncio
-import sqlite3
 import subprocess
-import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -655,7 +651,6 @@ class TestNightJobFunctions:
     @pytest.mark.asyncio
     async def test_overnight_poll_no_gmail(self):
         """Overnight poll handles missing Gmail tool."""
-        from bantz.agent.job_scheduler import _job_overnight_poll
         with patch("bantz.agent.job_scheduler._job_overnight_poll", new_callable=AsyncMock):
             # Just verify it's callable
             pass

@@ -16,7 +16,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import struct
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,7 +26,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _pool_db(tmp_path):
     """Set up a temporary pool-backed SQLite database for every test."""
-    from bantz.data.connection_pool import SQLitePool, get_pool
+    from bantz.data.connection_pool import SQLitePool
 
     db = tmp_path / "test_bantz.db"
     pool = SQLitePool.get_instance(db)

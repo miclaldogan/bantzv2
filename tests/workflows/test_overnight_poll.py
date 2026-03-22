@@ -17,12 +17,8 @@ Coverage:
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import sqlite3
-import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -683,7 +679,6 @@ class TestCLIArgs:
     def test_overnight_poll_arg(self):
         import argparse
         from unittest.mock import patch as _patch
-        import bantz.__main__
         # Just verify the arg is registered
         import sys
         with _patch.object(sys, "argv", ["bantz", "--overnight-poll", "--dry-run"]):

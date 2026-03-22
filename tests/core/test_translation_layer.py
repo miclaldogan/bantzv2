@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bantz.core.translation_layer import (
-    get_bridge,
     to_en,
     resolve_message_ref,
     detect_feedback,

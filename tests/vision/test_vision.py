@@ -10,13 +10,10 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
 import json
 import time
-from dataclasses import dataclass
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -392,7 +389,7 @@ class TestAnalyzeScreenshot:
 
     @pytest.mark.asyncio
     async def test_label_prompt(self):
-        from bantz.vision.remote_vlm import analyze_screenshot, FIND_PROMPT_TEMPLATE
+        from bantz.vision.remote_vlm import analyze_screenshot
 
         mock_result_obj = MagicMock()
         mock_result_obj.success = True

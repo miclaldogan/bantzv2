@@ -17,8 +17,7 @@ import io
 import os
 import subprocess
 from contextlib import redirect_stdout
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -353,7 +352,6 @@ class TestArgparseRouting:
 
     def test_check_does_not_leak_globally(self):
         """--check is scoped to systemd setup, not a global arg."""
-        import argparse
         from bantz.__main__ import main
         import sys
         # --check alone should NOT be a recognized argument

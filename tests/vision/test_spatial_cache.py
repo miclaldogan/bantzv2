@@ -18,8 +18,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import sqlite3
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -35,7 +33,6 @@ from bantz.vision.spatial_cache import (
     CONFIDENCE_DECAY_PER_DAY,
     SOURCE_CONFIDENCE,
     get_screen_resolution,
-    spatial_db,
 )
 
 
@@ -292,7 +289,7 @@ class TestLRUEviction:
                         (app_name, element_label, resolution_w, resolution_h,
                          x, y, source, last_verified)
                     VALUES (?, ?, 1920, 1080, ?, ?, 'atspi', ?)
-                """, (f"app", f"btn_{i}", i, i, ts))
+                """, ("app", f"btn_{i}", i, i, ts))
 
         # Now fill to max + overflow
         for i in range(5, MAX_ENTRIES + 2):

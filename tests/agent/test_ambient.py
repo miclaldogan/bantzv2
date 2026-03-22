@@ -345,7 +345,6 @@ class TestAmbientEventBus:
 
     def test_feed_frames_emits_event(self):
         """A successful analysis should emit 'ambient_change'."""
-        from bantz.core.event_bus import EventBus
         with patch("bantz.agent.ambient.bus") as mock_bus:
             a = AmbientAnalyzer(sample_rate=16000, sample_window_s=0.1, sample_interval_s=0)
             result = a.feed_frames([0] * 1600)

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 from bantz.tools.contact_resolver import UnifiedContactResolver
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import io
 from contextlib import redirect_stdout
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -229,8 +229,6 @@ class TestShowConfig:
 class TestConfigArgparse:
     def test_config_flag_registered(self):
         """Verify --config is a valid argument."""
-        from bantz.__main__ import main
-        import sys
         # Parse --config, which should be recognized
         parser = argparse.ArgumentParser(prog="bantz")
         parser.add_argument("--config", action="store_true")

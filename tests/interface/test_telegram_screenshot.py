@@ -5,8 +5,6 @@ _send_photo(), handle_message attachment dispatch, rate limiting, config.
 """
 from __future__ import annotations
 
-import asyncio
-from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import re
 from datetime import datetime, timedelta
 from pathlib import Path

@@ -11,10 +11,7 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
-import struct
-import threading
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -569,7 +566,6 @@ class TestTUIEventSubscriptions:
 
     def test_legacy_wake_word_message_removed(self):
         """The dead WakeWordDetected message class should no longer exist."""
-        from bantz.interface import tui
         from bantz.interface.tui import app as tui_app
         assert not hasattr(tui_app, "WakeWordDetected")
 

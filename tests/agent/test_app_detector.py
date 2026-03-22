@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from unittest.mock import MagicMock, patch, PropertyMock, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -454,7 +454,6 @@ class TestProcFallback:
         """Test /proc scanning with a mock /proc structure."""
         # This tests the real /proc — may find actual running apps
         # We'll mock Path.iterdir to control output
-        from pathlib import Path as RealPath
 
         mock_proc = tmp_path / "proc"
         mock_proc.mkdir()
@@ -1225,7 +1224,6 @@ class TestLayerIntegration:
              _patch.object(config, "app_detector_polling_interval", 10), \
              _patch("bantz.agent.app_detector.app_detector") as mock_ad:
             # Import fresh to trigger init
-            from bantz.data.layer import DataLayer
             # We can't easily test this without a full DataLayer init
             # Just verify the config field exists as expected
             assert config.app_detector_enabled is True

@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import pytest
-from dataclasses import dataclass, field
-from typing import Any
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
-from bantz.agent.executor import PlanExecutor, PlanExecutionResult, StepResult
-from bantz.agent.planner import PlanStep, PlannerAgent
+from bantz.agent.executor import PlanExecutor, PlanExecutionResult
+from bantz.agent.planner import PlanStep
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
