@@ -18,14 +18,10 @@ Covers:
 """
 from __future__ import annotations
 
-import struct
-import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ═══════════════════════════════════════════════════════════════════════════

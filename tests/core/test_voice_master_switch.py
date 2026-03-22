@@ -12,9 +12,8 @@ Covers:
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
-import pytest
 
 
 # ── Voice Master Switch — model_validator cascade ───────────────────────

@@ -9,7 +9,6 @@ Covers:
 from __future__ import annotations
 
 import time
-from collections import deque
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 

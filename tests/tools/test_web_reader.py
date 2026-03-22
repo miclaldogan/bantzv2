@@ -14,11 +14,10 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from bantz.tools import ToolResult
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

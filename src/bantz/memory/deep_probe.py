@@ -21,7 +21,6 @@ import logging
 import math
 import time
 from datetime import datetime
-from typing import Optional
 
 log = logging.getLogger("bantz.deep_probe")
 

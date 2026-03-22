@@ -10,12 +10,9 @@ Covers:
 """
 from __future__ import annotations
 
-import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -210,7 +207,7 @@ class TestMoodHysteresis:
 
     def test_candidate_resets_on_fluctuation(self):
         """If conditions fluctuate, candidate resets."""
-        from bantz.interface.tui.mood import Mood, _HYSTERESIS_SECONDS
+        from bantz.interface.tui.mood import Mood
         m = self._make()
         m.evaluate(cpu_pct=90, ram_pct=50, activity="idle", hour=14)
         # Candidate is STRESSED, but CPU drops before 10s
@@ -320,7 +317,6 @@ class TestMoodHistory:
         assert entries[0]["reason"] == "coding"
 
     def test_recent_filters_old(self, history):
-        from bantz.interface.tui.mood import Mood
         from bantz.data.connection_pool import get_pool
         # Insert entry with old timestamp
         old_ts = (datetime.now() - timedelta(hours=25)).isoformat()
@@ -348,7 +344,6 @@ class TestMoodHistory:
         assert history.summary_24h() == {}
 
     def test_summary_24h_with_data(self, history):
-        from bantz.interface.tui.mood import Mood
         from bantz.data.connection_pool import get_pool
         # Insert two transitions 30 min apart
         t1 = datetime.now() - timedelta(minutes=60)
@@ -467,7 +462,6 @@ class TestMoodTUIIntegration:
 class TestMoodCLI:
     def test_mood_history_arg_exists(self):
         """Parser should accept --mood-history."""
-        import argparse
         # Re-create parser logic
         from bantz.__main__ import main
         import sys

@@ -30,9 +30,7 @@ import gzip
 import json
 import sqlite3
 import time
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -277,7 +275,6 @@ class TestStepDockerCleanup:
 class TestStepTempCleanup:
     @pytest.mark.asyncio
     async def test_cleans_old_files(self, tmp_path):
-        from bantz.agent.workflows.maintenance import _step_temp_cleanup
 
         # Create old temp files in a test dir
         old_file = tmp_path / "bantz_old.tmp"
@@ -507,7 +504,7 @@ class TestStepReport:
     async def test_rl_reward_above_threshold(self, tmp_data_dir):
         from bantz.agent.workflows.maintenance import (
             _step_report, MaintenanceReport, StepResult,
-            _RL_REWARD_THRESHOLD_MB, _RL_REWARD_VALUE,
+            _RL_REWARD_THRESHOLD_MB,
         )
         report = MaintenanceReport(
             started_at="now",
@@ -682,7 +679,6 @@ class TestCLIArgs:
     def test_maintenance_arg_exists(self):
         """--maintenance flag is in argparse."""
         import argparse
-        from bantz.__main__ import main
         # Parse --help equivalent
         parser = argparse.ArgumentParser(prog="bantz")
         parser.add_argument("--maintenance", action="store_true")

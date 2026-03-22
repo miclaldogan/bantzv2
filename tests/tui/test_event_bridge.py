@@ -15,8 +15,7 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch, call
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
@@ -179,7 +178,7 @@ class TestUnsubscribeEventBus:
 
 class TestRelayBusEvent:
     def _make_app(self):
-        from bantz.interface.tui.app import BantzApp, BantzEventMessage
+        from bantz.interface.tui.app import BantzApp
         app = object.__new__(BantzApp)
         app.call_from_thread = MagicMock()
         app.post_message = MagicMock()

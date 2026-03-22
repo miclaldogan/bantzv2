@@ -1,13 +1,10 @@
 """Tests for bantz.agent.interventions (#126)."""
 from __future__ import annotations
 
-import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 from bantz.agent.interventions import (
     Intervention,

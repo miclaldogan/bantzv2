@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bantz.tools import ToolResult
 from bantz.tools.browser_tool import BrowserTool, BrowserToolError
 
 

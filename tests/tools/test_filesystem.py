@@ -11,12 +11,10 @@ Covers:
 """
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bantz.tools import ToolResult
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -201,7 +199,7 @@ class TestPDFTruncation:
 
     @pytest.mark.asyncio
     async def test_short_pdf_not_truncated(self, tmp_path):
-        from bantz.tools.filesystem import FilesystemTool, MAX_PDF_CHARS
+        from bantz.tools.filesystem import FilesystemTool
 
         pdf_file = tmp_path / "short.pdf"
         pdf_file.write_bytes(b"%PDF-fake")
@@ -362,7 +360,7 @@ class TestPlainTextRegression:
 
     @pytest.mark.asyncio
     async def test_large_text_file_truncated(self, tmp_path):
-        from bantz.tools.filesystem import FilesystemTool, MAX_READ_BYTES
+        from bantz.tools.filesystem import FilesystemTool
 
         big_file = tmp_path / "big.txt"
         big_file.write_text("X" * 100_000, encoding="utf-8")

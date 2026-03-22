@@ -20,7 +20,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 from typing import Any, Optional
 

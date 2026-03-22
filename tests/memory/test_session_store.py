@@ -4,8 +4,6 @@ All tests use the in-memory fallback paths (no real Redis needed).
 """
 from __future__ import annotations
 
-import asyncio
-import time
 
 import pytest
 

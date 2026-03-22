@@ -13,11 +13,8 @@ from __future__ import annotations
 import asyncio
 import math
 import sqlite3
-import struct
-import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

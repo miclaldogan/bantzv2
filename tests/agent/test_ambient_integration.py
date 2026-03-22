@@ -1,15 +1,11 @@
 """Tests for Issue #166 integrations — ambient ↔ wake_word, RL engine, reflection."""
 from __future__ import annotations
 
-import math
 import struct
-import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 
-from bantz.agent.ambient import AmbientAnalyzer, AmbientLabel, AmbientSnapshot
 
 
 # ═══════════════════════════════════════════════════════════════════════════

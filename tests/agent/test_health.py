@@ -664,7 +664,7 @@ class TestJobHealthCheck:
     @pytest.mark.asyncio
     async def test_job_runs_evaluation(self):
         from bantz.agent.job_scheduler import _job_health_check
-        from bantz.agent.health import health_engine, RuleResult, RuleID
+        from bantz.agent.health import health_engine
 
         health_engine.init()
         ctx = _mock_gather(hour=10, cpu_pct=30)
@@ -677,7 +677,6 @@ class TestJobHealthCheck:
     @pytest.mark.asyncio
     async def test_job_skips_uninitialized(self):
         from bantz.agent.job_scheduler import _job_health_check
-        from bantz.agent.health import HealthRuleEvaluator
 
         with patch("bantz.agent.health.health_engine") as mock_engine:
             mock_engine.initialized = False

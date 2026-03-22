@@ -16,9 +16,7 @@ Covers:
 """
 from __future__ import annotations
 
-import time
-from unittest.mock import MagicMock, AsyncMock, patch
-from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -320,7 +318,7 @@ class TestToastContainer:
 class TestAppToastIntegration:
     def test_compose_yields_toast_container(self):
         """BantzApp.compose() must yield ToastContainer(id='toast-container')."""
-        import ast, inspect
+        import inspect
         from bantz.interface.tui.app import BantzApp
         src = inspect.getsource(BantzApp.compose)
         assert "toast-container" in src

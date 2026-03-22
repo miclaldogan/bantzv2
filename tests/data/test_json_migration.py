@@ -25,13 +25,7 @@ from bantz.data.sqlite_store import (
     SQLiteScheduleStore,
     SQLiteSessionStore,
 )
-from bantz.data.json_store import (
-    JSONPlaceStore,
-    JSONProfileStore,
-    JSONScheduleStore,
-    JSONSessionStore,
-)
-from bantz.data.migration import migrate_to_sqlite, validate_json_files
+from bantz.data.migration import migrate_to_sqlite
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -435,7 +429,6 @@ class TestDataLayerAutoMigration:
     """Test that DataLayer auto-migrates JSON → SQLite on first init."""
 
     def test_auto_migrate_profile(self, tmp_dir: Path):
-        from bantz.data.layer import DataLayer
         db_path = tmp_dir / "bantz.db"
 
         # Write JSON

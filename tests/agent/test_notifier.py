@@ -1,14 +1,11 @@
 """Tests for bantz.agent.notifier (#153)."""
 from __future__ import annotations
 
-import shutil
 import subprocess
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
-import pytest
 
 from bantz.agent.notifier import (
     Notifier,

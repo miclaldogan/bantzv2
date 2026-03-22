@@ -1,9 +1,6 @@
 import json
-import socket
 import sys
-import urllib.request
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

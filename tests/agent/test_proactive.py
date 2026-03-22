@@ -13,11 +13,9 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 import math
-import time
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 

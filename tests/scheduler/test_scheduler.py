@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import datetime, timedelta
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -214,7 +212,7 @@ class TestCancel:
 class TestErrorLogging:
 
     def test_failed_job_writes_to_log(self, tmp_path):
-        from bantz.scheduler.scheduler import _make_wrapped, _SCHEDULER_LOG
+        from bantz.scheduler.scheduler import _make_wrapped
         import bantz.scheduler.scheduler as mod
 
         original = mod._SCHEDULER_LOG

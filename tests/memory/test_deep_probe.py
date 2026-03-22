@@ -17,11 +17,10 @@ from __future__ import annotations
 import asyncio
 import math
 import tempfile
-import shutil
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -151,7 +150,6 @@ class TestDeepMemoryProbeUnit:
     def test_search_raw_filters_below_threshold(self):
         """Alzheimer Fix: raw cosine below threshold → excluded."""
         from bantz.memory.deep_probe import DeepMemoryProbe
-        from bantz.memory.vector_store import VectorStore
 
         pool, _tmpdir = _make_pool_db()
         vs = _setup_vector_store()
@@ -178,7 +176,6 @@ class TestDeepMemoryProbeUnit:
     def test_search_raw_keeps_old_relevant_memory(self):
         """Alzheimer Fix: old memory with high cosine is NOT discarded."""
         from bantz.memory.deep_probe import DeepMemoryProbe
-        from bantz.memory.vector_store import VectorStore
 
         pool, _tmpdir = _make_pool_db()
         vs = _setup_vector_store()
@@ -238,7 +235,7 @@ class TestDeepMemoryProbeUnit:
 
     def test_format_hint_butler_lore(self):
         """Butler Lore Fix: injection uses human memory framing."""
-        from bantz.memory.deep_probe import DeepMemoryProbe, _INJECT_PREAMBLE
+        from bantz.memory.deep_probe import DeepMemoryProbe
 
         now = datetime.utcnow().isoformat(timespec="seconds")
         memories = [
