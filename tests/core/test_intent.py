@@ -773,8 +773,8 @@ class TestCotRouteNormalisation:
             ])
 
         assert plan is not None
-        # The route is "gmail" — brain.py normalises this; cot_route just returns the plan
-        assert plan["route"] == "gmail"  # cot_route doesn't normalise, brain.py does
+        # The route is "gmail" — _extract_json now normalises this to "tool"
+        assert plan["route"] == "tool"
         assert plan["tool_name"] == "email"
 
     @pytest.mark.asyncio
