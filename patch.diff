@@ -1,0 +1,31 @@
+--- tests/core/test_gps_server.py
++++ tests/core/test_gps_server.py
+@@ -124,19 +124,17 @@
+ def test_save_location(gps_server, mock_paths):
+     location_file, _ = mock_paths
+     data = {"lat": 12.34, "lon": 56.78, "accuracy": 10.5, "timestamp": "2023-01-01T00:00:00Z"}
+
+-    with patch("sys.modules", dict(sys.modules)):
+-        mock_places = MagicMock()
+-        mock_places_mod = MagicMock()
+-        mock_places_mod.places = mock_places
+-        sys.modules["bantz.core.places"] = mock_places_mod
++    mock_places_mod = sys.modules["bantz.core.places"]
++    mock_places_mod.places.update_gps.reset_mock()
+
+-        gps_server._save_location(data)
++    gps_server._save_location(data)
+
+-        assert gps_server._latest == data
+-        assert location_file.exists()
+-        saved_data = json.loads(location_file.read_text(encoding="utf-8"))
+-        assert saved_data == data
+-        mock_places.update_gps.assert_called_once_with(12.34, 56.78)
++    assert gps_server._latest == data
++    assert location_file.exists()
++    saved_data = json.loads(location_file.read_text(encoding="utf-8"))
++    assert saved_data == data
++    mock_places_mod.places.update_gps.assert_called_once_with(12.34, 56.78)
+
+ def test_latest_property_valid(gps_server):
+     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
