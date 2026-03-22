@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip('telegram')
+
 
 @pytest.fixture
 def mock_tg_bot_module():

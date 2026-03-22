@@ -33,6 +33,8 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
+pytest.importorskip('telegram')
+
 from bantz.core.brain import (
     _detect_feedback,
     POSITIVE_FEEDBACK_KWS,

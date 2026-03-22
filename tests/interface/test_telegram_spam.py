@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+pytest.importorskip('telegram')
+
 from bantz.interface.telegram_bot import _TelegramSpamFilter
 
 

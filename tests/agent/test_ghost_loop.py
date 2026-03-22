@@ -18,6 +18,10 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
+pytest.importorskip('numpy')
+
+pytest.importorskip('textual')
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. Config fields

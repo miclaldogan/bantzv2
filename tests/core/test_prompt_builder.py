@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip('telegram')
+
 try:
     from bantz.core.context import BantzContext
 except ImportError:

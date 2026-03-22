@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch, PropertyMock, call
 
 import pytest
 
+pytest.importorskip('telegram')
+
 from bantz.agent.app_detector import (
     Activity,
     AppDetector,
