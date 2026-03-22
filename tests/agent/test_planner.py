@@ -573,6 +573,9 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="search for AI news and save to a file")
@@ -597,11 +600,13 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.brain.ollama") as mock_ollama, \
              patch("bantz.core.routing_engine.ollama") as ollama_re:
 
-            mock_cot.return_value = ({"route": "tool", "tool_name": "weather", "tool_args": {"city": "istanbul"}, "risk_level": "safe", "confidence": 0.95, "reasoning": "Single tool."}, None)
+            mock_cot.return_value = ({"route": "tool", "tool_name": "shell", "tool_args": {"command": "echo test"}, "risk_level": "safe", "confidence": 0.95, "reasoning": "Single tool."}, None)
             mock_dal.conversations = MagicMock()
             dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
             ollama_re.chat = AsyncMock(return_value="")
+            with patch("bantz.tools.shell.ShellTool.execute") as mock_shell:
+                mock_shell.return_value = ToolResult(success=True, output="test")
 
             from bantz.core.brain import Brain
             brain = Brain.__new__(Brain)
@@ -617,6 +622,15 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="what is the weather in istanbul")
@@ -681,6 +695,15 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
+            brain._last_screen_description = ""
+            brain._screen_description_turn = -1
+            brain._pending_vlm_task = None
             brain._is_remote = False
             brain._bridge = None
             brain._to_en = AsyncMock(return_value="search then save to file")

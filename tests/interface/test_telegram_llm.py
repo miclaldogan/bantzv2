@@ -26,6 +26,7 @@ class FakeBrainResult:
     pending_tool: str = ""
     pending_args: dict = field(default_factory=dict)
     stream: AsyncIterator[str] | None = None
+    attachments: list = field(default_factory=list)
 
 
 def _make_update(user_id: int = 111, text: str = "hello", chat_id: int = 999):

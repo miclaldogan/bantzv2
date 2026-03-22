@@ -590,6 +590,9 @@ class TestToolContextTTL:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_context_expires_after_ttl(self):
@@ -742,6 +745,9 @@ class TestStoreToolContext:
         b._turn_counter = 5
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_stores_email_messages(self):

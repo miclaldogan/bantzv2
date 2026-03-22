@@ -134,6 +134,9 @@ class TestRLRewardHook:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_reward_positive_on_success(self):
@@ -270,6 +273,9 @@ class TestMaintenanceHandler:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_handle_maintenance_returns_summary(self):
@@ -328,6 +334,9 @@ class TestReflectionHandlers:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_list_reflections_empty(self):
@@ -411,6 +420,9 @@ class TestProcessRLWiring:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_process_calls_rl_hook_on_tool(self):
@@ -488,6 +500,9 @@ class TestProcessMaintenanceReflectionRouting:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_process_routes_maintenance(self):
@@ -845,6 +860,9 @@ class TestAudioDuckRoutes:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_process_duck_on_available(self):
@@ -931,6 +949,9 @@ class TestAmbientRoutes:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
         return b
 
     def test_process_ambient_with_data(self):
