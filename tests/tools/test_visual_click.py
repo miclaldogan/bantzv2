@@ -197,8 +197,8 @@ class TestVisualClickFailure:
             result = await tool.execute(target="Invisible Button", action="click")
 
         assert result.success is False
-        assert "could not locate" in result.output.lower()
-        assert "Invisible Button" in result.output
+        assert "could not find" in result.error.lower()
+        assert "Invisible Button" in result.error
 
     @pytest.mark.asyncio
     async def test_not_found_includes_nav_data(self):

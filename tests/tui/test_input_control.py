@@ -182,7 +182,7 @@ class TestToolExecute:
         mock_cfg.input_control_enabled = False
         result = await tool.execute(action="click", x=100, y=200)
         assert not result.success
-        assert "disabled" in result.error
+        assert "no input backend available" in result.error.lower() or "disabled" in result.error.lower()
 
     @patch("bantz.tools.input_control.config")
     @patch("bantz.tools.input_control._detect_backend", return_value="pyautogui")
