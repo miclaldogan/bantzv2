@@ -353,6 +353,8 @@ class HealthRuleEvaluator:
         if cooldown_s is None:
             cooldown_s = RULE_COOLDOWNS.get(rule_id, 3600)
         last = self._cooldowns.get(rule_id, 0.0)
+        if last == 0.0:
+            return True
         return (time.monotonic() - last) > cooldown_s
 
     def _mark_fired(self, rule_id: str) -> None:
@@ -362,6 +364,8 @@ class HealthRuleEvaluator:
         """Seconds until this rule can fire again."""
         cd = RULE_COOLDOWNS.get(rule_id, 3600)
         last = self._cooldowns.get(rule_id, 0.0)
+        if last == 0.0:
+            return 0.0
         remaining = cd - (time.monotonic() - last)
         return max(0.0, remaining)
 
