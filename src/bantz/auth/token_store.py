@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-import stat
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -113,9 +113,12 @@ class TokenStore:
     def _save(self, service: str, creds) -> None:
         resolved = _TOKEN_ALIASES.get(service, service)
         path = self._dir / f"{resolved}_token.json"
-        path.write_text(creds.to_json())
-        # Secure: owner read/write only
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+        # Secure: create with 0o600 (owner read/write only) to avoid permission race condition
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(creds.to_json())
+
         logger.info(f"Token saved: {path}")
 
     def is_configured(self, service: str) -> bool:
