@@ -51,6 +51,13 @@ class OllamaClient:
                 f"Invalid BANTZ_OLLAMA_BASE_URL: '{self.base_url}'. "
                 f"Expected format: http://<host>:<port>"
             )
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        return self._client
 
     async def verify_connection(self) -> None:
         """Layers 2+3: connectivity + model availability check.
@@ -59,10 +66,9 @@ class OllamaClient:
         (network I/O on the main thread would freeze the TUI).
         """
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(f"{self.base_url}/api/tags")
-                r.raise_for_status()
-                data = r.json()
+            r = await self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            r.raise_for_status()
+            data = r.json()
         except httpx.ConnectError:
             is_remote = "localhost" not in self.base_url and "127.0.0.1" not in self.base_url
             tunnel_hint = (
@@ -102,15 +108,15 @@ class OllamaClient:
     async def chat(self, messages: list[dict], stream: bool = False) -> str:
         """Simple chat — returns a single string."""
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/api/chat",
-                    json={"model": self.model, "messages": messages, "stream": False},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                _notify_health(True)
-                return data["message"]["content"]
+            resp = await self.client.post(
+                f"{self.base_url}/api/chat",
+                json={"model": self.model, "messages": messages, "stream": False},
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _notify_health(True)
+            return data["message"]["content"]
         except Exception:
             _notify_health(False)
             raise
@@ -122,32 +128,31 @@ class OllamaClient:
           {"message": {"content": "token"}, "done": false}
           {"message": {"content": ""}, "done": true}
         """
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": True},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    token = data.get("message", {}).get("content", "")
-                    if token:
-                        yield token
-                    if data.get("done", False):
-                        return
+        async with self.client.stream(
+            "POST",
+            f"{self.base_url}/api/chat",
+            json={"model": self.model, "messages": messages, "stream": True},
+            timeout=120.0,
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = data.get("message", {}).get("content", "")
+                if token:
+                    yield token
+                if data.get("done", False):
+                    return
 
     async def is_available(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.base_url}/api/tags")
-                return resp.status_code == 200
+            resp = await self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            return resp.status_code == 200
         except Exception:
             return False
 
