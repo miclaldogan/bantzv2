@@ -46,6 +46,13 @@ class GeminiClient:
         self._model = config.gemini_model
         self._enabled = config.gemini_enabled and bool(self._api_key)
         self._base_url = "https://generativelanguage.googleapis.com/v1beta"
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        return self._client
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -95,14 +102,14 @@ class GeminiClient:
             f"?key={self._api_key}"
         )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self.client.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         # Extract text from response
         try:
@@ -153,41 +160,41 @@ class GeminiClient:
             f"?key={self._api_key}&alt=sse"
         )
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST", url, json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    json_str = line[6:]  # strip "data: " prefix
-                    if json_str == "[DONE]":
-                        return
-                    try:
-                        data = json.loads(json_str)
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            for part in parts:
-                                text = part.get("text", "")
-                                if text:
-                                    yield text
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
+        async with self.client.stream(
+            "POST", url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=60.0,
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                json_str = line[6:]  # strip "data: " prefix
+                if json_str == "[DONE]":
+                    return
+                try:
+                    data = json.loads(json_str)
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            text = part.get("text", "")
+                            if text:
+                                yield text
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
 
     async def is_available(self) -> bool:
         """Quick health check — list models."""
         if not self._enabled:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{self._base_url}/models?key={self._api_key}"
-                )
-                return resp.status_code == 200
+            resp = await self.client.get(
+                f"{self._base_url}/models?key={self._api_key}",
+                timeout=5.0,
+            )
+            return resp.status_code == 200
         except Exception:
             return False
 
