@@ -32,6 +32,14 @@ class Embedder:
         self._model: str = ""
         self._dim: int = DEFAULT_DIM
         self._available: Optional[bool] = None
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        # Lazy-load shared client to leverage HTTP connection pooling
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        return self._client
 
     @property
     def model(self) -> str:
@@ -46,35 +54,36 @@ class Embedder:
         if not text or not text.strip():
             return None
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Try /api/embed first (newer Ollama), fall back to /api/embeddings
-                resp = await client.post(
-                    f"{config.ollama_base_url}/api/embed",
-                    json={"model": self.model, "input": text},
+            # Try /api/embed first (newer Ollama), fall back to /api/embeddings
+            resp = await self.client.post(
+                f"{config.ollama_base_url}/api/embed",
+                json={"model": self.model, "input": text},
+                timeout=30.0,
+            )
+            if resp.status_code == 404:
+                # Older Ollama version — use /api/embeddings
+                resp = await self.client.post(
+                    f"{config.ollama_base_url}/api/embeddings",
+                    json={"model": self.model, "prompt": text},
+                    timeout=30.0,
                 )
-                if resp.status_code == 404:
-                    # Older Ollama version — use /api/embeddings
-                    resp = await client.post(
-                        f"{config.ollama_base_url}/api/embeddings",
-                        json={"model": self.model, "prompt": text},
-                    )
-                resp.raise_for_status()
-                data = resp.json()
+            resp.raise_for_status()
+            data = resp.json()
 
-                # /api/embed returns {"embeddings": [[...]]}
-                if "embeddings" in data and data["embeddings"]:
-                    vec = data["embeddings"][0]
-                # /api/embeddings returns {"embedding": [...]}
-                elif "embedding" in data:
-                    vec = data["embedding"]
-                else:
-                    log.warning("Unexpected embedding response: %s", list(data.keys()))
-                    return None
+            # /api/embed returns {"embeddings": [[...]]}
+            if "embeddings" in data and data["embeddings"]:
+                vec = data["embeddings"][0]
+            # /api/embeddings returns {"embedding": [...]}
+            elif "embedding" in data:
+                vec = data["embedding"]
+            else:
+                log.warning("Unexpected embedding response: %s", list(data.keys()))
+                return None
 
-                if vec:
-                    self._dim = len(vec)
-                    self._available = True
-                return vec
+            if vec:
+                self._dim = len(vec)
+                self._available = True
+            return vec
 
         except httpx.HTTPStatusError as exc:
             log.warning("Embedding HTTP error %s: %s", exc.response.status_code, exc)
@@ -97,7 +106,7 @@ class Embedder:
         """Check if the embedding model is reachable."""
         if self._available is not None:
             return self._available
-        test = await self.embed("test")
+        _ = await self.embed("test")
         return self._available or False
 
 
