@@ -207,6 +207,7 @@ class TestAmbientAnalyzerFeed:
     def test_interval_gating(self):
         """Second analysis is blocked until sample_interval elapses."""
         a = self._make_analyzer(interval=60.0, window=0.1)
+        a._last_analysis = 0  # ensure it's ready to fire
         # First analysis: should work
         r1 = a.feed_frames([0] * 1600)
         assert r1 is not None
