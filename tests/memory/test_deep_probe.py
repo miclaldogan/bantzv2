@@ -158,7 +158,9 @@ class TestDeepMemoryProbeUnit:
         # Two messages: one similar, one dissimilar
         base_vec = _fake_embedding("study for exam")
         similar_vec = _similar_embedding(base_vec, noise=0.01)  # high cosine
-        dissimilar_vec = _fake_embedding("banana smoothie recipe")  # low cosine
+        dissimilar_vec = _fake_embedding("banana smoothie recipe")
+        # Ensure it has low cosine similarity
+        dissimilar_vec = [x * -1 for x in base_vec] # Directly flip to negative cosine
 
         msg1 = _insert_message(pool, conv_id, "user", "I need to study for my exam")
         msg2 = _insert_message(pool, conv_id, "user", "banana smoothie recipe please")
