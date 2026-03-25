@@ -181,6 +181,7 @@ Examples of CORRECT JSON:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 _THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.DOTALL)
+_UNCLOSED_THINKING_RE = re.compile(r"<thinking\s*>.*", re.DOTALL | re.IGNORECASE)
 
 # Matches a single <thinking> open tag (with optional whitespace / nesting)
 _THINKING_OPEN = re.compile(r"<thinking\s*>", re.IGNORECASE)
@@ -201,7 +202,7 @@ def strip_thinking(text: str) -> str:
     """
     result = _THINKING_RE.sub("", text)
     # Handle unclosed tags — remove from <thinking> to end of string
-    result = re.sub(r"<thinking\s*>.*", "", result, flags=re.DOTALL | re.IGNORECASE)
+    result = _UNCLOSED_THINKING_RE.sub("", result)
     return result
 
 
@@ -320,21 +321,21 @@ async def _stream_and_collect(
 
             # ── Detect JSON start (CoT always ends with {"route": ...) ──
             # When the JSON marker appears, the thinking phase is done.
-            if not in_thinking and _JSON_MARKER.search(buf):
+            if not in_thinking and _JSON_MARKER.search(buf[-80:]):
                 thinking_complete = True
                 await bus.emit("thinking_done", source=source)
                 continue
 
             # ── Detect <thinking> open (only before we've seen one block) ─
             if not in_thinking:
-                if _THINKING_OPEN.search(buf):
+                if _THINKING_OPEN.search(buf[-80:]):
                     in_thinking = True
                     thinking_tokens = 0
                     thinking_started = True
                     # Emit any text *after* the opening tag so far
-                    m = _THINKING_OPEN.search(buf)
+                    m = _THINKING_OPEN.search(buf[-80:])
                     if m:
-                        after = buf[m.end():]
+                        after = buf[-80:][m.end():]
                         inner = _clean_thinking_text(after)
                         if inner:
                             await bus.emit("thinking_token", token=inner, source=source)

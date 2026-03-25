@@ -5,7 +5,13 @@ Backends tried in order: X11 PropertyNotify → D-Bus (GNOME/KWin) → slow-poll
 """
 from __future__ import annotations
 
-import json, logging, os, re, subprocess, threading, time
+import json
+import logging
+import os
+import re
+import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path

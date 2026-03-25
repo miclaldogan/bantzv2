@@ -1,4 +1,3 @@
-import re
 
 with open("src/bantz/core/brain.py", "r") as f:
     content = f.read()
