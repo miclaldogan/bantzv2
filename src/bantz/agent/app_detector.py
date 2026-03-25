@@ -5,7 +5,13 @@ Backends tried in order: X11 PropertyNotify → D-Bus (GNOME/KWin) → slow-poll
 """
 from __future__ import annotations
 
-import json, logging, os, re, subprocess, threading, time
+import json
+import logging
+import os
+import re
+import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -366,8 +372,10 @@ def _start_dbus_listener(on_change: Callable[[], None], stop: threading.Event) -
             except Exception as exc:
                 log.debug("D-Bus listener error: %s", exc)
         loop = _aio.new_event_loop()
-        try: loop.run_until_complete(_run())
-        finally: loop.close()
+        try:
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()
     threading.Thread(target=_listen, name="bantz-dbus-listener", daemon=True).start()
     return True
 
@@ -379,12 +387,15 @@ def _start_slow_poll(on_change: Callable[[], None], stop: threading.Event,
         log.debug("Slow-poll fallback started (%.1fs interval)", interval)
         while not stop.is_set():
             stop.wait(interval)
-            if stop.is_set(): break
+            if stop.is_set():
+                break
             wid = _run_cmd(["xdotool", "getactivewindow"]) or ""
             if not wid:
                 w = _wayland_active_window()
                 wid = f"{w.pid}:{w.name}" if w else ""
-            if wid != last_wid: last_wid = wid; on_change()
+            if wid != last_wid:
+                last_wid = wid
+                on_change()
     threading.Thread(target=_poll, name="bantz-slow-poll", daemon=True).start()
     return True
 
@@ -392,27 +403,35 @@ def _start_slow_poll(on_change: Callable[[], None], stop: threading.Event,
 class AppDetector:
     """Event-driven application state detector."""
     def __init__(self) -> None:
-        self._display_server = "unknown"; self._cache_ttl = 5.0
-        self._polling_interval = 5; self._initialized = False
-        self._stop = threading.Event(); self._listener_type = "none"
+        self._display_server = "unknown"
+        self._cache_ttl = 5.0
+        self._polling_interval = 5
+        self._initialized = False
+        self._stop = threading.Event()
+        self._listener_type = "none"
         self._active_window_cache = _CachedResult()
         self._running_apps_cache = _CachedResult()
         self._docker_cache = _CachedResult()
 
     def init(self, *, cache_ttl: float = 5.0, polling_interval: int = 5) -> None:
-        if self._initialized: return
+        if self._initialized:
+            return
         self._display_server = _detect_display_server()
-        self._cache_ttl = cache_ttl; self._polling_interval = polling_interval
-        self._initialized = True; self._start_listener()
+        self._cache_ttl = cache_ttl
+        self._polling_interval = polling_interval
+        self._initialized = True
+        self._start_listener()
         log.info("AppDetector: display=%s listener=%s", self._display_server, self._listener_type)
 
     def _start_listener(self) -> None:
         if self._display_server == "x11":
             if _start_x11_listener(self._on_window_change, self._stop):
-                self._listener_type = "x11-propertynotify"; return
+                self._listener_type = "x11-propertynotify"
+                return
         if self._display_server == "wayland":
             if _start_dbus_listener(self._on_window_change, self._stop):
-                self._listener_type = "dbus"; return
+                self._listener_type = "dbus"
+                return
         _start_slow_poll(self._on_window_change, self._stop, float(self._polling_interval))
         self._listener_type = "slow-poll"
 
@@ -421,7 +440,9 @@ class AppDetector:
         win = self.get_active_window()
         data: dict[str, Any] = {"name": "", "title": "", "pid": 0,
                                 "wm_class": "", "activity": _A.IDLE.value}
-        if win: data.update(win.to_dict()); data["activity"] = self.classify_activity(win).value
+        if win:
+            data.update(win.to_dict())
+            data["activity"] = self.classify_activity(win).value
         bus.emit_threadsafe("app_changed", **data)
 
     def stop(self) -> None:
@@ -435,67 +456,89 @@ class AppDetector:
     def listener_type(self) -> str: return self._listener_type
 
     def get_active_window(self) -> Optional[WindowInfo]:
-        if not self._initialized: return None
+        if not self._initialized:
+            return None
         if self._active_window_cache.is_valid(self._cache_ttl):
             return self._active_window_cache.value
         win: Optional[WindowInfo] = None
-        if self._display_server == "x11": win = _x11_active_window()
-        elif self._display_server == "wayland": win = _wayland_active_window()
-        if win is None: win = _atspi_active_window()
+        if self._display_server == "x11":
+            win = _x11_active_window()
+        elif self._display_server == "wayland":
+            win = _wayland_active_window()
+        if win is None:
+            win = _atspi_active_window()
         self._active_window_cache = _CachedResult(value=win, timestamp=time.time())
         return win
 
     def get_running_apps(self) -> list[str]:
-        if not self._initialized: return []
+        if not self._initialized:
+            return []
         if self._running_apps_cache.is_valid(self._cache_ttl):
             return self._running_apps_cache.value
         apps: list[str] = []
-        if self._display_server == "x11": apps = _x11_running_apps()
-        elif self._display_server == "wayland": apps = _wayland_running_apps()
-        if not apps: apps = _atspi_running_apps()
-        if not apps: apps = _proc_running_apps()
-        seen: set[str] = set(); unique: list[str] = []
+        if self._display_server == "x11":
+            apps = _x11_running_apps()
+        elif self._display_server == "wayland":
+            apps = _wayland_running_apps()
+        if not apps:
+            apps = _atspi_running_apps()
+        if not apps:
+            apps = _proc_running_apps()
+        seen: set[str] = set()
+        unique: list[str] = []
         for a in apps:
             k = a.lower()
-            if k not in seen: seen.add(k); unique.append(a)
+            if k not in seen:
+                seen.add(k)
+                unique.append(a)
         self._running_apps_cache = _CachedResult(value=unique, timestamp=time.time())
         return unique
 
     def get_workspace_context(self) -> dict[str, Any]:
-        if not self._initialized: return {}
+        if not self._initialized:
+            return {}
         win = self.get_active_window()
-        if not win: return {"activity": _A.IDLE.value, "apps": self.get_running_apps()}
+        if not win:
+            return {"activity": _A.IDLE.value, "apps": self.get_running_apps()}
         result: dict[str, Any] = {"active_window": win.to_dict(),
                                    "apps": self.get_running_apps(),
                                    "activity": self.classify_activity(win).value}
         ide_ctx = parse_ide_context(win)
-        if ide_ctx["ide"]: result["ide"] = ide_ctx
+        if ide_ctx["ide"]:
+            result["ide"] = ide_ctx
         nl = win.name.lower()
         if nl in _BROWSER_NAMES or any(b in nl for b in _BROWSER_NAMES):
             result["browser"] = parse_browser_context(win.title)
         if not self._docker_cache.is_valid(30.0):
             self._docker_cache = _CachedResult(value=_get_docker_containers(), timestamp=time.time())
-        if self._docker_cache.value: result["docker"] = self._docker_cache.value
+        if self._docker_cache.value:
+            result["docker"] = self._docker_cache.value
         return result
 
     def classify_activity(self, win: Optional[WindowInfo] = None) -> Activity:
-        if win is None: win = self.get_active_window()
-        if win is None: return _A.IDLE
+        if win is None:
+            win = self.get_active_window()
+        if win is None:
+            return _A.IDLE
         nl = win.name.lower()
         if nl in _BROWSER_NAMES or any(b in nl for b in _BROWSER_NAMES):
             for pat, act, _ in _BROWSER_TITLE_PATTERNS:
-                if pat.search(win.title): return act
+                if pat.search(win.title):
+                    return act
             return _A.BROWSING
         for ak, act in _APP_CATEGORIES.items():
-            if ak in nl or nl.startswith(ak.split()[0]): return act
+            if ak in nl or nl.startswith(ak.split()[0]):
+                return act
         wl = win.wm_class.lower()
         if wl:
             for ak, act in _APP_CATEGORIES.items():
-                if ak in wl: return act
+                if ak in wl:
+                    return act
         return _A.IDLE
 
     def get_activity_category(self) -> Activity:
-        if not self._initialized: return _A.IDLE
+        if not self._initialized:
+            return _A.IDLE
         return self.classify_activity()
 
     def should_enable_focus(self, win: Optional[WindowInfo] = None) -> bool:
@@ -507,7 +550,8 @@ class AppDetector:
                 "listener_type": self._listener_type}
 
     def status_line(self) -> str:
-        win = self.get_active_window(); activity = self.classify_activity(win)
+        win = self.get_active_window()
+        activity = self.classify_activity(win)
         app_count = len(self.get_running_apps())
         return (f"display={self._display_server} active={win.name if win else 'none'} "
                 f"activity={activity.value} apps={app_count}")
