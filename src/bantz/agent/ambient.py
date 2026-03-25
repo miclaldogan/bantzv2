@@ -297,7 +297,7 @@ class AmbientAnalyzer:
         Returns e.g. {"silence": 80, "speech": 30, "noisy": 10}
         """
         cutoff = time.time() - hours * 3600
-        dist: dict[str, int] = {l.value: 0 for l in AmbientLabel}
+        dist: dict[str, int] = {lbl.value: 0 for lbl in AmbientLabel}
         with self._history_lock:
             for snap in self._history:
                 if snap.timestamp < cutoff:

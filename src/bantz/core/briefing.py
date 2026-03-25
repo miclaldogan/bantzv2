@@ -251,7 +251,7 @@ class Briefing:
                 # Extract first line only: "📍 Samsun  🌡 8°C — Light rain"
                 lines = result.output.splitlines()
                 # Combine location + temp lines
-                short = "  ".join(l.strip() for l in lines[:2] if l.strip())
+                short = "  ".join(line.strip() for line in lines[:2] if line.strip())
                 return short
         except Exception:
             pass
@@ -267,7 +267,7 @@ class Briefing:
                 if "no events" in output.lower():
                     return "No events on the calendar today"
                 # Strip "Today:" header, keep event lines
-                lines = [l for l in output.splitlines() if l.strip() and "Today:" not in l]
+                lines = [line for line in output.splitlines() if line.strip() and "Today:" not in line]
                 return "\n    ".join(lines[:3])  # max 3 events
         except Exception:
             pass
@@ -299,11 +299,11 @@ class Briefing:
                     result2 = await c.execute(action="assignments")
                     if result2.success and "🟡 Tomorrow" in result2.output:
                         tmrw_lines = [
-                            l.strip() for l in result2.output.splitlines()
-                            if "Tomorrow" in l
+                            line.strip() for line in result2.output.splitlines()
+                            if "Tomorrow" in line
                         ]
                         return "Due tomorrow: " + ", ".join(
-                            l.replace("🟡 Tomorrow:", "").strip() for l in tmrw_lines[:2]
+                            line.replace("🟡 Tomorrow:", "").strip() for line in tmrw_lines[:2]
                         )
                     return None  # No urgent assignments → skip from briefing
                 return output.replace("Due today:\n", "Due today: ")

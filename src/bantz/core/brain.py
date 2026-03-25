@@ -56,7 +56,7 @@ except ImportError:
 
 
 # Re-exported for backward compat — canonical impl in translation_layer.py
-from bantz.core.translation_layer import (  # noqa: F401
+from bantz.core.translation_layer import (  # noqa: E402, F401
     POSITIVE_FEEDBACK_KWS,
     NEGATIVE_FEEDBACK_KWS,
     detect_feedback as _detect_feedback,
@@ -64,7 +64,7 @@ from bantz.core.translation_layer import (  # noqa: F401
 
 
 # Toast compat shim — canonical impl in notification_manager.py (#225)
-import bantz.core.notification_manager as _notif_mod
+import bantz.core.notification_manager as _notif_mod  # noqa: E402
 _toast_callback = None  # written by app.py / tests
 
 

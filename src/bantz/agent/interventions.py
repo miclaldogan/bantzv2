@@ -551,7 +551,7 @@ def intervention_from_observer(
         icon = "ℹ️"
         title = f"{icon} Terminal notice"
 
-    body = raw_text[:300]
+    raw_text[:300]
     reason_parts = [f"stderr: {severity}"]
     if analysis:
         reason_parts.append(analysis[:200])

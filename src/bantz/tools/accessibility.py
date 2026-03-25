@@ -666,7 +666,7 @@ class AccessibilityTool(BaseTool):
         """
         try:
             from bantz.vision.remote_vlm import (
-                analyze_screenshot, spatial_cache, VLMResult,
+                analyze_screenshot, spatial_cache,
             )
             from bantz.vision.screenshot import capture_window_base64, capture_base64
         except ImportError:
@@ -724,7 +724,7 @@ class AccessibilityTool(BaseTool):
         """Convert a VLMResult into a ToolResult."""
         # Import here to avoid circular
         try:
-            from bantz.vision.remote_vlm import VLMResult
+            pass
         except ImportError:
             pass
 

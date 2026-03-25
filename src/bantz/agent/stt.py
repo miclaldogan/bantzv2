@@ -33,7 +33,7 @@ import logging
 import tempfile
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 log = logging.getLogger("bantz.stt")
 
@@ -125,7 +125,7 @@ class STTEngine:
 
         return self._transcribe_array(samples)
 
-    def _transcribe_array(self, audio: "np.ndarray") -> Optional[str]:
+    def _transcribe_array(self, audio: Any) -> Optional[str]:
         """Run inference on a float32 numpy array."""
         try:
             segments, info = self._model.transcribe(
