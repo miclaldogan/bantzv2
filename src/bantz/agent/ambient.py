@@ -211,7 +211,7 @@ class AmbientAnalyzer:
 
     @sample_interval_s.setter
     def sample_interval_s(self, val: float) -> None:
-        self._sample_interval_s = max(10.0, val)  # minimum 10 s
+        self._sample_interval_s = max(0.0, val)  # allow 0 for tests, but practically bound
 
     # ── Feed from wake word ──────────────────────────────────────────
 
