@@ -190,7 +190,10 @@ def _setup_telegram() -> None:
     if proxy:
         lines.append(f"TELEGRAM_PROXY={proxy}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
     print(f"\n✅ Token saved: {env_path}")
     print("Start with: python -m bantz.interface.telegram_bot")
@@ -228,7 +231,10 @@ def _setup_gemini() -> None:
     lines.append(f"BANTZ_GEMINI_API_KEY={api_key}")
     lines.append(f"BANTZ_GEMINI_MODEL={model}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
     print(f"\n✅ Gemini configured: {env_path}")
     print(f"   Model: {model}")
@@ -416,7 +422,10 @@ def _write_location_to_env(city: str, lat: float, lon: float) -> None:
     lines.append(f"BANTZ_LAT={lat}")
     lines.append(f"BANTZ_LON={lon}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
 
 
