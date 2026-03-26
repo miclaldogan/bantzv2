@@ -46,6 +46,14 @@ from bantz.core.prompt_builder import (
     build_chat_system as _build_chat_system,
     is_refusal as _is_refusal,
 )
+# Re-exported for backward compat — canonical impl in translation_layer.py
+from bantz.core.translation_layer import (  # noqa: F401
+    POSITIVE_FEEDBACK_KWS,
+    NEGATIVE_FEEDBACK_KWS,
+    detect_feedback as _detect_feedback,
+)
+# Toast compat shim — canonical impl in notification_manager.py (#225)
+import bantz.core.notification_manager as _notif_mod
 
 log = logging.getLogger("bantz.brain")
 
@@ -53,18 +61,6 @@ try:
     from bantz.memory.graph import graph_memory
 except ImportError:
     graph_memory = None  # neo4j driver not installed
-
-
-# Re-exported for backward compat — canonical impl in translation_layer.py
-from bantz.core.translation_layer import (  # noqa: F401
-    POSITIVE_FEEDBACK_KWS,
-    NEGATIVE_FEEDBACK_KWS,
-    detect_feedback as _detect_feedback,
-)
-
-
-# Toast compat shim — canonical impl in notification_manager.py (#225)
-import bantz.core.notification_manager as _notif_mod
 _toast_callback = None  # written by app.py / tests
 
 

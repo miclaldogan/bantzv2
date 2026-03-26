@@ -201,7 +201,7 @@ class Butler:
             output = result.output.strip()
             if not output or "no" in output.lower() or output.strip() == "":
                 return None
-            lines = [l for l in output.splitlines() if l.strip()]
+            lines = [line for line in output.splitlines() if line.strip()]
             count = len(lines)
             if count == 0:
                 return None

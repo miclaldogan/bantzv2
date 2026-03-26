@@ -33,7 +33,10 @@ import logging
 import tempfile
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 log = logging.getLogger("bantz.stt")
 

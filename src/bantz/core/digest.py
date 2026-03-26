@@ -291,7 +291,7 @@ class DigestManager:
             if result.success:
                 text = result.output.strip()
                 # Count events
-                event_lines = [l for l in text.splitlines() if l.strip().startswith("•") or "—" in l]
+                event_lines = [line for line in text.splitlines() if line.strip().startswith("•") or "—" in line]
                 return f"Events this week: {len(event_lines)}\n{text}"
         except Exception:
             pass

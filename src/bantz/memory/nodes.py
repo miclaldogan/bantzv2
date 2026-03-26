@@ -342,7 +342,7 @@ def _build_relationships(
     """Enrich entities with cross-references based on co-occurrence."""
 
     # Collect labels of entities we extracted this turn
-    has_task = any(e["label"] == "Task" for e in entities)
+    _has_task = any(e["label"] == "Task" for e in entities)
     has_event = any(e["label"] == "Event" for e in entities)
     has_decision = any(e["label"] == "Decision" for e in entities)
     has_document = any(e["label"] == "Document" for e in entities)
