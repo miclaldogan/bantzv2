@@ -140,12 +140,14 @@ class TestAmbientSnapshot:
 class TestAmbientAnalyzerFeed:
     """Tests for AmbientAnalyzer.feed_frames()."""
 
-    def _make_analyzer(self, interval=0.0, window=0.1, rate=16000):
+    def _make_analyzer(self, interval=10.0, window=0.1, rate=16000):
         a = AmbientAnalyzer(
             sample_rate=rate,
             sample_window_s=window,
             sample_interval_s=interval,
         )
+        # Override the enforced minimum of 10.0 for tests where needed
+        a._sample_interval_s = interval
         return a
 
     def test_disabled_returns_none(self):
@@ -205,6 +207,7 @@ class TestAmbientAnalyzerFeed:
     def test_interval_gating(self):
         """Second analysis is blocked until sample_interval elapses."""
         a = self._make_analyzer(interval=60.0, window=0.1)
+        a._last_analysis = 0  # ensure it's ready to fire
         # First analysis: should work
         r1 = a.feed_frames([0] * 1600)
         assert r1 is not None
