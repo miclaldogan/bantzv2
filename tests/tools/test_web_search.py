@@ -255,10 +255,8 @@ class TestDDGSearchErrorHandling:
 
         mock_client = AsyncMock()
         mock_client.get = forbidden_get
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_search._get_client", return_value=mock_client):
             outcome = await _ddg_search("blocked query")
 
         assert outcome.results == []
@@ -281,10 +279,8 @@ class TestDDGSearchErrorHandling:
 
         mock_client = AsyncMock()
         mock_client.get = limited_get
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_search._get_client", return_value=mock_client):
             outcome = await _ddg_search("rate limited")
 
         assert "rate-limited" in (outcome.infrastructure_error or "")
