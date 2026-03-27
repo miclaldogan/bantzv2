@@ -444,7 +444,7 @@ class BantzApp(App):
             except Exception:
                 pass
 
-            state_key = f"{snap['segment_en']}|{day}|{location}|{recent_tool}"
+            _state_key = f"{snap['segment_en']}|{day}|{location}|{recent_tool}"
             # With affinity engine, we don't do Q-table lookups.
             # Instead, proactive suggestions are driven by the proactive engine.
             # This feed path is kept for future extensibility.

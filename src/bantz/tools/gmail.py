@@ -568,7 +568,7 @@ class GmailTool(BaseTool):
 
         # Generate reply body
         context = f"Original email from {content['from']}:\nSubject: {content['subject']}\n\n{content['body'][:1000]}"
-        reply_prompt = f"{GMAIL_COMPOSE_PROMPT}\n\nThis is a REPLY. Context:\n{context}\n\nIntent: {intent}"
+        _reply_prompt = f"{GMAIL_COMPOSE_PROMPT}\n\nThis is a REPLY. Context:\n{context}\n\nIntent: {intent}"
 
         body = await self._llm_compose(content["from"], content["subject"], intent, context=context)
         if not body:

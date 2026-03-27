@@ -4,7 +4,6 @@ Each tool implements this interface. Router generates JSON → Registry finds th
 """
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal

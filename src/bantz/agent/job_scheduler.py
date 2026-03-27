@@ -137,7 +137,7 @@ async def _run_with_retry(
 
     Backoff schedule: 30s, 60s, 120s (base * 2^attempt).
     """
-    last_exc = None
+    _last_exc = None
     for attempt in range(max_retries + 1):
         try:
             result = await func(*args, **kwargs)
@@ -145,7 +145,7 @@ async def _run_with_retry(
                 log.info("Job '%s' succeeded on retry #%d", job_name, attempt)
             return result
         except Exception as exc:
-            last_exc = exc
+            _last_exc = exc
             if attempt < max_retries:
                 delay = _BACKOFF_BASE * (2 ** attempt)
                 log.warning(

@@ -180,9 +180,9 @@ def _setup_telegram() -> None:
 
     lines = existing.splitlines()
     # Remove old telegram entries
-    lines = [l for l in lines if not l.startswith("TELEGRAM_BOT_TOKEN=")
-             and not l.startswith("TELEGRAM_ALLOWED_USERS=")
-             and not l.startswith("TELEGRAM_PROXY=")]
+    lines = [line for line in lines if not line.startswith("TELEGRAM_BOT_TOKEN=")
+             and not line.startswith("TELEGRAM_ALLOWED_USERS=")
+             and not line.startswith("TELEGRAM_PROXY=")]
 
     lines.append(f"TELEGRAM_BOT_TOKEN={token}")
     if allowed:
@@ -190,7 +190,10 @@ def _setup_telegram() -> None:
     if proxy:
         lines.append(f"TELEGRAM_PROXY={proxy}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
     print(f"\n✅ Token saved: {env_path}")
     print("Start with: python -m bantz.interface.telegram_bot")
@@ -222,13 +225,16 @@ def _setup_gemini() -> None:
         lines = []
 
     # Remove old gemini entries
-    lines = [l for l in lines if not l.startswith("BANTZ_GEMINI_")]
+    lines = [line for line in lines if not line.startswith("BANTZ_GEMINI_")]
 
     lines.append("BANTZ_GEMINI_ENABLED=true")
     lines.append(f"BANTZ_GEMINI_API_KEY={api_key}")
     lines.append(f"BANTZ_GEMINI_MODEL={model}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
     print(f"\n✅ Gemini configured: {env_path}")
     print(f"   Model: {model}")
@@ -406,17 +412,20 @@ def _write_location_to_env(city: str, lat: float, lon: float) -> None:
     lines = existing.splitlines()
     # Remove old location entries
     lines = [
-        l for l in lines
-        if not l.startswith("BANTZ_CITY=")
-        and not l.startswith("BANTZ_LAT=")
-        and not l.startswith("BANTZ_LON=")
+        line for line in lines
+        if not line.startswith("BANTZ_CITY=")
+        and not line.startswith("BANTZ_LAT=")
+        and not line.startswith("BANTZ_LON=")
     ]
 
     lines.append(f"BANTZ_CITY={city}")
     lines.append(f"BANTZ_LAT={lat}")
     lines.append(f"BANTZ_LON={lon}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import os
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     env_path.chmod(0o600)
 
 
@@ -691,7 +700,6 @@ def _check_whisper_model_cached(model_name: str) -> bool:
                 if d.is_dir() and model_name in d.name.lower() and "whisper" in d.name.lower():
                     return True
         # Also check CTranslate2 default cache
-        ct2_cache = Path.home() / ".cache" / "huggingface" / "hub"
         # faster-whisper may also download to a direct path
         alt_cache = Path.home() / ".cache" / "faster_whisper"
         if alt_cache.exists():
@@ -1308,7 +1316,7 @@ async def _daemon() -> None:
 
     # Init KV store for briefing cache
     from bantz.data.sqlite_store import SQLiteKVStore
-    kv = SQLiteKVStore(config.db_path)
+    _ = SQLiteKVStore(config.db_path)
 
     # Start APScheduler
     if config.job_scheduler_enabled:
@@ -1652,7 +1660,7 @@ def _systemd_check() -> None:
         capture_output=True, text=True,
     )
     if journal.returncode == 0:
-        error_lines = [l for l in journal.stdout.strip().splitlines() if l.strip()]
+        error_lines = [line for line in journal.stdout.strip().splitlines() if line.strip()]
         print(f"   Journal errors (24h): {len(error_lines)}")
         if error_lines:
             for line in error_lines[-3:]:  # Show last 3
