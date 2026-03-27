@@ -18,6 +18,16 @@ from bantz.tools import BaseTool, ToolResult, registry
 TIMEOUT = 8.0
 CACHE_TTL = 900  # 15 minutes
 
+# Shared client to leverage HTTP connection pooling, reducing TCP/TLS overhead
+# and speeding up repeated tool executions.
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 
 class _Cache:
     def __init__(self) -> None:
@@ -126,23 +136,25 @@ class NewsTool(BaseTool):
         if cached := _cache.get(cache_key):
             return cached
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                ids_resp = await client.get(
-                    "https://hacker-news.firebaseio.com/v0/topstories.json"
-                )
-                ids_resp.raise_for_status()
-                ids = ids_resp.json()[:limit]
+            client = _get_client()
+            ids_resp = await client.get(
+                "https://hacker-news.firebaseio.com/v0/topstories.json",
+                timeout=TIMEOUT,
+            )
+            ids_resp.raise_for_status()
+            ids = ids_resp.json()[:limit]
 
-                titles = []
-                for story_id in ids:
-                    item_resp = await client.get(
-                        f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
-                    )
-                    item_resp.raise_for_status()
-                    item = item_resp.json()
-                    if title := item.get("title"):
-                        score = item.get("score", 0)
-                        titles.append(f"{title}  ({score} pts)")
+            titles = []
+            for story_id in ids:
+                item_resp = await client.get(
+                    f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                    timeout=TIMEOUT,
+                )
+                item_resp.raise_for_status()
+                item = item_resp.json()
+                if title := item.get("title"):
+                    score = item.get("score", 0)
+                    titles.append(f"{title}  ({score} pts)")
 
             _cache.set(cache_key, titles)
             return titles
@@ -157,9 +169,9 @@ class NewsTool(BaseTool):
             return cached
         url = f"https://news.google.com/rss?hl={hl}&gl={gl}&ceid={gl.upper()}:{hl}"
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.get(url, follow_redirects=True)
-                resp.raise_for_status()
+            client = _get_client()
+            resp = await client.get(url, follow_redirects=True, timeout=TIMEOUT)
+            resp.raise_for_status()
 
             root = ET.fromstring(resp.text)
             items = root.findall(".//item")[:limit]

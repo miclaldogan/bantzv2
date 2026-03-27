@@ -104,11 +104,9 @@ class TestWebReaderExecution:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/article")
 
         assert result.success is True
@@ -127,11 +125,9 @@ class TestWebReaderExecution:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/long")
 
         assert result.success is True
@@ -152,11 +148,9 @@ class TestWebReaderExecution:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/page")
 
         assert result.output.rstrip().endswith("Telegraph Reference: https://example.com/page")
@@ -194,11 +188,9 @@ class TestWebReaderErrors:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/missing")
 
         assert result.success is False
@@ -210,11 +202,9 @@ class TestWebReaderErrors:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=ConnectionError("DNS resolution failed"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://unreachable.example.com")
 
         assert result.success is False
@@ -231,11 +221,9 @@ class TestWebReaderErrors:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/empty")
 
         assert result.success is False
@@ -298,15 +286,13 @@ class TestUARotation:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client) as mock_cls:
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             await tool.execute(url="https://example.com/page")
 
         # Check that the UA passed to AsyncClient is from our pool
-        call_kwargs = mock_cls.call_args_list[0][1]
+        call_kwargs = mock_client.get.call_args_list[0][1]
         ua_used = call_kwargs["headers"]["User-Agent"]
         assert ua_used in _BROWSER_UAS
         assert "Bantz" not in ua_used
@@ -324,30 +310,23 @@ class TestUARotation:
         resp_200.status_code = 200
         resp_200.text = "<p>" + "Real article content here" * 5 + "</p>"
 
-        # Two separate mock clients for two loop iterations
-        mock_client_1 = AsyncMock()
-        mock_client_1.get = AsyncMock(return_value=resp_403)
-        mock_client_1.__aenter__ = AsyncMock(return_value=mock_client_1)
-        mock_client_1.__aexit__ = AsyncMock(return_value=False)
-
-        mock_client_2 = AsyncMock()
-        mock_client_2.get = AsyncMock(return_value=resp_200)
-        mock_client_2.__aenter__ = AsyncMock(return_value=mock_client_2)
-        mock_client_2.__aexit__ = AsyncMock(return_value=False)
+        # Mock client that returns 403 then 200
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[resp_403, resp_200])
 
         tool = WebReaderTool()
         with patch(
-            "bantz.tools.web_reader.httpx.AsyncClient",
-            side_effect=[mock_client_1, mock_client_2],
-        ) as mock_cls:
+            "bantz.tools.web_reader._get_client",
+            return_value=mock_client,
+        ):
             result = await tool.execute(url="https://example.com/blocked")
 
         # Must have been called twice (two attempts)
-        assert mock_cls.call_count == 2
+        assert mock_client.get.call_count == 2
 
         # Two different UAs used
-        ua1 = mock_cls.call_args_list[0][1]["headers"]["User-Agent"]
-        ua2 = mock_cls.call_args_list[1][1]["headers"]["User-Agent"]
+        ua1 = mock_client.get.call_args_list[0][1]["headers"]["User-Agent"]
+        ua2 = mock_client.get.call_args_list[1][1]["headers"]["User-Agent"]
         assert ua1 != ua2
         assert ua1 in _BROWSER_UAS
         assert ua2 in _BROWSER_UAS
@@ -369,24 +348,17 @@ class TestUARotation:
         resp_200.status_code = 200
         resp_200.text = "<p>" + "Authorized content" * 5 + "</p>"
 
-        mock_client_1 = AsyncMock()
-        mock_client_1.get = AsyncMock(return_value=resp_401)
-        mock_client_1.__aenter__ = AsyncMock(return_value=mock_client_1)
-        mock_client_1.__aexit__ = AsyncMock(return_value=False)
-
-        mock_client_2 = AsyncMock()
-        mock_client_2.get = AsyncMock(return_value=resp_200)
-        mock_client_2.__aenter__ = AsyncMock(return_value=mock_client_2)
-        mock_client_2.__aexit__ = AsyncMock(return_value=False)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[resp_401, resp_200])
 
         tool = WebReaderTool()
         with patch(
-            "bantz.tools.web_reader.httpx.AsyncClient",
-            side_effect=[mock_client_1, mock_client_2],
-        ) as mock_cls:
+            "bantz.tools.web_reader._get_client",
+            return_value=mock_client,
+        ):
             result = await tool.execute(url="https://example.com/auth")
 
-        assert mock_cls.call_count == 2
+        assert mock_client.get.call_count == 2
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -400,12 +372,10 @@ class TestUARotation:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=resp_403)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
         with patch(
-            "bantz.tools.web_reader.httpx.AsyncClient",
+            "bantz.tools.web_reader._get_client",
             return_value=mock_client,
         ):
             result = await tool.execute(url="https://cloudflare-protected.com")
@@ -434,11 +404,9 @@ class TestEmptyContentDetection:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/captcha")
 
         assert result.success is False
@@ -455,11 +423,9 @@ class TestEmptyContentDetection:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/cookies")
 
         assert result.success is False
@@ -475,11 +441,9 @@ class TestEmptyContentDetection:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/good")
 
         assert result.success is True
@@ -496,11 +460,9 @@ class TestEmptyContentDetection:
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("bantz.tools.web_reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.tools.web_reader._get_client", return_value=mock_client):
             result = await tool.execute(url="https://example.com/turnstile")
 
         assert result.success is False
