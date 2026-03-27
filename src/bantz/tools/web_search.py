@@ -140,6 +140,15 @@ _USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# Shared client to leverage HTTP connection pooling
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 
 async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
     """
@@ -154,53 +163,54 @@ async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
 
     # Method 1: DuckDuckGo Instant Answer API (fast, structured)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(
-                "https://api.duckduckgo.com/",
-                params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-                headers={"User-Agent": _USER_AGENT},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        client = _get_client()
+        resp = await client.get(
+            "https://api.duckduckgo.com/",
+            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
+            headers={"User-Agent": _USER_AGENT},
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-            # Abstract / instant answer
-            if data.get("AbstractText") and data.get("AbstractURL"):
-                results.append({
-                    "title": data.get("Heading", query),
-                    "url": data["AbstractURL"],
-                    "snippet": data["AbstractText"][:300],
-                    "source": data.get("AbstractSource", ""),
-                })
-                seen_urls.add(data["AbstractURL"])
+        # Abstract / instant answer
+        if data.get("AbstractText") and data.get("AbstractURL"):
+            results.append({
+                "title": data.get("Heading", query),
+                "url": data["AbstractURL"],
+                "snippet": data["AbstractText"][:300],
+                "source": data.get("AbstractSource", ""),
+            })
+            seen_urls.add(data["AbstractURL"])
 
-            # Related topics
-            for topic in data.get("RelatedTopics", [])[:max_results]:
-                if isinstance(topic, dict) and topic.get("FirstURL"):
-                    url = topic["FirstURL"]
-                    if url not in seen_urls:
-                        text = topic.get("Text", "")
+        # Related topics
+        for topic in data.get("RelatedTopics", [])[:max_results]:
+            if isinstance(topic, dict) and topic.get("FirstURL"):
+                url = topic["FirstURL"]
+                if url not in seen_urls:
+                    text = topic.get("Text", "")
+                    results.append({
+                        "title": text[:80] if text else "",
+                        "url": url,
+                        "snippet": text[:300],
+                        "source": "DuckDuckGo",
+                    })
+                    seen_urls.add(url)
+
+        # Results from API sub-topics
+        for topic in data.get("RelatedTopics", []):
+            if isinstance(topic, dict) and "Topics" in topic:
+                for sub in topic["Topics"][:3]:
+                    if sub.get("FirstURL") and sub["FirstURL"] not in seen_urls:
                         results.append({
-                            "title": text[:80] if text else "",
-                            "url": url,
-                            "snippet": text[:300],
+                            "title": sub.get("Text", "")[:80],
+                            "url": sub["FirstURL"],
+                            "snippet": sub.get("Text", "")[:300],
                             "source": "DuckDuckGo",
                         })
-                        seen_urls.add(url)
+                        seen_urls.add(sub["FirstURL"])
 
-            # Results from API sub-topics
-            for topic in data.get("RelatedTopics", []):
-                if isinstance(topic, dict) and "Topics" in topic:
-                    for sub in topic["Topics"][:3]:
-                        if sub.get("FirstURL") and sub["FirstURL"] not in seen_urls:
-                            results.append({
-                                "title": sub.get("Text", "")[:80],
-                                "url": sub["FirstURL"],
-                                "snippet": sub.get("Text", "")[:300],
-                                "source": "DuckDuckGo",
-                            })
-                            seen_urls.add(sub["FirstURL"])
-
-            source = "api"
+        source = "api"
 
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
@@ -216,50 +226,52 @@ async def _ddg_search(query: str, max_results: int = 8) -> SearchOutcome:
     # Method 2: DuckDuckGo HTML lite (fallback for web results)
     if len(results) < 3:
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-                resp = await client.get(
-                    "https://html.duckduckgo.com/html/",
-                    params={"q": query},
-                    headers={"User-Agent": _USER_AGENT},
-                )
-                resp.raise_for_status()
-                html = resp.text
+            client = _get_client()
+            resp = await client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers={"User-Agent": _USER_AGENT},
+                timeout=TIMEOUT,
+                follow_redirects=True,
+            )
+            resp.raise_for_status()
+            html = resp.text
 
-                # Parse results from HTML lite page
-                links = re.findall(
-                    r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.+?)</a>',
-                    html,
-                )
-                snippets = re.findall(
-                    r'class="result__snippet"[^>]*>(.+?)</a>',
-                    html,
-                    re.DOTALL,
-                )
+            # Parse results from HTML lite page
+            links = re.findall(
+                r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.+?)</a>',
+                html,
+            )
+            snippets = re.findall(
+                r'class="result__snippet"[^>]*>(.+?)</a>',
+                html,
+                re.DOTALL,
+            )
 
-                for i, (url, title) in enumerate(links[:max_results]):
-                    # Clean up URL (DDG wraps in redirect)
-                    url_match = re.search(r"uddg=([^&]+)", url)
-                    if url_match:
-                        from urllib.parse import unquote
-                        url = unquote(url_match.group(1))
+            for i, (url, title) in enumerate(links[:max_results]):
+                # Clean up URL (DDG wraps in redirect)
+                url_match = re.search(r"uddg=([^&]+)", url)
+                if url_match:
+                    from urllib.parse import unquote
+                    url = unquote(url_match.group(1))
 
-                    if url in seen_urls:
-                        continue
+                if url in seen_urls:
+                    continue
 
-                    clean_title = re.sub(r"<[^>]+>", "", title).strip()
-                    clean_snippet = ""
-                    if i < len(snippets):
-                        clean_snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip()[:300]
+                clean_title = re.sub(r"<[^>]+>", "", title).strip()
+                clean_snippet = ""
+                if i < len(snippets):
+                    clean_snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip()[:300]
 
-                    results.append({
-                        "title": clean_title[:80],
-                        "url": url,
-                        "snippet": clean_snippet,
-                        "source": "DuckDuckGo",
-                    })
-                    seen_urls.add(url)
+                results.append({
+                    "title": clean_title[:80],
+                    "url": url,
+                    "snippet": clean_snippet,
+                    "source": "DuckDuckGo",
+                })
+                seen_urls.add(url)
 
-                source = "both" if source == "api" else "html"
+            source = "both" if source == "api" else "html"
 
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
