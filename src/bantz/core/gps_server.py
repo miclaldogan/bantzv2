@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import socket
 import threading
@@ -55,7 +56,10 @@ def _ensure_relay_token() -> str:
         if token:
             return token
     token = "bantz-gps-" + secrets.token_urlsafe(8)
-    TOKEN_FILE.write_text(token, encoding="utf-8")
+    fd = os.open(str(TOKEN_FILE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token)
+    TOKEN_FILE.chmod(0o600)
     log.info("Generated relay token: %s", token)
     return token
 
