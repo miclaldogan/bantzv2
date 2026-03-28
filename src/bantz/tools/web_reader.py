@@ -45,6 +45,16 @@ _BROWSER_UAS: tuple[str, ...] = (
 _MAX_RETRIES = 2
 _MIN_READABLE_LENGTH = 20  # chars — anything shorter is likely a blocked/empty page
 
+# Shared client to leverage HTTP connection pooling, reducing TCP/TLS overhead
+# and speeding up repeated tool executions.
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 
 # ── HTML → plain-text stripper (stdlib only) ─────────────────────────────────
 
@@ -124,23 +134,24 @@ class WebReaderTool(BaseTool):
             used_uas.append(ua)
 
             try:
-                async with httpx.AsyncClient(
+                client = _get_client()
+                resp = await client.get(
+                    url,
                     timeout=FETCH_TIMEOUT,
                     follow_redirects=True,
                     headers={"User-Agent": ua},
-                ) as client:
-                    resp = await client.get(url)
-                    last_status = resp.status_code
+                )
+                last_status = resp.status_code
 
-                    if last_status in (401, 403) and attempt < _MAX_RETRIES - 1:
-                        log.warning(
-                            "read_url: HTTP %d from %s (attempt %d), retrying with different UA",
-                            last_status, url, attempt + 1,
-                        )
-                        continue  # retry with different UA
+                if last_status in (401, 403) and attempt < _MAX_RETRIES - 1:
+                    log.warning(
+                        "read_url: HTTP %d from %s (attempt %d), retrying with different UA",
+                        last_status, url, attempt + 1,
+                    )
+                    continue  # retry with different UA
 
-                    # Any other status — break out (success or final failure)
-                    break
+                # Any other status — break out (success or final failure)
+                break
 
             except Exception as exc:
                 # Network-level failure — no point retrying with a different UA

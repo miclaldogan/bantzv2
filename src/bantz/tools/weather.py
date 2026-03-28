@@ -14,6 +14,16 @@ from bantz.tools import BaseTool, ToolResult, registry
 
 TIMEOUT = 8.0
 
+# Shared client to leverage HTTP connection pooling, reducing TCP/TLS overhead
+# and speeding up repeated tool executions.
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 
 class WeatherTool(BaseTool):
     name = "weather"
@@ -48,10 +58,10 @@ class WeatherTool(BaseTool):
     async def _fetch(self, city: str) -> dict:
         """Fetch JSON from wttr.in."""
         url = f"https://wttr.in/{city}?format=j1"
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(url, headers={"Accept": "application/json"})
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.get(url, headers={"Accept": "application/json"}, timeout=TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
 
     def _format(self, data: dict, city: str, auto: bool) -> str:
         try:
