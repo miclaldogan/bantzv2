@@ -29,6 +29,14 @@ from bantz.config import config
 
 logger = logging.getLogger(__name__)
 
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 IPINFO_URL = "https://ipinfo.io/json"
 TIMEOUT = 5.0
 
@@ -301,10 +309,10 @@ class LocationService:
 
     async def _from_ipinfo(self) -> Optional[Location]:
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.get(IPINFO_URL)
-                resp.raise_for_status()
-                data = resp.json()
+            client = _get_client()
+            resp = await client.get(IPINFO_URL, timeout=TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
 
             lat, lon = 0.0, 0.0
             if loc_str := data.get("loc", ""):
