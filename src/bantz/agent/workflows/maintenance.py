@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 log = logging.getLogger("bantz.maintenance")
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -45,6 +47,14 @@ _DISK_WARN_PCT = 10         # warn < 10 % free
 _DISK_EMERGENCY_PCT = 5     # emergency < 5 %
 _RL_REWARD_THRESHOLD_MB = 500  # reward RL if freed ≥ this
 _RL_REWARD_VALUE = 0.1      # small self-reward for good housekeeping
+
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
 
 
 # ── Step result ──────────────────────────────────────────────────────────
@@ -302,13 +312,12 @@ async def _step_service_health(dry_run: bool) -> StepResult:
 
     # Ollama ping
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get("http://localhost:11434/api/tags")
-            if resp.status_code == 200:
-                checks.append("Ollama ✓")
-            else:
-                checks.append(f"Ollama ✗ ({resp.status_code})")
+        client = _get_client()
+        resp = await client.get("http://localhost:11434/api/tags", timeout=10)
+        if resp.status_code == 200:
+            checks.append("Ollama ✓")
+        else:
+            checks.append(f"Ollama ✗ ({resp.status_code})")
     except Exception:
         checks.append("Ollama ✗ (unreachable)")
 
@@ -437,15 +446,15 @@ async def _step_report(report: MaintenanceReport) -> StepResult:
     try:
         from bantz.config import config
         if config.telegram_bot_token and config.telegram_allowed_users:
-            import httpx
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
+            client = _get_client()
             for uid in users:
                 try:
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                            json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        )
+                    await client.post(
+                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                        timeout=10,
+                    )
                 except Exception:
                     pass
     except Exception:

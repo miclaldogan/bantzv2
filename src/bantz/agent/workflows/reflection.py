@@ -49,6 +49,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import httpx
+
 log = logging.getLogger("bantz.reflection")
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -57,6 +59,14 @@ _TOTAL_TIMEOUT = 600            # 10 min total (generous for local LLM)
 _LLM_TIMEOUT = 120             # 2 min per LLM call
 _PRUNE_RAW_DAYS = 30           # delete raw messages older than this
 _REFLECTION_RETENTION_DAYS = 0  # 0 = keep forever
+
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
 
 # ── Prompts ──────────────────────────────────────────────────────────────
 
@@ -749,15 +759,15 @@ async def _send_report(result: ReflectionResult, dry_run: bool) -> None:
     try:
         from bantz.config import config
         if config.telegram_bot_token and config.telegram_allowed_users:
-            import httpx
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
+            client = _get_client()
             for uid in users:
                 try:
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                            json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        )
+                    await client.post(
+                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                        timeout=10,
+                    )
                 except Exception:
                     pass
     except Exception:

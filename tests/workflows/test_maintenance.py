@@ -366,7 +366,7 @@ class TestStepServiceHealth:
         mock_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
-            with patch("httpx.AsyncClient", return_value=mock_client):
+            with patch("bantz.agent.workflows.maintenance._get_client", return_value=mock_client):
                 r = await _step_service_health(dry_run=False)
         assert "Ollama ✓" in r.detail
         assert "DB ✓" in r.detail
@@ -375,7 +375,7 @@ class TestStepServiceHealth:
     async def test_ollama_down(self, tmp_data_dir):
         from bantz.agent.workflows.maintenance import _step_service_health
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
-            with patch("httpx.AsyncClient", side_effect=Exception("conn refused")):
+            with patch("bantz.agent.workflows.maintenance._get_client", side_effect=Exception("conn refused")):
                 r = await _step_service_health(dry_run=False)
         assert "Ollama ✗" in r.detail
 
@@ -389,7 +389,7 @@ class TestStepServiceHealth:
         mock_client.get = AsyncMock(side_effect=Exception("no ollama"))
 
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
-            with patch("httpx.AsyncClient", return_value=mock_client):
+            with patch("bantz.agent.workflows.maintenance._get_client", return_value=mock_client):
                 r = await _step_service_health(dry_run=False)
         assert "DB ○" in r.detail or "not found" in r.detail
 
@@ -764,7 +764,7 @@ class TestEdgeCases:
             with patch("bantz.config.config", cfg):
                 with patch("bantz.core.memory.memory") as mock_mem:
                     mock_mem._conn = None
-                    with patch("httpx.AsyncClient") as mock_http:
+                    with patch("bantz.agent.workflows.maintenance._get_client") as mock_http:
                         r = await _step_report(report)
         # No telegram call should happen
         mock_http.assert_not_called()

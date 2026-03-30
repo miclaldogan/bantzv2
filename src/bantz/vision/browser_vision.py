@@ -23,6 +23,16 @@ import re
 import time
 from typing import Optional
 
+import httpx
+
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 log = logging.getLogger("bantz.vision.browser_vision")
 
 
@@ -270,28 +280,27 @@ async def find_element(
             # Try models that can return pixel coordinates
             coord_models = ["llava", "bakllava", "llava-llama3"]
             for model in coord_models:
-                import httpx
                 from bantz.config import config as _cfg
                 url = f"{_cfg.ollama_base_url.rstrip('/')}/api/generate"
                 prompt = _COORD_PROMPT.format(element=element_description)
 
                 try:
-                    async with httpx.AsyncClient(timeout=float(timeout)) as client:
-                        resp = await client.post(url, json={
-                            "model": model, "prompt": prompt,
-                            "images": [screenshot_b64], "stream": False,
-                        })
-                        if resp.status_code == 404:
-                            continue  # model not installed
-                        data = resp.json()
-                        raw = (data.get("response") or "").strip()
-                        if raw:
-                            m = re.search(r'(\d{2,4})\s*[,x ]\s*(\d{2,4})', raw)
-                            if m:
-                                x, y = int(m.group(1)), int(m.group(2))
-                                if 10 < x < 4096 and 10 < y < 4096:
-                                    log.info("VLM[%s] found '%s' at (%d,%d)", model, element_description, x, y)
-                                    return (x, y)
+                    client = _get_client()
+                    resp = await client.post(url, json={
+                        "model": model, "prompt": prompt,
+                        "images": [screenshot_b64], "stream": False,
+                    }, timeout=float(timeout))
+                    if resp.status_code == 404:
+                        continue  # model not installed
+                    data = resp.json()
+                    raw = (data.get("response") or "").strip()
+                    if raw:
+                        m = re.search(r'(\d{2,4})\s*[,x ]\s*(\d{2,4})', raw)
+                        if m:
+                            x, y = int(m.group(1)), int(m.group(2))
+                            if 10 < x < 4096 and 10 < y < 4096:
+                                log.info("VLM[%s] found '%s' at (%d,%d)", model, element_description, x, y)
+                                return (x, y)
                 except Exception:
                     continue
 
