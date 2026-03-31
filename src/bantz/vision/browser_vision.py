@@ -23,7 +23,17 @@ import re
 import time
 from typing import Optional
 
+import httpx
+
 log = logging.getLogger("bantz.vision.browser_vision")
+
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -270,28 +280,27 @@ async def find_element(
             # Try models that can return pixel coordinates
             coord_models = ["llava", "bakllava", "llava-llama3"]
             for model in coord_models:
-                import httpx
                 from bantz.config import config as _cfg
                 url = f"{_cfg.ollama_base_url.rstrip('/')}/api/generate"
                 prompt = _COORD_PROMPT.format(element=element_description)
 
                 try:
-                    async with httpx.AsyncClient(timeout=float(timeout)) as client:
-                        resp = await client.post(url, json={
-                            "model": model, "prompt": prompt,
-                            "images": [screenshot_b64], "stream": False,
-                        })
-                        if resp.status_code == 404:
-                            continue  # model not installed
-                        data = resp.json()
-                        raw = (data.get("response") or "").strip()
-                        if raw:
-                            m = re.search(r'(\d{2,4})\s*[,x ]\s*(\d{2,4})', raw)
-                            if m:
-                                x, y = int(m.group(1)), int(m.group(2))
-                                if 10 < x < 4096 and 10 < y < 4096:
-                                    log.info("VLM[%s] found '%s' at (%d,%d)", model, element_description, x, y)
-                                    return (x, y)
+                    client = _get_client()
+                    resp = await client.post(url, json={
+                        "model": model, "prompt": prompt,
+                        "images": [screenshot_b64], "stream": False,
+                    }, timeout=float(timeout))
+                    if resp.status_code == 404:
+                        continue  # model not installed
+                    data = resp.json()
+                    raw = (data.get("response") or "").strip()
+                    if raw:
+                        m = re.search(r'(\d{2,4})\s*[,x ]\s*(\d{2,4})', raw)
+                        if m:
+                            x, y = int(m.group(1)), int(m.group(2))
+                            if 10 < x < 4096 and 10 < y < 4096:
+                                log.info("VLM[%s] found '%s' at (%d,%d)", model, element_description, x, y)
+                                return (x, y)
                 except Exception:
                     continue
 
@@ -301,38 +310,37 @@ async def find_element(
     # ── Strategy 2: VLM region detection (moondream) → approximate coords ──
     if screenshot_b64:
         try:
-            import httpx
             from bantz.config import config as _cfg
             url = f"{_cfg.ollama_base_url.rstrip('/')}/api/generate"
             prompt = _REGION_PROMPT.format(element=element_description)
 
-            async with httpx.AsyncClient(timeout=float(timeout)) as client:
-                resp = await client.post(url, json={
-                    "model": "moondream", "prompt": prompt,
-                    "images": [screenshot_b64], "stream": False,
-                })
-                if resp.status_code != 404:
-                    raw = (resp.json().get("response") or "").strip().lower()
-                    if raw and "not found" not in raw:
-                        bounds = get_window_bounds(app)
-                        if bounds:
-                            # Map region name to fraction of content area
-                            _REGIONS = {
-                                "top-left": (0.2, 0.12), "top-center": (0.5, 0.12),
-                                "top-right": (0.8, 0.12),
-                                "middle-left": (0.2, 0.5), "middle-center": (0.5, 0.5),
-                                "middle-right": (0.8, 0.5),
-                                "bottom-left": (0.2, 0.88), "bottom-center": (0.5, 0.88),
-                                "bottom-right": (0.8, 0.88),
-                            }
-                            for region, (fx, fy) in _REGIONS.items():
-                                if region in raw:
-                                    CHROME_H = 75
-                                    x = int(bounds["x"] + bounds["w"] * fx)
-                                    y = int(bounds["y"] + CHROME_H + (bounds["h"] - CHROME_H) * fy)
-                                    log.info("moondream region '%s' → '%s' → (%d,%d)",
-                                             element_description, region, x, y)
-                                    return (x, y)
+            client = _get_client()
+            resp = await client.post(url, json={
+                "model": "moondream", "prompt": prompt,
+                "images": [screenshot_b64], "stream": False,
+            }, timeout=float(timeout))
+            if resp.status_code != 404:
+                raw = (resp.json().get("response") or "").strip().lower()
+                if raw and "not found" not in raw:
+                    bounds = get_window_bounds(app)
+                    if bounds:
+                        # Map region name to fraction of content area
+                        _REGIONS = {
+                            "top-left": (0.2, 0.12), "top-center": (0.5, 0.12),
+                            "top-right": (0.8, 0.12),
+                            "middle-left": (0.2, 0.5), "middle-center": (0.5, 0.5),
+                            "middle-right": (0.8, 0.5),
+                            "bottom-left": (0.2, 0.88), "bottom-center": (0.5, 0.88),
+                            "bottom-right": (0.8, 0.88),
+                        }
+                        for region, (fx, fy) in _REGIONS.items():
+                            if region in raw:
+                                CHROME_H = 75
+                                x = int(bounds["x"] + bounds["w"] * fx)
+                                y = int(bounds["y"] + CHROME_H + (bounds["h"] - CHROME_H) * fy)
+                                log.info("moondream region '%s' → '%s' → (%d,%d)",
+                                         element_description, region, x, y)
+                                return (x, y)
         except Exception as exc:
             log.debug("moondream region strategy failed: %s", exc)
 

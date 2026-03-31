@@ -351,10 +351,8 @@ class TestCallRemote:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("bantz.vision.remote_vlm.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.vision.remote_vlm._get_client", return_value=mock_client):
             result = await _call_remote("fake_b64", "test prompt", timeout=5)
             assert result.success is True
             assert len(result.elements) == 1
@@ -368,10 +366,8 @@ class TestCallRemote:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("bantz.vision.remote_vlm.httpx.AsyncClient", return_value=mock_client):
+        with patch("bantz.vision.remote_vlm._get_client", return_value=mock_client):
             result = await _call_remote("fake_b64", "test", timeout=1)
             assert result.success is False
             assert "timed out" in result.error
