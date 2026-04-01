@@ -694,7 +694,7 @@ class TestSendReport:
             with patch("bantz.config.config") as mock_cfg:
                 mock_cfg.telegram_bot_token = ""
                 mock_cfg.telegram_allowed_users = ""
-                with patch("httpx.AsyncClient") as mock_http:
+                with patch("bantz.agent.workflows.reflection._get_client") as mock_http:
                     await _send_report(result, dry_run=False)
         mock_http.assert_not_called()
 
