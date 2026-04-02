@@ -30,43 +30,68 @@ log = logging.getLogger("bantz.intent")
 
 # ── CoT system prompt ─────────────────────────────────────────────────────────
 
-COT_SYSTEM = """\
-You are Bantz's intent classifier. Your job: understand what the user wants and
-pick the single best tool (or decide it's just conversation).
+# Compact routing hints — one line per tool keeps the prompt small for 8b models.
+# Full descriptions live on the tool classes; these are routing-only summaries.
+_ROUTING_HINTS: dict[str, str] = {
+    "web_search": "Search the internet for ANY factual/knowledge question or lookup",
+    "calendar": "Google Calendar: view, create, update, delete events and meetings",
+    "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails",
+    "weather": "Current weather and forecast for a city or user's location",
+    "reminder": "Create, list, cancel, snooze reminders and timers",
+    "shell": "Run a bash command (ls, df, top, apt, etc.)",
+    "system": "Live system metrics: CPU, RAM, disk usage, uptime",
+    "filesystem": "Read, write, list files and folders under home directory",
+    "browser_control": "Launch apps AND control browser: open, navigate, click, type, scroll. Web services (YouTube, Spotify, Netflix…) = action=open app=firefox url=https://site.com",
+    "visual_click": "Click any visible UI element on screen by describing it",
+    "screenshot": "Capture and deliver a screenshot image to the user",
+    "news": "Fetch and summarize latest news headlines",
+    "document": "Read and summarize documents: PDF, DOCX, TXT, MD, CSV",
+    "read_url": "Read full text content of a specific URL",
+    "contacts": "Search Google contacts (phone, email)",
+    "classroom": "Google Classroom: courses, assignments, announcements",
+    "summarizer": "Summarize, analyze, rewrite, or transform text",
+    "input_control": "Low-level mouse/keyboard with exact coordinates or key combos",
+    "accessibility": "Query OS accessibility tree to inspect running apps (read-only)",
+    "gui_action": "Interact with a specific labeled UI element in a desktop app",
+    "computer_use": "Autonomous multi-step desktop automation using screen vision",
+    "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
+}
 
-AVAILABLE TOOLS:
+
+def _build_compact_schemas(tool_schemas: list[dict]) -> str:
+    """One-line-per-tool schema string for the routing prompt."""
+    lines = []
+    for t in tool_schemas:
+        name = t["name"]
+        hint = _ROUTING_HINTS.get(name, t["description"][:80])
+        lines.append(f"  {name}: {hint}")
+    return "\n".join(lines)
+
+
+COT_SYSTEM = """\
+You are Bantz's intent router. Pick the best tool for the user's request.
+
+TOOLS:
 {tool_schemas}
 
-DECISION PROCESS — follow every step before producing JSON:
-
 <thinking>
-Step 1 [INTENT]:  Restate the user's request in one clear sentence.
-Step 2 [TOOL]:    Read EVERY tool description above. Pick the one whose purpose
-                  matches the intent best. If none fits, choose "chat".
-Step 3 [PARAMS]:  Extract all relevant parameters from the user's words.
-                  Only use values the user actually said — never invent data.
-Step 4 [MULTI?]:  Does this need 2+ DIFFERENT tools in sequence?
-                  (e.g. "go to YouTube and search for cats" = navigate + type)
-                  If yes → route = "planner".  If one tool suffices → route = "tool".
+1. What does the user want? (one sentence)
+2. Which tool handles this? Pick the BEST match.
+3. Extract parameters from the user's words.
+4. Needs 2+ different tools in sequence? → route="planner".
 </thinking>
 
 RULES:
-- tool_name must match a tool name from the list above EXACTLY (snake_case).
-- "route" must be one of: "tool", "planner", "chat".
-- If the user asks a factual / knowledge question, use "web_search" — NEVER answer from memory.
-- System queries (CPU, RAM, disk) are safe — never refuse.
-- If in doubt between two tools, prefer the more specific one.
-- If no tool clearly applies, route to "chat".
-- Literal bash commands (ls, df -h, top, etc.) → shell with the command as-is.
-- Do NOT hallucinate data (weather, news, events). Always route to the real tool.
-- If the user references "it" / "that" / "this" and you have RECENT CONVERSATION
-  or PREVIOUS TOOL RESULT context, use it to resolve the reference.
-- If ambiguous pronouns can't be resolved, route to "chat" to ask for clarification.
-- Multi-step requests with explicit chaining ("then", "and click", "after that")
-  → route = "planner". Single actions even if long → route = "tool".
+- ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
+- Factual / knowledge questions → web_search. NEVER answer from memory.
+- "open YouTube/Spotify/Netflix" etc. → browser_control action=open app=firefox url=https://youtube.com (web services are websites, not desktop apps).
+- Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
+- Literal bash commands (ls, df, top) → shell.
+- Multi-step with "then" / "and" / "after that" → route="planner".
+- Do NOT hallucinate data — always route to the real tool.
 
-OUTPUT FORMAT — JSON object with these keys:
-{{"route": "tool|planner|chat", "tool_name": "exact_name_or_null", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
+OUTPUT — single JSON, no markdown:
+{{"route": "tool|planner|chat", "tool_name": "exact_name", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -164,7 +189,12 @@ def _format_recent_history(recent_history: list[dict]) -> str:
 
 # Maximum tokens to wait for a </thinking> close tag before force-closing.
 # Prevents unbounded buffering from models that never emit the close tag.
-_THINKING_MAX_TOKENS = 2000
+_THINKING_MAX_TOKENS = 600
+
+# Ollama generation options for routing — cap output length for speed.
+# 384 tokens is enough for short <thinking> + JSON. Prevents llama3.1:8b
+# from generating thousands of reasoning tokens before producing the answer.
+_ROUTING_OPTIONS: dict = {"num_predict": 384}
 
 
 async def _stream_and_collect(
@@ -172,6 +202,7 @@ async def _stream_and_collect(
     *,
     emit_thinking: bool = True,
     source: str = "cot_route",
+    options: dict | None = None,
 ) -> str:
     """Stream an Ollama chat call, emitting ``thinking_*`` events.
 
@@ -203,7 +234,7 @@ async def _stream_and_collect(
         await bus.emit("thinking_start", source=source)
 
     try:
-        async for token in ollama.chat_stream(messages):
+        async for token in ollama.chat_stream(messages, options=options):
             buf += token
 
             if not emit_thinking or thinking_complete:
@@ -322,10 +353,7 @@ async def cot_route(
         events) injected only when relevant (#275 — avoids bloating the
         prompt when unrelated queries are asked).
     """
-    schema_str = "\n".join(
-        f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
-        for t in tool_schemas
-    )
+    schema_str = _build_compact_schemas(tool_schemas)
 
     # Build optional history block for coreference resolution
     history_block = ""
@@ -350,7 +378,7 @@ async def cot_route(
 
     # ── Attempt 1 (Ollama streaming) ──────────────────────────────────
     try:
-        raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
+        raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route", options=_ROUTING_OPTIONS)
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
@@ -391,6 +419,7 @@ async def cot_route(
 
         raw2 = await _stream_and_collect(
             messages, emit_thinking=False, source="cot_route_retry",
+            options=_ROUTING_OPTIONS,
         )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)

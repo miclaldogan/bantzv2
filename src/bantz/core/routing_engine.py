@@ -87,6 +87,28 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
 
+    # ── App launches (unambiguous desktop apps) ───────────────────────
+    # These bypass LLM entirely for instant response (#340 speed fix).
+    m = re.search(
+        r"(?:open|launch|start|run)\s+"
+        r"(firefox|chrome|chromium|terminal|files|vscode|gedit)",
+        both,
+    )
+    if m:
+        return {"tool": "browser_control", "args": {"action": "open", "app": m.group(1)}}
+
+    # ── URL navigation (explicit URL in input) ────────────────────────
+    m = re.search(
+        r"(?:go\s+to|open|navigate\s+(?:to)?)\s+"
+        r"(https?://\S+|(?:www\.)\S+)",
+        both,
+    )
+    if m:
+        url = m.group(1)
+        if not url.startswith("http"):
+            url = "https://" + url
+        return {"tool": "browser_control", "args": {"action": "navigate", "url": url}}
+
     # Everything else → cot_route (LLM-based reasoning)
     return None
 

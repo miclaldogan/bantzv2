@@ -105,12 +105,15 @@ class OllamaClient:
                 f"  Run: ollama pull {self.model}"
             )
 
-    async def chat(self, messages: list[dict], stream: bool = False) -> str:
+    async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None) -> str:
         """Simple chat — returns a single string."""
         try:
+            payload: dict = {"model": self.model, "messages": messages, "stream": False}
+            if options:
+                payload["options"] = options
             resp = await self.client.post(
                 f"{self.base_url}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": False},
+                json=payload,
                 timeout=60.0,
             )
             resp.raise_for_status()
@@ -121,17 +124,20 @@ class OllamaClient:
             _notify_health(False)
             raise
 
-    async def chat_stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def chat_stream(self, messages: list[dict], *, options: dict | None = None) -> AsyncIterator[str]:
         """
         Stream tokens from Ollama via NDJSON.
         Ollama /api/chat with stream:true returns lines like:
           {"message": {"content": "token"}, "done": false}
           {"message": {"content": ""}, "done": true}
         """
+        payload: dict = {"model": self.model, "messages": messages, "stream": True}
+        if options:
+            payload["options"] = options
         async with self.client.stream(
             "POST",
             f"{self.base_url}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": True},
+            json=payload,
             timeout=120.0,
         ) as resp:
             resp.raise_for_status()

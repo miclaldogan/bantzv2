@@ -45,6 +45,40 @@ _APP_BINARIES: dict[str, list[str]] = {
     "gedit": ["gedit"],
 }
 
+# Web services → URL mapping.  When the LLM sends action=open app="youtube",
+# we transparently open a real browser and navigate to the URL instead of
+# failing with "Could not find binary".
+_WEB_APPS: dict[str, str] = {
+    "youtube": "https://www.youtube.com",
+    "spotify": "https://open.spotify.com",
+    "netflix": "https://www.netflix.com",
+    "twitter": "https://twitter.com",
+    "x": "https://x.com",
+    "reddit": "https://www.reddit.com",
+    "github": "https://github.com",
+    "gmail": "https://mail.google.com",
+    "google": "https://www.google.com",
+    "maps": "https://maps.google.com",
+    "drive": "https://drive.google.com",
+    "docs": "https://docs.google.com",
+    "sheets": "https://sheets.google.com",
+    "slides": "https://slides.google.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "telegram": "https://web.telegram.org",
+    "discord": "https://discord.com/app",
+    "slack": "https://app.slack.com",
+    "notion": "https://www.notion.so",
+    "chatgpt": "https://chat.openai.com",
+    "claude": "https://claude.ai",
+    "twitch": "https://www.twitch.tv",
+    "amazon": "https://www.amazon.com",
+    "linkedin": "https://www.linkedin.com",
+    "instagram": "https://www.instagram.com",
+    "facebook": "https://www.facebook.com",
+    "tiktok": "https://www.tiktok.com",
+    "pinterest": "https://www.pinterest.com",
+}
+
 
 def _focus_window(app: str) -> bool:
     """Focus an app window using xdotool, return True on success."""
@@ -168,11 +202,26 @@ class BrowserControlTool(BaseTool):
     # ── Actions ───────────────────────────────────────────────────────────
 
     async def _open(self, kwargs: dict) -> ToolResult:
-        """Launch an application."""
+        """Launch an application (or open a web service in a browser)."""
         app = kwargs.get("app", "firefox")
+        url = kwargs.get("url", "")
+
+        # ── Web service names → open in a real browser ────────────────
+        web_url = _WEB_APPS.get(app.lower())
+        if web_url:
+            log.info("Web app '%s' → opening in browser: %s", app, web_url)
+            for browser in ("firefox", "chrome", "chromium"):
+                if _find_binary(browser):
+                    app = browser
+                    url = url or web_url
+                    break
+            else:
+                return ToolResult(
+                    success=False, output="",
+                    error="No browser found. Install Firefox or Chrome.",
+                )
 
         # If already running, just focus it then navigate if url given
-        url = kwargs.get("url", "")
         if _focus_window(app):
             if url:
                 await self._navigate({"url": url, "app": app, "wait": kwargs.get("nav_wait", 2.5)})
