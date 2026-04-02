@@ -37,9 +37,10 @@ CACHE_TTL = 86400  # 24 hours
 class ContactsTool(BaseTool):
     name = "contacts"
     description = (
-        "Searches and lists Google contacts. "
-        "Use for: find contact, who is, phone number, email address, "
-        "contact list, search contacts, look up person."
+        "Search and list Google contacts. "
+        "Params: query (str) = name or email to search for. "
+        "Returns contact details: name, phone numbers, email addresses. "
+        "Use for: 'find X's phone number', 'what's Y's email', 'list my contacts'."
     )
     risk_level = "safe"
 

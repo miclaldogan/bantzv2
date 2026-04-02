@@ -31,17 +31,13 @@ _ACTION_MAP = {
 class VisualClickTool(BaseTool):
     name = "visual_click"
     description = (
-        "Click, double-click, right-click, or hover over ANY visible UI "
-        "element on the user's screen.  Call this tool whenever the user "
-        "asks you to interact with a graphical interface — buttons, menus, "
-        "icons, links, tabs, text fields, or anything else they can see.  "
-        "You only need to describe the element in plain language (e.g. "
-        "'the Send button', 'File menu', 'Terminal tab'); the tool will "
-        "find it automatically via accessibility tree and screen vision.  "
-        "Optionally pass an 'app' hint (e.g. 'firefox') to narrow the "
-        "search.  Works on any visible application window.  "
-        "EXAMPLE: If user says 'click the terminal', call visual_click "
-        "with target='terminal'. Do NOT attempt this via bash or shell."
+        "Click any visible UI element on screen by describing it in plain language. "
+        "Params: target (str) = what to click (e.g. 'Send button', 'File menu', 'Terminal'); "
+        "app (str, optional) = narrow the search to a specific app. "
+        "Supports: click, double_click, right_click, hover. "
+        "The tool finds the element automatically via accessibility tree + screen vision. "
+        "Use for: 'click X', 'press the Y button', 'open the Z menu', 'click terminal'. "
+        "Do NOT use shell or bash for GUI clicking."
     )
     risk_level = "moderate"
 

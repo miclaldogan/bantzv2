@@ -92,15 +92,19 @@ def _find_binary(app: str) -> str | None:
 class BrowserControlTool(BaseTool):
     name = "browser_control"
     description = (
-        "Open apps, visually control the browser using screenshots + VLM, and automate GUI tasks. "
-        "Uses a see → think → act loop: take screenshot, VLM finds element coordinates, click/type. "
-        "Actions: open, screenshot, navigate, new_tab, wait_for_load, "
-        "find_and_click, type_in_element, hotkey, type, scroll. "
-        "Examples: open firefox → action=open app=firefox; "
-        "go to example.com → action=navigate url=https://example.com; "
-        "wait for page → action=wait_for_load app=firefox; "
-        "click a button → action=find_and_click target='play button' app=firefox; "
-        "search on YouTube → action=type_in_element target='search box' text='cats' site='youtube'."
+        "Launch desktop apps and control web browsers. "
+        "Params: action (str), app (str), url (str), target (str), text (str), keys (str). "
+        "Actions: "
+        "open (launch an app, optionally navigate to url), "
+        "navigate (go to a url in the current browser), "
+        "new_tab, "
+        "find_and_click (click a named element on page), "
+        "type_in_element (click an element then type text into it), "
+        "hotkey (send keyboard shortcut), "
+        "type (type at cursor), "
+        "scroll, screenshot (for internal analysis, not delivery to user). "
+        "Combined example: 'open firefox and go to X' → action=open app=firefox url=https://X. "
+        "Follow-up clicks after browsing: action=find_and_click target='first result'."
     )
     risk_level = "moderate"
 

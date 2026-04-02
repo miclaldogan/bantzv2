@@ -106,16 +106,11 @@ def build_query(
 class GmailTool(BaseTool):
     name = "gmail"
     description = (
-        "Reads, writes, searches, and manages Gmail messages and labels. "
-        "Use for: mail, gmail, inbox, email summary, compose, reply, forward, "
-        "thread view, star, label, mark read, send email, batch operations. "
-        "Supports compose_and_send action to draft AND send an email atomically "
-        "when recipient and intent/body are provided in a single request. "
-        "Params for compose_and_send: to (recipient), intent or body (content), "
-        "subject (optional, auto-generated if missing). "
-        "FOLLOW-UP RULE: When the user asks about a recently retrieved email, "
-        "use the specific Message ID from the previous result with action='read'. "
-        "NEVER repeat a broad search for an email you already found."
+        "Full Gmail management: read inbox, compose, send, search, reply, forward, label, star. "
+        "Params: action (unread|compose|compose_and_send|read|search|filter|send|reply|forward|contacts), "
+        "to (str), intent/body (str), subject (str), id (str). "
+        "compose_and_send: drafts AND sends in one step when recipient and intent are given. "
+        "For follow-ups about a previously shown email, use action='read' with its Message ID."
     )
     risk_level = "safe"
 
