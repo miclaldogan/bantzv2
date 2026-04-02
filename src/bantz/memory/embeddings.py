@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -96,11 +97,8 @@ class Embedder:
 
     async def embed_batch(self, texts: list[str]) -> list[Optional[list[float]]]:
         """Embed multiple texts.  Returns list aligned with input (None for failures)."""
-        results: list[Optional[list[float]]] = []
-        for text in texts:
-            vec = await self.embed(text)
-            results.append(vec)
-        return results
+        # Run embeddings concurrently for much faster batch processing
+        return await asyncio.gather(*(self.embed(t) for t in texts))
 
     async def is_available(self) -> bool:
         """Check if the embedding model is reachable."""
