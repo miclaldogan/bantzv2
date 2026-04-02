@@ -59,13 +59,12 @@ def _safe_path(raw: str) -> Path | None:
 class FilesystemTool(BaseTool):
     name = "filesystem"
     description = (
-        "File system operations: listing (ls), reading (read), "
-        "writing (write), or atomic folder+file creation (create_folder_and_file). "
-        "Only works under the home directory. "
-        "Use action='create_folder_and_file' when the user wants to create a "
-        "folder AND put a file in it in a single step — avoids multi-step hallucination. "
+        "Read, write, or list files and folders under the home directory. "
+        "Params: action (ls|read|write|create_folder_and_file), path (str), "
+        "folder_path (str), file_name (str), content (str). "
+        "Use create_folder_and_file to atomically create a folder and a file in it. "
         "Always use absolute paths (e.g. ~/Documents/file.txt). "
-        "NEVER guess file names — if unsure, list the directory first."
+        "NEVER guess file names — list the directory first if unsure."
     )
     risk_level = "moderate"
 

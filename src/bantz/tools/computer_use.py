@@ -30,8 +30,11 @@ class ComputerUseTool(BaseTool):
 
     name = "computer_use"
     description = (
-        "Visually navigate and interact with desktop applications and web pages "
-        "using screen vision.  Provide a plain-English task description."
+        "Autonomous multi-step desktop automation using screen vision. "
+        "Give a plain-English task and it will take screenshots, find elements, "
+        "and click/type to complete the task. Use only for complex GUI tasks "
+        "that need multiple vision-guided steps. For simple clicks use visual_click; "
+        "for browser actions use browser_control."
     )
     risk_level = "moderate"
 

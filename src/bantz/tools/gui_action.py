@@ -44,9 +44,12 @@ class GUIActionTool(BaseTool):
 
     name = "gui_action"
     description = (
-        "Navigate to a UI element in any application and perform an action "
-        "(click, double_click, right_click, type, focus). Uses AT-SPI, "
-        "spatial cache, and VLM vision in order of speed."
+        "Interact with a specific UI element inside a desktop application. "
+        "Params: action (click|double_click|right_click|type|focus), app (str), "
+        "label (str) = element label or description, text (str) = text to type. "
+        "Uses AT-SPI accessibility tree first, falls back to VLM vision. "
+        "Prefer visual_click for simple click requests; use gui_action when you need "
+        "to type into a specific labeled field or focus a specific app element."
     )
     risk_level = "moderate"
 

@@ -524,9 +524,11 @@ async def hotkey(*keys: str) -> dict:
 class InputControlTool(BaseTool):
     name = "input_control"
     description = (
-        "Simulate mouse and keyboard input: click, type, scroll, drag, hotkey. "
-        "Use after accessibility tool locates UI element coordinates. "
-        "Safety: safe=click/scroll, moderate=type/drag, destructive=hotkey(ctrl+w)."
+        "Low-level mouse and keyboard simulation with exact coordinates or key combos. "
+        "Params: action (type_text|scroll|hotkey|double_click|right_click|drag|move_to), "
+        "text, keys, x, y, direction, amount. "
+        "Use ONLY when you already know exact screen coordinates or need raw keyboard/mouse control. "
+        "For clicking UI elements by name, use visual_click instead."
     )
     risk_level = "destructive"
 

@@ -56,14 +56,12 @@ def is_blocked(cmd: str) -> bool:
 class ShellTool(BaseTool):
     name = "shell"
     description = (
-        "Runs Bash commands in the terminal. "
-        "Used for file listing, process management, text processing, "
-        "and similar tasks. "
-        f"CRITICAL: Always use absolute paths. The user's home directory is "
-        f"{_HOME}. WRONG: du -sh ~/* (scans entire home). "
-        f"RIGHT: du -sh {_HOME}/Downloads/* (specific folder). "
-        "Do NOT use this tool for GUI interaction (clicking, hovering) "
-        "— use visual_click instead."
+        "Execute a Bash shell command in the terminal. "
+        "Params: command (str) = the full bash command to run. "
+        f"Use for: running commands, listing files, managing processes, package management. "
+        f"The user's home directory is {_HOME}. Always use absolute paths. "
+        "If the user types a literal command (ls, df -h, top, etc.), this is the right tool. "
+        "NOT for GUI interaction (clicking, hovering) — use visual_click for that."
     )
     risk_level = "moderate"
 

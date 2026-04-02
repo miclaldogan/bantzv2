@@ -30,152 +30,68 @@ log = logging.getLogger("bantz.intent")
 
 # ── CoT system prompt ─────────────────────────────────────────────────────────
 
-COT_SYSTEM = """\
-You are Bantz's intent classifier. Analyze the user's request step by step.
+# Compact routing hints — one line per tool keeps the prompt small for 8b models.
+# Full descriptions live on the tool classes; these are routing-only summaries.
+_ROUTING_HINTS: dict[str, str] = {
+    "web_search": "Search the internet for ANY factual/knowledge question or lookup",
+    "calendar": "Google Calendar: view, create, update, delete events and meetings",
+    "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails",
+    "weather": "Current weather and forecast for a city or user's location",
+    "reminder": "Create, list, cancel, snooze reminders and timers",
+    "shell": "Run a bash command (ls, df, top, apt, etc.)",
+    "system": "Live system metrics: CPU, RAM, disk usage, uptime",
+    "filesystem": "Read, write, list files and folders under home directory",
+    "browser_control": "Launch apps AND control browser: open, navigate, click, type, scroll. Web services (YouTube, Spotify, Netflix…) = action=open app=firefox url=https://site.com",
+    "visual_click": "Click any visible UI element on screen by describing it",
+    "screenshot": "Capture and deliver a screenshot image to the user",
+    "news": "Fetch and summarize latest news headlines",
+    "document": "Read and summarize documents: PDF, DOCX, TXT, MD, CSV",
+    "read_url": "Read full text content of a specific URL",
+    "contacts": "Search Google contacts (phone, email)",
+    "classroom": "Google Classroom: courses, assignments, announcements",
+    "summarizer": "Summarize, analyze, rewrite, or transform text",
+    "input_control": "Low-level mouse/keyboard with exact coordinates or key combos",
+    "accessibility": "Query OS accessibility tree to inspect running apps (read-only)",
+    "gui_action": "Interact with a specific labeled UI element in a desktop app",
+    "computer_use": "Autonomous multi-step desktop automation using screen vision",
+    "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
+}
 
-AVAILABLE TOOLS:
+
+def _build_compact_schemas(tool_schemas: list[dict]) -> str:
+    """One-line-per-tool schema string for the routing prompt."""
+    lines = []
+    for t in tool_schemas:
+        name = t["name"]
+        hint = _ROUTING_HINTS.get(name, t["description"][:80])
+        lines.append(f"  {name}: {hint}")
+    return "\n".join(lines)
+
+
+COT_SYSTEM = """\
+You are Bantz's intent router. Pick the best tool for the user's request.
+
+TOOLS:
 {tool_schemas}
 
-TOOL PARAMETER REFERENCE (extract these from the user message):
-- shell: {{"command": "<full bash command>"}}
-- system: {{"metric": "all|cpu|ram|disk"}}
-- weather: {{"city": "<city name or empty>"}}
-- news: {{"source": "all|hn", "limit": 5}}
-- web_search: {{"query": "<search terms>"}}
-- gmail: {{"action": "unread|compose|compose_and_send|read|search|filter|send|contacts", "to": "recipient", "intent": "what to say", "subject": "optional"}}
-- calendar: {{"action": "today|week|create|delete|update", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}}
-- reminder: {{"action": "add|list|cancel|snooze", "intent": "...", "id": "..."}}
-- classroom: {{"action": "assignments|due_today"}}
-- filesystem: {{"path": "<file path>", "action": "read|write|create_folder_and_file", "folder_path": "~/path/to/folder", "file_name": "file.txt", "content": "..."}}
-- document: {{"path": "<file path>", "action": "summarize|read|ask", "question": "..."}}
-- input_control: {{"action": "type_text|scroll|hotkey|double_click|right_click|drag|move_to|get_position", "text": "...", "keys": "...", "x": 0, "y": 0, "direction": "down", "amount": 3}}
-- visual_click: {{"target": "<UI element description>", "app": "<optional app name>"}} — click or interact with visible UI elements on screen
-- accessibility: {{"action": "screenshot|describe|focus|list_apps|tree|find|info", "app": "...", "label": "..."}}
-- read_url: {{"url": "https://..."}} — fetch and read the full text of a webpage
-- browser_control: {{"action": "open|screenshot|navigate|new_tab|find_and_click|type_in_element|hotkey|type|scroll", "app": "firefox", "url": "https://...", "target": "element name", "text": "...", "keys": "ctrl+t", "wait": 2.0}}
-  • action=open  → launch the app (add url= to also navigate there immediately)
-  • action=navigate → go to url= in already-open browser
-  • action=new_tab → open a new tab (Ctrl+T)
-  • action=find_and_click → click a UI element by name (target=)
-  • action=type_in_element → find element, click it, type text= into it, press Enter (target= text= required)
-  • action=screenshot → capture screen
-  • action=hotkey → send key combo
-  • action=type → type text at current cursor position
-  SINGLE-STEP PATTERN: "open firefox and go to X" → browser_control action=open app=firefox url=https://X
-  FOLLOW-UP PATTERN: "open it"/"play it"/"click it"/"aç onu" after a browser action → browser_control action=find_and_click target="first result" app=firefox
-  IN-PAGE INTERACTION (use planner for multi-step): navigate → screenshot → type_in_element
+<thinking>
+1. What does the user want? (one sentence)
+2. Which tool handles this? Pick the BEST match.
+3. Extract parameters from the user's words.
+4. Needs 2+ different tools in sequence? → route="planner".
+</thinking>
 
-CHAIN OF THOUGHT — follow ALL three steps before deciding:
+RULES:
+- ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
+- Factual / knowledge questions → web_search. NEVER answer from memory.
+- "open YouTube/Spotify/Netflix" etc. → browser_control action=open app=firefox url=https://youtube.com (web services are websites, not desktop apps).
+- Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
+- Literal bash commands (ls, df, top) → shell.
+- Multi-step with "then" / "and" / "after that" → route="planner".
+- Do NOT hallucinate data — always route to the real tool.
 
-Step 1 [INTENT]: State what the user wants in one clear sentence.
-Step 2 [TOOL]:   Pick the best tool. Consider ALL options before deciding.
-                 If the user typed a literal bash command, the tool is "shell".
-Step 3 [PARAMS]: Extract every relevant parameter from the input text.
-
-ROUTING RULES:
-- shell:      ANY bash/terminal command, file listing, process checks
-- system:     cpu%, ram%, memory, disk, uptime, load average
-- weather:    weather, temperature, rain, forecast, degrees
-- news:       news, headlines, hacker news, top stories
-- web_search: search online, look up, find on internet, google,
-              "who is X", "what is X", "tell me about X",
-              "what do you know about X", any general knowledge question,
-              any entity lookup (person, place, concept, movie, character),
-              any request for information the assistant does not already have
-- gmail:      email, inbox, compose, send, read mail
-- calendar:   events, meetings, appointments, schedule
-- reminder:   remind me, set a timer, alarm
-- classroom:  assignments, homework, deadlines, courses
-- filesystem: read/write a specific file, or create a folder+file atomically (use create_folder_and_file when user wants both)
-- document:   summarize or analyze PDF/TXT/MD/DOCX
-- input_control: type text, scroll, press keys, move cursor, drag
-- visual_click: click a button, menu, link, icon, tab, or any visible UI element on screen.
-              "click X", "open X menu", "press the Y button" → visual_click
-              CRITICAL: "click files", "click chrome", "click terminal", "click firefox" →
-              visual_click target="[app name]". NEVER route "click [app]" to filesystem.
-- screenshot: DELIVER a screenshot image to the user — use this when the user wants to SEE/RECEIVE the photo.
-              "give me a screenshot", "send me a screenshot", "show me the screen", "take a screenshot",
-              "ekran görüntüsü al/gönder/ver", "can I see the screen", "what does my screen look like",
-              "ss al", "/ekran", "screenshot please" → screenshot tool (NOT browser_control).
-              Use browser_control action=screenshot ONLY when analyzing the screen for a click/type task.
-- accessibility: focus window, screen analysis, describe UI, list apps
-- read_url:   fetch and read full content of a specific URL
-- browser_control: For a SINGLE browser action:
-              • "open firefox/chrome" → action=open app=firefox/google-chrome
-              • "go to X" / "navigate to X" / "open X.com" → action=navigate url=https://X
-              • "write X there" / "type X there" / "ora X yaz" — type X into address bar and press Enter:
-                action=type_in_element target="address bar" text="X" press_enter=true
-              • "new tab" → action=new_tab
-              • "click [element]" when browser context is clear → action=find_and_click target="[element]"
-              • FOLLOW-UP after browser action: "open it", "play it", "click it",
-                "aç onu", "aç", "tıkla" → action=find_and_click target="first result"
-                (ONLY when PREVIOUS TOOL RESULT or RECENT CONVERSATION shows a browser/search was just performed)
-              DO NOT use for any request that involves navigating AND doing something else.
-- chat:       ONLY for greetings, small talk, and opinions — NEVER for factual questions
-- planner:    ONLY when the request contains EXPLICIT multi-step language like "and then", "then", "and search", "and click", "and type", "after that".
-              DO NOT use planner for single-action requests that happen to mention a browser.
-              USE PLANNER ONLY for these patterns:
-              • "go to [site] and [do something else]" — TWO distinct actions
-              • "open [video/page] on youtube" → search + find + click
-              • "find/play/watch [X] on youtube" → search + click
-              • "search for X on [site]" → navigate + search
-              • "and then", "then", "and click", "and type" — explicit chaining keywords present
-              NEVER use planner for: "click X", "open X", "go to X", "write X there", "give me a screenshot".
-              NEVER use planner when all actions use the same browser. "open chrome and go to wikipedia.org" =
-              browser_control action=open app=chrome url=https://en.wikipedia.org — ONE step, not planner.
-
-SCREEN CONTEXT (when CURRENT SCREEN STATE is provided in tool_context):
-- Use the screen description to resolve "there", "here", "it", "that", "the page", "the bar", "the box"
-- Example: screen shows Wikipedia → "write iron man there" = browser_control action=type_in_element target="Wikipedia search input" text="iron man" press_enter=true
-- Example: screen shows YouTube search results → "click the first one" = browser_control action=find_and_click target="first video result"
-- Example: screen shows Chrome with address bar → "write X" = browser_control action=type_in_element target="address bar" text="X" press_enter=true
-- NEVER invent YouTube/Firefox steps when screen context shows you're already on a different page.
-
-CRITICAL:
-- If the user's request contains ambiguous pronouns (e.g., 'him', 'her') or refers to unspecified files/reports ('that report'), you MUST ask for clarification. Do NOT invent a fake report, do NOT roleplay sending a message to a fake person, and do not route to a tool until the ambiguity is resolved. Route to "chat" to ask for clarification.
-- NEVER hallucinate, guess, or roleplay factual data (weather, news, dates, events). If the user asks for weather, you MUST output a JSON routing to the `weather` tool. Do NOT answer directly in chat.
-- System queries (CPU, RAM, disk) are SAFE. Never refuse them.
-- NEVER route to "chat" if a tool can handle it.
-- Literal bash commands (ls, df -h, etc.) → shell with the command as-is.
-- If the user asks about ANY person, place, thing, concept, movie character,
-  historical figure, or topic — route to web_search. Do NOT use chat for factual lookups.
-- "do your search", "can you find", "look it up", "research it on the internet" → web_search.
-  EXCEPTION: "open chrome/firefox/files/terminal", "launch [app]", "click chrome/files/terminal"
-  are ALWAYS browser_control or visual_click — NEVER web_search. App names are not search queries.
-- "click X", "open X menu", "press the Y button" → visual_click (NOT shell, NOT accessibility).
-- If the request clearly needs multiple DIFFERENT tools in sequence, use route "planner".
-- IMPORTANT: tool_name must be the exact registered name (e.g. "web_search" not "Web Search", "visual_click" not "Visual Click"). Always use snake_case.
-
-ANTI-FALSE-POSITIVE RULES (critical — read carefully):
-- If the user uses slang, idioms, conversational filler, or if you are NOT 100%%
-  sure a specific tool is EXPLICITLY requested, you MUST default to "chat".
-- Never guess a tool. When in doubt, just chat.
-- Phrases like "what does X stand for", "you got me wrong", "never mind",
-  "forget it", "that's not what I meant" are CONVERSATIONAL — route to "chat".
-- Only route to a tool when the user's intent is UNAMBIGUOUS and EXPLICIT.
-- Do NOT pattern-match individual words (e.g. "stand" ≠ web_search,
-  "wrong" ≠ calendar). Look at the FULL sentence meaning.
-- Emotional or corrective statements ("bud you got me wrong", "that's bad",
-  "come on man") are ALWAYS "chat" — never trigger any tool.
-
-Return your response in exactly two parts:
-1. BEFORE outputting the JSON, you MUST open a `<thinking> ... </thinking>` block:
-   - Step 1: What does the user want in one sentence?
-   - Step 2: Which tool exactly? (check ROUTING RULES above)
-   - Step 3: Is this 2+ DIFFERENT tools? If yes → route="planner". If just one → route="tool".
-   - Step 4: Am I sure? Never invent answers — use tools.
-2. After the thinking block, output ONLY a JSON object.
-
-CRITICAL JSON RULES:
-- "route" MUST be exactly one of: "tool", "planner", "chat" — NEVER a tool name like "web_search"
-- "tool_name" is where you put the tool name (e.g. "weather", "web_search", "browser_control")
-- If route="tool", tool_name MUST be filled. If route="chat" or "planner", tool_name=null.
-
-Examples of CORRECT JSON:
-- Weather: {{"route":"tool","tool_name":"weather","tool_args":{{"city":""}},"risk_level":"safe","confidence":0.95,"reasoning":"User asked about weather"}}
-- Search:  {{"route":"tool","tool_name":"web_search","tool_args":{{"query":"iron man"}},"risk_level":"safe","confidence":0.95,"reasoning":"User wants web search"}}
-- Chat:    {{"route":"chat","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Greeting"}}
-- Plan:    {{"route":"planner","tool_name":null,"tool_args":{{}},"risk_level":"safe","confidence":0.9,"reasoning":"Multi-step"}}\
+OUTPUT — single JSON, no markdown:
+{{"route": "tool|planner|chat", "tool_name": "exact_name", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -273,7 +189,12 @@ def _format_recent_history(recent_history: list[dict]) -> str:
 
 # Maximum tokens to wait for a </thinking> close tag before force-closing.
 # Prevents unbounded buffering from models that never emit the close tag.
-_THINKING_MAX_TOKENS = 2000
+_THINKING_MAX_TOKENS = 512
+
+# Ollama generation options for routing — cap output length for speed.
+# 768 tokens gives enough room for ~4-line <thinking> + JSON output.
+# Prevents llama3.1:8b from generating thousands of reasoning tokens.
+_ROUTING_OPTIONS: dict = {"num_predict": 768}
 
 
 async def _stream_and_collect(
@@ -281,6 +202,8 @@ async def _stream_and_collect(
     *,
     emit_thinking: bool = True,
     source: str = "cot_route",
+    options: dict | None = None,
+    model_override: str = "",
 ) -> str:
     """Stream an Ollama chat call, emitting ``thinking_*`` events.
 
@@ -312,7 +235,7 @@ async def _stream_and_collect(
         await bus.emit("thinking_start", source=source)
 
     try:
-        async for token in ollama.chat_stream(messages):
+        async for token in ollama.chat_stream(messages, options=options, model_override=model_override):
             buf += token
 
             if not emit_thinking or thinking_complete:
@@ -431,10 +354,7 @@ async def cot_route(
         events) injected only when relevant (#275 — avoids bloating the
         prompt when unrelated queries are asked).
     """
-    schema_str = "\n".join(
-        f"  - {t['name']}: {t['description']} [risk={t['risk_level']}]"
-        for t in tool_schemas
-    )
+    schema_str = _build_compact_schemas(tool_schemas)
 
     # Build optional history block for coreference resolution
     history_block = ""
@@ -459,7 +379,10 @@ async def cot_route(
 
     # ── Attempt 1 (Ollama streaming) ──────────────────────────────────
     try:
-        raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route")
+        raw = await _stream_and_collect(
+            messages, emit_thinking=True, source="cot_route",
+            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
+        )
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
@@ -500,6 +423,7 @@ async def cot_route(
 
         raw2 = await _stream_and_collect(
             messages, emit_thinking=False, source="cot_route_retry",
+            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
         )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)

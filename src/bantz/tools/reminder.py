@@ -22,10 +22,11 @@ from bantz.tools import BaseTool, ToolResult, registry
 class ReminderTool(BaseTool):
     name = "reminder"
     description = (
-        "Create, list, cancel, or snooze reminders and timers. "
+        "Manage reminders and timers: create, list, cancel, snooze. "
+        "Params: action (add|list|cancel|snooze), intent (str) = what to remind, "
+        "id (str) = reminder ID for cancel/snooze. "
         "Supports time-based and location-based triggers. "
-        "Use for: remind me, set a reminder, set a timer, my reminders, "
-        "cancel reminder, snooze, alarm, remind me when at X."
+        "Use for: 'remind me to X', 'set a timer', 'list my reminders'."
     )
     risk_level = "safe"
 

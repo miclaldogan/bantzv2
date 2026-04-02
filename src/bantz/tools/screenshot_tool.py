@@ -36,9 +36,11 @@ class ScreenshotTool(BaseTool):
 
     name = "screenshot"
     description = (
-        "Capture a daguerreotype of the current desktop screen. "
-        "Returns the image bytes for transmission to ma'am. "
-        "Optionally capture a specific application window."
+        "Capture and DELIVER a screenshot image to the user. "
+        "Use when the user wants to SEE their screen: 'take a screenshot', "
+        "'show me my screen', 'ss al', 'ekran görüntüsü'. "
+        "Returns the actual image file. Optionally capture a specific app window. "
+        "NOT for internal screen analysis — use browser_control action=screenshot for that."
     )
     risk_level = "safe"
 
