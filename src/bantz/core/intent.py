@@ -189,12 +189,12 @@ def _format_recent_history(recent_history: list[dict]) -> str:
 
 # Maximum tokens to wait for a </thinking> close tag before force-closing.
 # Prevents unbounded buffering from models that never emit the close tag.
-_THINKING_MAX_TOKENS = 600
+_THINKING_MAX_TOKENS = 512
 
 # Ollama generation options for routing — cap output length for speed.
-# 384 tokens is enough for short <thinking> + JSON. Prevents llama3.1:8b
-# from generating thousands of reasoning tokens before producing the answer.
-_ROUTING_OPTIONS: dict = {"num_predict": 384}
+# 768 tokens gives enough room for ~4-line <thinking> + JSON output.
+# Prevents llama3.1:8b from generating thousands of reasoning tokens.
+_ROUTING_OPTIONS: dict = {"num_predict": 768}
 
 
 async def _stream_and_collect(
@@ -203,6 +203,7 @@ async def _stream_and_collect(
     emit_thinking: bool = True,
     source: str = "cot_route",
     options: dict | None = None,
+    model_override: str = "",
 ) -> str:
     """Stream an Ollama chat call, emitting ``thinking_*`` events.
 
@@ -234,7 +235,7 @@ async def _stream_and_collect(
         await bus.emit("thinking_start", source=source)
 
     try:
-        async for token in ollama.chat_stream(messages, options=options):
+        async for token in ollama.chat_stream(messages, options=options, model_override=model_override):
             buf += token
 
             if not emit_thinking or thinking_complete:
@@ -378,7 +379,10 @@ async def cot_route(
 
     # ── Attempt 1 (Ollama streaming) ──────────────────────────────────
     try:
-        raw = await _stream_and_collect(messages, emit_thinking=True, source="cot_route", options=_ROUTING_OPTIONS)
+        raw = await _stream_and_collect(
+            messages, emit_thinking=True, source="cot_route",
+            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
+        )
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
@@ -419,7 +423,7 @@ async def cot_route(
 
         raw2 = await _stream_and_collect(
             messages, emit_thinking=False, source="cot_route_retry",
-            options=_ROUTING_OPTIONS,
+            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
         )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)

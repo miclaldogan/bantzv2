@@ -42,6 +42,8 @@ class OllamaClient:
                 break
         self.base_url = base
         self.model = config.ollama_model
+        # Optional fast model for routing — falls back to main model
+        self.routing_model = config.ollama_routing_model or self.model
 
         # Layer 1: instant URL format check — no I/O, safe in __init__
         from urllib.parse import urlparse
@@ -105,10 +107,10 @@ class OllamaClient:
                 f"  Run: ollama pull {self.model}"
             )
 
-    async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None) -> str:
+    async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None, model_override: str = "") -> str:
         """Simple chat — returns a single string."""
         try:
-            payload: dict = {"model": self.model, "messages": messages, "stream": False}
+            payload: dict = {"model": model_override or self.model, "messages": messages, "stream": False}
             if options:
                 payload["options"] = options
             resp = await self.client.post(
@@ -124,14 +126,14 @@ class OllamaClient:
             _notify_health(False)
             raise
 
-    async def chat_stream(self, messages: list[dict], *, options: dict | None = None) -> AsyncIterator[str]:
+    async def chat_stream(self, messages: list[dict], *, options: dict | None = None, model_override: str = "") -> AsyncIterator[str]:
         """
         Stream tokens from Ollama via NDJSON.
         Ollama /api/chat with stream:true returns lines like:
           {"message": {"content": "token"}, "done": false}
           {"message": {"content": ""}, "done": true}
         """
-        payload: dict = {"model": self.model, "messages": messages, "stream": True}
+        payload: dict = {"model": model_override or self.model, "messages": messages, "stream": True}
         if options:
             payload["options"] = options
         async with self.client.stream(

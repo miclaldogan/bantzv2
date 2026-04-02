@@ -18,6 +18,12 @@ class Config(BaseSettings):
     # ── Ollama ────────────────────────────────────────────────────────────
     ollama_model: str = Field("llama3.1:8b", alias="BANTZ_OLLAMA_MODEL")
     ollama_base_url: str = Field("http://localhost:11434", alias="BANTZ_OLLAMA_BASE_URL")
+    # Optional fast/quant model for intent routing only.
+    # When set, cot_route uses this smaller model for speed while the main
+    # model handles conversation.  Examples: qwen2.5:3b, gemma3:4b-it-qat,
+    # llama3.2:3b, phi4-mini.
+    # Leave empty (default) to use the main ollama_model for everything.
+    ollama_routing_model: str = Field("", alias="BANTZ_OLLAMA_ROUTING_MODEL")
 
     # ── Embeddings / Vector Memory ────────────────────────────────────────
     embedding_model: str = Field("nomic-embed-text", alias="BANTZ_EMBEDDING_MODEL")
