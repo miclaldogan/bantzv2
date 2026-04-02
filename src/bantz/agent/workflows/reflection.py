@@ -49,6 +49,22 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+
+import httpx
+
+_shared_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    """⚡ Bolt Performance Optimization:
+    Lazy-load and share a single httpx.AsyncClient instance across workflow steps.
+    This enables HTTP connection pooling and avoids the latency of establishing
+    a new TCP connection for every request.
+    """
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient()
+    return _shared_client
+
 log = logging.getLogger("bantz.reflection")
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -749,15 +765,15 @@ async def _send_report(result: ReflectionResult, dry_run: bool) -> None:
     try:
         from bantz.config import config
         if config.telegram_bot_token and config.telegram_allowed_users:
-            import httpx
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
+            client = _get_client()
             for uid in users:
                 try:
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                            json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        )
+                    await client.post(
+                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                        timeout=10.0,
+                    )
                 except Exception:
                     pass
     except Exception:
