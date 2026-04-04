@@ -12,6 +12,7 @@ DataLayer wires the existing ``Memory`` and ``Scheduler`` singletons
 All database access goes through the central ``SQLitePool`` from
 ``connection_pool.py`` — no store class opens its own connection.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,7 @@ class SQLiteConversationStore(ConversationStore):
 
     def init(self, db_path: Path) -> None:
         self._db_path = db_path
-        get_pool(db_path)          # ensure singleton is ready
+        get_pool(db_path)  # ensure singleton is ready
         self._migrate()
 
     def _migrate(self) -> None:
@@ -106,9 +107,7 @@ class SQLiteConversationStore(ConversationStore):
 
     def resume_session(self, session_id: int) -> bool:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT id FROM conversations WHERE id=?", (session_id,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM conversations WHERE id=?", (session_id,)).fetchone()
         if row:
             self._session_id = session_id
             return True
@@ -222,12 +221,8 @@ class SQLiteConversationStore(ConversationStore):
 
     def stats(self) -> dict:
         with get_pool().connection() as conn:
-            total_conv = conn.execute(
-                "SELECT COUNT(*) FROM conversations"
-            ).fetchone()[0]
-            total_msg = conn.execute(
-                "SELECT COUNT(*) FROM messages"
-            ).fetchone()[0]
+            total_conv = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            total_msg = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
             session_msg = 0
             if self._session_id:
                 session_msg = conn.execute(
@@ -245,9 +240,7 @@ class SQLiteConversationStore(ConversationStore):
     def prune(self, keep_days: int = 90) -> int:
         cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
         with get_pool().connection(write=True) as conn:
-            cur = conn.execute(
-                "DELETE FROM conversations WHERE last_active < ?", (cutoff,)
-            )
+            cur = conn.execute("DELETE FROM conversations WHERE last_active < ?", (cutoff,))
             rowcount = cur.rowcount
         return rowcount
 
@@ -379,16 +372,12 @@ class SQLiteReminderStore(ReminderStore):
 
     def cancel(self, reminder_id: int) -> bool:
         with get_pool().connection(write=True) as conn:
-            cur = conn.execute(
-                "DELETE FROM reminders WHERE id = ?", (reminder_id,)
-            )
+            cur = conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             return cur.rowcount > 0
 
     def cancel_by_title(self, title: str) -> int:
         with get_pool().connection(write=True) as conn:
-            cur = conn.execute(
-                "DELETE FROM reminders WHERE lower(title) = lower(?)", (title,)
-            )
+            cur = conn.execute("DELETE FROM reminders WHERE lower(title) = lower(?)", (title,))
             return cur.rowcount
 
     def snooze(self, reminder_id: int, minutes: int = 10) -> bool:
@@ -434,9 +423,7 @@ class SQLiteReminderStore(ReminderStore):
 
     def count_active(self) -> int:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM reminders WHERE fired = 0"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM reminders WHERE fired = 0").fetchone()
         return row[0] if row else 0
 
     # ── internal ──────────────────────────────────────────────────────────
@@ -480,9 +467,7 @@ class SQLiteProfileStore(ProfileStore):
 
     def load(self) -> dict[str, Any]:
         with get_pool().connection() as conn:
-            rows = conn.execute(
-                "SELECT key, value FROM user_profile"
-            ).fetchall()
+            rows = conn.execute("SELECT key, value FROM user_profile").fetchall()
         result: dict[str, Any] = {}
         for row in rows:
             try:
@@ -495,17 +480,17 @@ class SQLiteProfileStore(ProfileStore):
         now = _now()
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM user_profile")
-            for k, v in data.items():
-                conn.execute(
+            # Bolt optimization: batch inserts instead of iterating execute
+            values = [(k, json.dumps(v, ensure_ascii=False), now) for k, v in data.items()]
+            if values:
+                conn.executemany(
                     "INSERT INTO user_profile(key, value, updated_at) VALUES (?,?,?)",
-                    (k, json.dumps(v, ensure_ascii=False), now),
+                    values,
                 )
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM user_profile"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM user_profile").fetchone()
         return row[0] > 0
 
     @property
@@ -538,9 +523,7 @@ class SQLitePlaceStore(PlaceStore):
 
     def load_all(self) -> dict[str, dict]:
         with get_pool().connection() as conn:
-            rows = conn.execute(
-                "SELECT key, label, lat, lon, radius FROM places"
-            ).fetchall()
+            rows = conn.execute("SELECT key, label, lat, lon, radius FROM places").fetchall()
         return {
             row["key"]: {
                 "label": row["label"],
@@ -554,16 +537,21 @@ class SQLitePlaceStore(PlaceStore):
     def save_all(self, data: dict[str, dict]) -> None:
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM places")
-            for key, place in data.items():
-                conn.execute(
+            # Bolt optimization: batch inserts instead of iterating execute
+            values = [
+                (
+                    key,
+                    place.get("label", key),
+                    place.get("lat", 0.0),
+                    place.get("lon", 0.0),
+                    place.get("radius", 100.0),
+                )
+                for key, place in data.items()
+            ]
+            if values:
+                conn.executemany(
                     "INSERT INTO places(key, label, lat, lon, radius) VALUES (?,?,?,?,?)",
-                    (
-                        key,
-                        place.get("label", key),
-                        place.get("lat", 0.0),
-                        place.get("lon", 0.0),
-                        place.get("radius", 100.0),
-                    ),
+                    values,
                 )
 
     def upsert(self, key: str, place: dict) -> None:
@@ -589,9 +577,7 @@ class SQLitePlaceStore(PlaceStore):
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM places"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM places").fetchone()
         return row[0] > 0
 
     @property
@@ -646,27 +632,31 @@ class SQLiteScheduleStore(ScheduleStore):
     def save(self, data: dict[str, list[dict]]) -> None:
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM schedule_entries")
-            for day, entries in data.items():
-                for idx, entry in enumerate(entries):
-                    conn.execute(
-                        """INSERT INTO schedule_entries
-                           (day, idx, name, time, duration, location, type)
-                           VALUES (?,?,?,?,?,?,?)""",
-                        (
-                            day, idx,
-                            entry.get("name", ""),
-                            entry.get("time", ""),
-                            entry.get("duration", 60),
-                            entry.get("location", ""),
-                            entry.get("type", ""),
-                        ),
-                    )
+            # Bolt optimization: batch inserts instead of iterating execute
+            values = [
+                (
+                    day,
+                    idx,
+                    entry.get("name", ""),
+                    entry.get("time", ""),
+                    entry.get("duration", 60),
+                    entry.get("location", ""),
+                    entry.get("type", ""),
+                )
+                for day, entries in data.items()
+                for idx, entry in enumerate(entries)
+            ]
+            if values:
+                conn.executemany(
+                    """INSERT INTO schedule_entries
+                       (day, idx, name, time, duration, location, type)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    values,
+                )
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM schedule_entries"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM schedule_entries").fetchone()
         return row[0] > 0
 
     @property
@@ -697,9 +687,7 @@ class SQLiteSessionStore(SessionStore):
 
     def load(self) -> dict:
         with get_pool().connection() as conn:
-            rows = conn.execute(
-                "SELECT key, value FROM session_state"
-            ).fetchall()
+            rows = conn.execute("SELECT key, value FROM session_state").fetchall()
         result: dict = {}
         for row in rows:
             try:
@@ -712,10 +700,12 @@ class SQLiteSessionStore(SessionStore):
         now = _now()
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM session_state")
-            for k, v in data.items():
-                conn.execute(
+            # Bolt optimization: batch inserts instead of iterating execute
+            values = [(k, json.dumps(v, ensure_ascii=False), now) for k, v in data.items()]
+            if values:
+                conn.executemany(
                     "INSERT INTO session_state(key, value, updated_at) VALUES (?,?,?)",
-                    (k, json.dumps(v, ensure_ascii=False), now),
+                    values,
                 )
 
     @property
@@ -749,9 +739,7 @@ class SQLiteKVStore:
 
     def get(self, key: str, default: str = "") -> str:
         with get_pool().connection() as conn:
-            row = conn.execute(
-                "SELECT value FROM kv_store WHERE key = ?", (key,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
     def set(self, key: str, value: str) -> None:
