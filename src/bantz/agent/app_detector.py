@@ -447,11 +447,14 @@ def _proc_running_apps() -> list[str]:
     }
     found: set[str] = set()
     try:
-        for d in Path("/proc").iterdir():
-            if not d.name.isdigit():
+        # Optimized: os.listdir is faster than Path("/proc").iterdir()
+        # for scanning thousands of PIDs, avoiding object instantiation overhead.
+        for pid_dir in os.listdir("/proc"):
+            if not pid_dir.isdigit():
                 continue
             try:
-                c = (d / "comm").read_text().strip().lower()
+                with open(f"/proc/{pid_dir}/comm", "r", encoding="utf-8") as f:
+                    c = f.read().strip().lower()
                 if c in known:
                     found.add(c)
             except (OSError, PermissionError):
