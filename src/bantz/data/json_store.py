@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from bantz.data.store import PlaceStore, ProfileStore, ScheduleStore, SessionStore
+import os
 
 log = logging.getLogger("bantz.data.json")
 
@@ -34,12 +35,14 @@ def _read_json(path: Path) -> dict:
 
 
 def _write_json(path: Path, data: dict | list) -> None:
-    """Write JSON with pretty-print, creating parent dirs."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Write JSON securely with 0o600 permissions."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(content)
+    path.chmod(0o600)
 
 
 # ━━ Profile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
