@@ -5,3 +5,7 @@
 ## 2024-05-18 - [File System Traversal Optimization]
 **Learning:** In high-frequency polling scenarios (like scanning the `/proc` filesystem for process IDs), using `pathlib.Path.iterdir()` introduces significant overhead compared to `os.listdir()` due to the instantiation of a `Path` object for every directory entry. When scanning thousands of items, this object creation cost adds up unnecessarily.
 **Action:** Use `os.listdir()` and raw strings for paths when iterating over large directories in performance-critical or frequently-polled code paths, replacing `Path` object instantiation where appropriate.
+
+## 2024-05-18 - [SQLite Batch Inserts (N+1 Query Resolution)]
+**Learning:** In the SQLite storage layer (`src/bantz/data/sqlite_store.py`), methods performing bulk saves like `SQLiteProfileStore.save` or `SQLiteScheduleStore.save` were iterating over dictionaries/lists and executing single `conn.execute("INSERT ...")` queries. This loop-based query execution acts as a significant N+1 query performance bottleneck during dictionary/list persistence when working with Python dictionaries that could contain a significant number of items.
+**Action:** Consolidate multiple individual parameterizations into a list, and utilize `conn.executemany` for any batch SQLite insert operations. This significantly speeds up save operations by avoiding repeated query compilation overhead.
