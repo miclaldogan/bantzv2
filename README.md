@@ -12,7 +12,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests: 2991](https://img.shields.io/badge/tests-2991-brightgreen.svg)](#test-suite)
+[![Tests: 3135](https://img.shields.io/badge/tests-3135-brightgreen.svg)](#test-suite)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-orange.svg)](https://ollama.ai)
 [![Textual](https://img.shields.io/badge/TUI-Textual-purple.svg)](https://textual.textualize.io)
 
@@ -28,7 +28,7 @@ It is not a wrapper around a hosted API. The entire reasoning, memory, and tool 
 
 **Design principles:**
 
-- **Local-first.** Powered by Ollama (`qwen3:8b` / `llama3`), SQLite, and on-device graph memory. No data leaves the machine by default.
+- **Local-first.** Powered by Ollama (`qwen3:8b` / `llama3`), SQLite, ChromaDB, and on-device graph memory via MemPalace. No data leaves the machine by default.
 - **Chain-of-Thought routing.** Every request goes through a structured CoT classifier that extracts intent, selects a tool, and validates parameters before executing anything.
 - **Autonomous background agent.** Runs as a systemd service. Performs nightly reflection, cache maintenance, wake-word listening, and proactive suggestions — independently.
 - **Butler persona.** Polite, discreet, and adaptive. A reinforcement learning layer adjusts tone and formality based on your implicit feedback over time.
@@ -112,21 +112,23 @@ Bantz is built in five decoupled layers. Each layer communicates through typed c
 ├─────────────────────────────────────────────────────────────────────┤
 │                            DATA LAYER                               │
 │  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ SQLite + FTS5  │  │ Vector Store   │  │ MemPalace (ChromaDB  │ │
-│  │ (conversations,│  │ (cosine sim.,  │  │  + SQLite KG +       │ │
-│  │  Q-table, mood)│  │  embeddings)   │  │  entity registry)    │ │
+│  │ SQLite + FTS5  │  │ MemPalace      │  │ Knowledge Graph       │ │
+│  │ (conversations,│  │ (ChromaDB vec- │  │ (SQLite temporal KG,  │ │
+│  │  Q-table, mood)│  │  tors, 4-layer │  │  entity registry,     │ │
+│  │                │  │  memory stack) │  │  triples + decay)     │ │
 │  └────────────────┘  └────────────────┘  └───────────────────────┘ │
 │  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ Connection Pool│  │ Distiller      │  │ Spatial Cache         │ │
-│  │ (SQLite WAL,   │  │ (LLM summary   │  │ (UI element coords,   │ │
-│  │  thread-safe)  │  │  → vectors)    │  │  24h TTL)             │ │
+│  │ Connection Pool│  │ Bridge Adapter │  │ Spatial Cache         │ │
+│  │ (SQLite WAL,   │  │ (replaces 8 old│  │ (UI element coords,   │ │
+│  │  thread-safe)  │  │  memory modules│  │  24h TTL)             │ │
 │  └────────────────┘  └────────────────┘  └───────────────────────┘ │
 ├─────────────────────────────────────────────────────────────────────┤
-│                      TOOLS LAYER  (21 registered tools)             │
+│                      TOOLS LAYER  (25 registered tools)             │
 │  shell · gmail · calendar · classroom · filesystem · document       │
 │  weather · news · web_search · web_reader · browser_control         │
-│  visual_click · input_control · accessibility · system              │
+│  visual_click · input_control · accessibility · system · screenshot │
 │  reminder · contacts · gui_action · summarizer · read_url           │
+│  computer_use · browser_tool · system_tool · mail                   │
 ├─────────────────────────────────────────────────────────────────────┤
 │                          VISION LAYER                               │
 │  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
@@ -139,9 +141,52 @@ Bantz is built in five decoupled layers. Each layer communicates through typed c
 
 ---
 
+## Memory Architecture
+
+Bantz's memory system was rebuilt around [MemPalace](mempalace/), replacing 8 separate modules (Neo4j graph, vector_store, embeddings, deep_probe, distiller, context_builder, nodes, memory_manager) with a single unified bridge adapter.
+
+```
+                        ┌──────────────────────────┐
+                        │     OmniMemoryManager     │
+                        │   (context bloat control)  │
+                        └────────────┬───────────────┘
+                                     │
+                        ┌────────────▼───────────────┐
+                        │    MemPalace Bridge (866L)  │
+                        │  Same API surface as old    │
+                        │  8 modules — zero caller    │
+                        │  changes required           │
+                        └────────────┬───────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              │                      │                      │
+   ┌──────────▼─────────┐ ┌─────────▼──────────┐ ┌────────▼─────────┐
+   │   ChromaDB Vectors  │ │  SQLite KG (triples│ │ Entity Registry  │
+   │   (embeddings +     │ │  + temporal decay + │ │ (people, places, │
+   │    similarity search│ │  room detection)    │ │  things)         │
+   │    via MemPalace)   │ │                     │ │                  │
+   └─────────────────────┘ └─────────────────────┘ └──────────────────┘
+```
+
+**4-Layer Memory Stack:**
+
+| Layer | Name | Purpose |
+|-------|------|---------|
+| **L0** | Identity | User profile, preferences, name — loaded at startup |
+| **L1** | Session | Current conversation context, recent exchanges |
+| **L2** | Vector | Semantic similarity search across all stored memories |
+| **L3** | Deep Probe | Spontaneous associative recall with rate limiting |
+
+**What changed:**
+- **Removed:** Neo4j, Docker graph DB dependency, custom embedding pipeline, 8 separate Python modules
+- **Added:** `bridge.py` (866 lines, drop-in adapter), `onboarding.py` (first-run knowledge seeding)
+- **Kept:** `omni_memory.py` (context orchestration), `session_store.py` (SQLite sessions)
+
+---
+
 ## Directory Structure
 
-125 modules, ~39,500 lines of Python.
+128 modules, ~42,000 lines of Python.
 
 ```
 src/bantz/
@@ -164,11 +209,15 @@ src/bantz/
 │   ├── connection_pool.py        # Thread-safe SQLite WAL connection pool
 │   └── migration.py              # Versioned schema migration utility
 │
-├── memory/                       # Multi-tier Memory
-│   ├── vector_store.py           # Pure SQLite vector store (cosine similarity)
-│   ├── bridge.py                 # MemPalace adapter (ChromaDB + SQLite KG)
+├── memory/                       # Multi-tier Memory (MemPalace)
+│   ├── bridge.py                 # MemPalace adapter — replaces 8 old modules
+│   │                             #   (graph, nodes, vector_store, embeddings,
+│   │                             #    deep_probe, distiller, context_builder,
+│   │                             #    memory_manager) with unified ChromaDB +
+│   │                             #    SQLite KG + 4-layer memory stack
 │   ├── omni_memory.py            # OmniMemoryManager — context bloat control
-│   └── context_builder.py        # Graph → LLM context injection
+│   ├── onboarding.py             # First-run LLM-powered user knowledge seeding
+│   └── session_store.py          # Conversation session persistence
 │
 ├── agent/                        # Autonomous Background Subsystems
 │   ├── ghost_loop.py             # Background observer loop
@@ -264,6 +313,11 @@ src/bantz/
 | `classroom` | Google Classroom assignment listing | safe |
 | `contacts` | Contact lookup and resolution | safe |
 | `summarizer` | LLM-powered text summarization | safe |
+| `screenshot` | Capture and deliver a screenshot image | safe |
+| `computer_use` | Autonomous multi-step desktop automation using screen vision | destructive |
+| `browser_tool` | Advanced web page parsing: HTML, CSS selectors, readability | safe |
+| `system_tool` | System operations with safe-mode denylist | moderate |
+| `mail` | Unified mail send/compose interface | moderate |
 
 The intent router (`cot_route`) classifies every request into one of: `tool`, `planner`, `chat`. The planner activates when a request requires two or more tools in sequence and coordinates the full execution chain via `$REF` variable binding between steps.
 
@@ -359,7 +413,7 @@ bantz                  # launch TUI
 
 **Requirements:** Python 3.11+, Ollama running locally, SQLite (stdlib).
 
-**Optional:** Redis (session store), PortAudio (voice), `xdotool` (desktop automation), `chafa` (image rendering).
+**Optional:** ChromaDB (MemPalace memory), Redis (session store), PortAudio (voice), `xdotool` (desktop automation), `chafa` (image rendering).
 
 ---
 
@@ -386,7 +440,7 @@ pytest tests/tools/           # Tool-level integration tests
 pytest -q                     # Compact output
 ```
 
-2991 tests, 0 failures. Coverage spans intent routing, tool execution, agent loop, memory, TUI event bridge, and voice pipeline components.
+3135 tests, 0 failures. Coverage spans intent routing, tool execution, agent loop, memory (MemPalace bridge + onboarding), TUI event bridge, and voice pipeline components.
 
 ---
 
@@ -401,7 +455,7 @@ Active development priorities for v3:
 | **#3** | `ImageTool` — terminal image rendering via chafa, 24h cache | web | Planned |
 | **#4** | `SystemTool` — unified subprocess interface, audit log, safe-mode denylist | system | In progress |
 | **#5** | `GUITool` — pyautogui + xdotool bridge, DRY_RUN mode | system | In progress |
-| **#6** | MemPalace memory — entity graph, temporal KG, ChromaDB vector search | memory | ✅ Done |
+| **#6** | MemPalace memory — entity graph, temporal KG, ChromaDB vector search, bridge adapter, onboarding | memory | ✅ Done |
 | **#7** | Redis session store — in-flight state, task queue, TUI↔Telegram pub/sub | memory | Planned |
 | **#8** | APScheduler — cron + one-shot tasks, Redis job store, natural language scheduling | scheduler | In progress |
 | **#9** | TUI migration: Textual → Rich Live (diff rendering, native asyncio, mouse scroll) | interface | Planned |
@@ -416,6 +470,8 @@ Issues #1–#8 are tracked with full acceptance criteria, implementation notes, 
 
 | # | Feature |
 |---|---------|
+| **#354** | MemPalace migration — replaced 8 memory modules (Neo4j graph, vector_store, embeddings, deep_probe, distiller, context_builder, nodes, memory_manager) with unified bridge.py + onboarding.py, removed Docker Neo4j dependency |
+| **#340** | CoT routing rewrite — compact routing hints, planner example contamination fix, turbo/quant model support |
 | **#287** | Voice feedback loop fix + full TUI integration audit |
 | **#286** | Planner: `$REF` variable binding, `SummarizerTool`, Butler lore toasts |
 | **#285** | `OmniMemoryManager` — context bloat control + GraphRAG integration |
