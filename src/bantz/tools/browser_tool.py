@@ -38,10 +38,11 @@ class BrowserToolError(RuntimeError):
 class BrowserTool(BaseTool):
     name = "browser"
     description = (
-        "Fetch and parse web pages using local CLI tools (curl / pup / readability-cli). "
-        "Use fetch() for raw HTML, extract_text() for clean article body, "
-        "query() for CSS-selected content, extract_images() for image URLs. "
-        "No API key required. Requires a valid URL — NEVER fabricate or guess URLs."
+        "Advanced web page parsing: raw HTML, CSS selectors, image extraction. "
+        "Params: url (str), action (fetch|extract_text|query|images), selector (str). "
+        "Requires a specific URL. For simple page reading use read_url instead. "
+        "Use this when you need structured data extraction (CSS queries, images). "
+        "NEVER fabricate URLs."
     )
     risk_level = "safe"
 

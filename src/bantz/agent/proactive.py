@@ -298,30 +298,19 @@ class ProactiveEngine:
         except Exception:
             pass
 
-        # Vector DB interests (with time-decay recency)
+        # Vector DB interests via MemPalace (with time-decay recency)
         try:
-            from bantz.memory.embeddings import embedder
-            from bantz.core.memory import memory
+            from bantz.memory.bridge import palace_bridge
 
-            if hasattr(memory, '_vector_store') and memory._vector_store:
-                vs = memory._vector_store
+            if palace_bridge and palace_bridge.enabled:
                 for query_text in _INTEREST_QUERIES:
-                    vec = await embedder.embed(query_text)
-                    if vec:
-                        results = vs.search(
-                            vec, limit=2, min_score=0.25,
-                            recency_weight=0.3,
-                        )
-                        ctx.interests.extend(results)
-                # Deduplicate by message_id
-                seen = set()
-                unique = []
-                for item in ctx.interests:
-                    mid = item.get("message_id")
-                    if mid not in seen:
-                        seen.add(mid)
-                        unique.append(item)
-                ctx.interests = unique[:5]
+                    result = palace_bridge.vector_context(query_text, limit=2)
+                    if result:
+                        ctx.interests.append({
+                            "content": result[:200],
+                            "source": "mempalace",
+                        })
+                ctx.interests = ctx.interests[:5]
         except Exception as exc:
             log.debug("Vector search failed: %s", exc)
 

@@ -169,52 +169,37 @@ def desktop_context() -> str:
 async def graph_context(user_msg: str) -> str:
     """Get graph memory context string (empty if disabled)."""
     try:
-        from bantz.memory.graph import graph_memory
+        from bantz.memory.bridge import palace_bridge
     except ImportError:
         return ""
-    if graph_memory and graph_memory.enabled:
+    if palace_bridge and palace_bridge.enabled:
         try:
-            return await graph_memory.context_for(user_msg)
+            return palace_bridge.graph_context(user_msg)
         except Exception:
             pass
     return ""
 
 
 async def vector_context(user_msg: str, limit: int = 3) -> str:
-    """Get relevant past messages via semantic search (#116)."""
+    """Get relevant past memories via MemPalace semantic search."""
     try:
-        from bantz.core.memory import memory
-        results = await memory.hybrid_search(user_msg, limit=limit)
-        if not results:
-            return ""
-        lines = []
-        for r in results:
-            src = r.get("source", "?")
-            score = r.get("hybrid_score", 0)
-            lines.append(f"[{src} {score:.2f}] {r['role']}: {r['content'][:200]}")
-
-        # Append distillation context (#118)
-        try:
-            distills = await memory.search_distillations(user_msg, limit=2)
-            for d in distills:
-                lines.append(
-                    f"[session-summary {d['score']:.2f}] {d['summary'][:200]}"
-                )
-        except Exception:
-            pass
-
-        return "Relevant past context:\n" + "\n".join(lines)
+        from bantz.memory.bridge import palace_bridge
+        if palace_bridge and palace_bridge.enabled:
+            return palace_bridge.vector_context(user_msg, limit=limit)
     except Exception:
-        return ""
+        pass
+    return ""
 
 
 async def deep_memory_context(user_msg: str) -> str:
-    """Spontaneous deep memory recall (#170)."""
+    """Spontaneous deep memory recall (#170) via MemPalace."""
     try:
-        from bantz.memory.deep_probe import deep_probe
-        return await deep_probe.probe(user_msg)
+        from bantz.memory.bridge import palace_bridge
+        if palace_bridge and palace_bridge.enabled:
+            return palace_bridge.deep_memory(user_msg)
     except Exception:
         return ""
+    return ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════

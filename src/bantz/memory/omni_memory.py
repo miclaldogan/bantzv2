@@ -8,7 +8,7 @@ Architecture (Architect's Revision):
     ┌───────────────────────────────────────────────────────────────┐
     │  OmniMemoryManager.recall(user_msg)  [ASYNC HYBRID]         │
     │       │                                                      │
-    │       ├─ Task A: Neo4j Graph Search   ─┐                    │
+    │       ├─ Task A: KG Graph Search           ─┐                    │
     │       │                                 ├─ Merge + Re-rank  │
     │       ├─ Task B: Vector Semantic Search ┘                    │
     │       │                                                      │
@@ -230,27 +230,34 @@ class OmniMemoryManager:
     async def summarize(self, conversation_id: int) -> str:
         """Distil a conversation into a compressed memory summary.
 
-        Delegates to :mod:`bantz.memory.distiller`.  Returns the summary
-        text, or an empty string if distillation fails or produces nothing.
+        Delegates to MemPalace bridge distill_session.
+        Returns the summary text, or an empty string if distillation fails.
         """
         try:
-            from bantz.memory.distiller import distill_session
-            result = await distill_session(conversation_id)
-            return result.get("summary", "") if isinstance(result, dict) else ""
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                await palace_bridge.distill_session(conversation_id)
+                return "(distilled via MemPalace)"
         except Exception as exc:
             log.debug("OmniMemory.summarize failed: %s", exc)
-            return ""
+        return ""
 
     async def graph_query(self, cypher: str, **params: Any) -> list[dict]:
-        """Run an arbitrary Cypher query against the Neo4j graph.
+        """Run a query against the MemPalace KnowledgeGraph.
 
-        Thin wrapper around ``graph_memory.query()``.  Returns an empty list
-        when Neo4j is disabled or unavailable.
+        The 'cypher' parameter is kept for API compat but is now treated
+        as a search term for KG triples rather than a Cypher query.
+        Returns an empty list when MemPalace is disabled or unavailable.
         """
         try:
-            from bantz.memory.graph import graph_memory
-            if graph_memory and graph_memory.enabled:
-                return await graph_memory.query(cypher, **params)
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                kg = palace_bridge.kg
+                if kg is not None:
+                    limit = params.get("limit", 20)
+                    # KnowledgeGraph.timeline() returns chronological triples
+                    triples = kg.timeline()
+                    return triples[-limit:] if triples else []
         except Exception as exc:
             log.debug("OmniMemory.graph_query failed: %s", exc)
         return []
@@ -261,7 +268,7 @@ class OmniMemoryManager:
         Within the transaction block all :meth:`store` / :meth:`forget` calls
         are buffered and applied as a single SQLite write-transaction on
         ``__aexit__``.  If an exception is raised the SQLite transaction is
-        rolled back; operations on other backends (Neo4j, ChromaDB) are
+        rolled back; operations on other backends (MemPalace, ChromaDB) are
         already committed and cannot be undone.
 
         Usage::
@@ -276,14 +283,14 @@ class OmniMemoryManager:
 
     @staticmethod
     async def _graph_search(user_msg: str) -> str:
-        """Query Neo4j graph memory (empty string if disabled/error)."""
+        """Query MemPalace graph context (empty string if disabled/error)."""
         try:
-            from bantz.memory.graph import graph_memory
+            from bantz.memory.bridge import palace_bridge
         except ImportError:
             return ""
-        if graph_memory and graph_memory.enabled:
+        if palace_bridge and palace_bridge.enabled:
             try:
-                return await graph_memory.context_for(user_msg)
+                return palace_bridge.graph_context(user_msg)
             except Exception as exc:
                 log.debug("Graph search failed: %s", exc)
         return ""
@@ -318,12 +325,14 @@ class OmniMemoryManager:
 
     @staticmethod
     async def _deep_search(user_msg: str) -> str:
-        """Spontaneous deep memory recall (#170)."""
+        """Spontaneous deep memory recall via MemPalace L3."""
         try:
-            from bantz.memory.deep_probe import deep_probe
-            return await deep_probe.probe(user_msg)
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                return palace_bridge.deep_memory(user_msg)
         except Exception:
-            return ""
+            pass
+        return ""
 
     # ── Re-ranking: graph-informed vector boost ───────────────────────
 

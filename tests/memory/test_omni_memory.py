@@ -322,7 +322,7 @@ class TestOmniMemoryRecall:
         with patch.object(omm, "_graph_search", new_callable=AsyncMock) as g, \
              patch.object(omm, "_vector_search", new_callable=AsyncMock) as v, \
              patch.object(omm, "_deep_search", new_callable=AsyncMock) as d:
-            g.side_effect = RuntimeError("Neo4j down")
+            g.side_effect = RuntimeError("Graph search down")
             v.return_value = "Relevant past context:\n[vec 0.8] user: working"
             d.return_value = ""
 

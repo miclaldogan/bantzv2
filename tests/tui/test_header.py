@@ -60,7 +60,7 @@ class TestServiceHealthChanged:
 
     def test_default_detail(self):
         from bantz.interface.tui.panels.header import ServiceHealthChanged, ServiceStatus
-        msg = ServiceHealthChanged("neo4j", ServiceStatus.DOWN)
+        msg = ServiceHealthChanged("palace", ServiceStatus.DOWN)
         assert msg.detail == ""
 
 
@@ -89,7 +89,7 @@ class TestOperationsHeader:
         from bantz.interface.tui.panels.header import ServiceStatus
         h = self._make()
         assert h.ollama_status == ServiceStatus.UNCONFIGURED
-        assert h.neo4j_status == ServiceStatus.UNCONFIGURED
+        assert h.palace_status == ServiceStatus.UNCONFIGURED
         assert h.gemini_status == ServiceStatus.UNCONFIGURED
         assert h.telegram_status == ServiceStatus.UNCONFIGURED
 
@@ -108,11 +108,11 @@ class TestOperationsHeader:
         h._set_status("ollama", ServiceStatus.UP)
         assert h.ollama_status == ServiceStatus.UP
 
-    def test_set_status_neo4j(self):
+    def test_set_status_palace(self):
         from bantz.interface.tui.panels.header import ServiceStatus
         h = self._make()
-        h._set_status("neo4j", ServiceStatus.DOWN)
-        assert h.neo4j_status == ServiceStatus.DOWN
+        h._set_status("palace", ServiceStatus.DOWN)
+        assert h.palace_status == ServiceStatus.DOWN
 
     def test_set_status_gemini(self):
         from bantz.interface.tui.panels.header import ServiceStatus
@@ -197,7 +197,7 @@ class TestOperationsHeaderRender:
         h = OperationsHeader()
         text = h.render()
         assert "Ollama" in text
-        assert "Neo4j" in text
+        assert "Palace" in text
         assert "Gemini" in text
         assert "Telegram" in text
 
@@ -344,7 +344,7 @@ class TestArchitecture:
     def test_probes_are_threaded(self):
         """All probe methods should be @work(thread=True) decorated."""
         from bantz.interface.tui.panels.header import OperationsHeader
-        for name in ("_probe_ollama", "_probe_neo4j", "_probe_gemini",
+        for name in ("_probe_ollama", "_probe_palace", "_probe_gemini",
                       "_probe_telegram", "_fetch_db_counts"):
             method = getattr(OperationsHeader, name)
             # @work(thread=True) wraps the function — check it's decorated

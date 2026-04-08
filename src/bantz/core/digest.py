@@ -309,23 +309,21 @@ class DigestManager:
 
     async def _get_graph_growth(self) -> Optional[str]:
         try:
-            from bantz.memory.graph import graph_memory
-            if not graph_memory.enabled:
+            from bantz.memory.bridge import palace_bridge
+            if not palace_bridge or not palace_bridge.enabled:
                 return None
 
-            stats = await graph_memory.stats()
+            stats = palace_bridge.stats()
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            growth = await graph_memory.growth_since(week_ago)
+            growth = palace_bridge.growth_since(week_ago)
 
             lines = [
-                f"Total: {stats.get('total_nodes', 0)} nodes, "
-                f"{stats.get('total_relationships', 0)} relationships",
+                f"Total: {stats.get('entities', 0)} entities, "
+                f"{stats.get('triples', 0)} triples, "
+                f"{stats.get('drawers', 0)} drawers",
             ]
-            if growth["new_nodes"] > 0:
-                lines.append(f"New this week: +{growth['new_nodes']} nodes, +{growth['new_rels']} relationships")
-                if growth["by_label"]:
-                    breakdown = ", ".join(f"{k}: +{v}" for k, v in growth["by_label"].items())
-                    lines.append(f"  ({breakdown})")
+            if growth.get("new_entities", 0) > 0:
+                lines.append(f"New this week: +{growth['new_entities']} entities, +{growth['new_triples']} triples")
             else:
                 lines.append("No new entries this week")
             return "\n".join(lines)
@@ -334,21 +332,30 @@ class DigestManager:
 
     async def _get_commitments(self) -> Optional[str]:
         try:
-            from bantz.memory.graph import graph_memory
-            if not graph_memory.enabled:
+            from bantz.memory.bridge import palace_bridge
+            if not palace_bridge or not palace_bridge.enabled:
                 return None
 
-            result = await graph_memory._query(
-                "MATCH (c:Commitment {status: 'active'}) "
-                "RETURN c.what AS what, c.date AS date "
-                "ORDER BY c.date DESC LIMIT 10"
-            )
-            if not result:
+            # Query KnowledgeGraph for commitment/decision triples
+            kg = palace_bridge.kg
+            if kg is None:
                 return None
 
-            lines = [f"Active commitments: {len(result)}"]
-            for c in result:
-                lines.append(f"  • {c['what']}")
+            triples = kg.recent(limit=30)
+            commitments = [
+                t for t in triples
+                if any(kw in (t.get("relation", "") or "").lower()
+                       for kw in ("committed", "decided", "promised", "will"))
+            ]
+            if not commitments:
+                return None
+
+            lines = [f"Active commitments: {len(commitments)}"]
+            for c in commitments:
+                subj = c.get("subject", "")
+                rel = c.get("relation", "")
+                obj = c.get("object", "")
+                lines.append(f"  • {subj} {rel} {obj}".strip())
             return "\n".join(lines)
         except Exception:
             return None

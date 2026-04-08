@@ -385,9 +385,11 @@ def focus_window(app_name: str) -> bool:
 class AccessibilityTool(BaseTool):
     name = "accessibility"
     description = (
-        "Read the OS accessibility tree to locate UI elements in running apps. "
-        "Use for: click a button, find a UI element, list windows, focus a window. "
-        "Zero GPU cost, instant response (< 50ms)."
+        "Query the OS accessibility tree (AT-SPI) to inspect running applications. "
+        "Params: action (find|list_apps|focus|tree|describe|info), app (str), label (str). "
+        "Use for: listing open windows, focusing an app, finding UI element details, "
+        "describing what's on screen. Read-only inspection — does NOT click or type anything. "
+        "For actually clicking elements, use visual_click."
     )
     risk_level = "safe"
 

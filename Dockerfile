@@ -34,7 +34,7 @@ WORKDIR /home/bantz/app
 
 # ── Python dependencies ────────────────────────────────────────────────────────
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[graph]"
+RUN pip install --no-cache-dir -e .
 
 # ── Application source ─────────────────────────────────────────────────────────
 COPY src/ ./src/

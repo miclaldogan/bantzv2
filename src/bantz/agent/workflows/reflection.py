@@ -18,7 +18,7 @@ Architecture (user's 4 strategic fixes applied):
      so no "ghost vectors" remain in semantic search.
 
   4. **Entity Resolution** — before asking the LLM to extract entities,
-     fetches existing Person/Topic/Decision nodes from Neo4j and injects
+     fetches existing Person/Topic/Decision entities from MemPalace KG and injects
      them into the prompt so the model merges "Ali (study group)" with
      "Ali" instead of creating duplicates.
 
@@ -400,41 +400,31 @@ def _parse_reflection_json(raw: str) -> dict:
 async def _fetch_existing_entities_from_graph() -> str:
     """
     Entity Resolution (Recommendation #4):
-    Fetch existing Person/Topic/Decision nodes from Neo4j
+    Fetch existing entities from MemPalace KnowledgeGraph
     so the LLM can merge instead of creating duplicates.
     """
     try:
-        from bantz.memory.graph import graph_memory
-        if not graph_memory.enabled:
+        from bantz.memory.bridge import palace_bridge
+        if not palace_bridge or not palace_bridge.enabled:
+            return "(Graph not available)"
+
+        kg = palace_bridge.kg
+        if kg is None:
             return "(Graph not available)"
 
         entities = []
-        for label in ("Person", "Topic", "Decision", "Task"):
-            try:
-                rows = await graph_memory._query(
-                    f"MATCH (n:{label}) RETURN n.name AS name "
-                    f"ORDER BY n.last_seen DESC LIMIT 50"
-                )
-                for r in rows:
-                    name = r.get("name")
-                    if name:
-                        entities.append(f"{label}: {name}")
-            except Exception:
-                # Some labels use different key props
-                try:
-                    key = {"Decision": "what", "Task": "description"}.get(label, "name")
-                    rows = await graph_memory._query(
-                        f"MATCH (n:{label}) RETURN n.{key} AS name "
-                        f"ORDER BY n.created_at DESC LIMIT 30"
-                    )
-                    for r in rows:
-                        name = r.get("name")
-                        if name:
-                            entities.append(f"{label}: {name}")
-                except Exception:
-                    pass
+        # Get recent triples and extract unique subject/object entities
+        triples = kg.recent(limit=100)
+        seen = set()
+        for t in triples:
+            for field in ("subject", "object"):
+                name = t.get(field, "")
+                if name and name not in seen and name.lower() != "user":
+                    seen.add(name)
+                    rel = t.get("relation", "")
+                    entities.append(f"{rel}: {name}")
 
-        return "\n".join(entities) if entities else "(Empty graph — this is the first run)"
+        return "\n".join(entities[:80]) if entities else "(Empty graph — this is the first run)"
     except (ImportError, Exception) as exc:
         log.debug("Could not fetch graph entities: %s", exc)
         return "(Graph not available)"
@@ -562,43 +552,35 @@ def _rule_based_entity_extraction(reflection: dict) -> list[dict]:
 
 
 async def _store_entities_to_graph(entities: list[dict]) -> int:
-    """Upsert extracted entities into Neo4j graph."""
+    """Upsert extracted entities into MemPalace KnowledgeGraph."""
     try:
-        from bantz.memory.graph import graph_memory
-        if not graph_memory.enabled:
+        from bantz.memory.bridge import palace_bridge
+        if not palace_bridge or not palace_bridge.enabled:
+            return 0
+
+        kg = palace_bridge.kg
+        if kg is None:
             return 0
 
         stored = 0
-        now = datetime.now().isoformat(timespec="seconds")
 
         for ent in entities:
             label = ent.get("label", "")
-            key_prop = ent.get("key_prop", "name")
             value = ent.get("value", "")
             context = ent.get("context", "")
 
             if not label or not value:
                 continue
 
-            # Build entity dict compatible with graph_memory._upsert_entities
-            graph_ent = {
-                "label": label,
-                "key": key_prop,
-                "props": {
-                    key_prop: value,
-                    "last_seen": now,
-                    "source": "reflection",
-                },
-                "rels": [],
-            }
-            if context:
-                graph_ent["props"]["context"] = context
-
             try:
-                await graph_memory._upsert_entities([graph_ent], now)
+                kg.add_triple(
+                    subject=value,
+                    relation=f"is_{label.lower()}",
+                    obj=context or label,
+                )
                 stored += 1
             except Exception as exc:
-                log.debug("Graph upsert failed for %s: %s", value, exc)
+                log.debug("KG upsert failed for %s: %s", value, exc)
 
         return stored
     except (ImportError, Exception) as exc:
@@ -622,36 +604,16 @@ async def _store_reflection(
     except Exception as exc:
         log.warning("Failed to store reflection in KV: %s", exc)
 
-    # Embed reflection summary into vector space
+    # Embed reflection summary into vector space via MemPalace
     try:
-        from bantz.config import config
-        if config.embedding_enabled:
-            from bantz.memory.embeddings import embedder
+        from bantz.memory.bridge import palace_bridge
+        if palace_bridge and palace_bridge.enabled:
             embed_text = f"Daily reflection {result.date}: {result.summary} {result.reflection}"
-            vec = await embedder.embed(embed_text)
-            if vec:
-                from bantz.memory.distiller import store_distillation, DistillationResult
-                # Store as a special "reflection" distillation (conversation_id = -date_hash)
-                # Use negative ID to distinguish from session distillations
-                date_hash = abs(hash(result.date)) % 10_000_000
-                dr = DistillationResult(
-                    session_id=-date_hash,
-                    summary=f"[Daily Reflection] {result.summary}",
-                    topics=[],
-                    decisions=result.decisions,
-                    people=result.people_mentioned,
-                    tools_used=[],
-                    exchange_count=result.total_messages,
-                )
-                try:
-                    store_distillation(
-                        -date_hash, dr,
-                        embedding=vec,
-                        embed_model=embedder.model,
-                    )
-                except Exception:
-                    # Might conflict on session_id — update instead
-                    pass
+            await palace_bridge.store_exchange(
+                user_msg=f"[reflection] {result.date}",
+                assistant_msg=embed_text,
+                tool_used="reflection",
+            )
     except Exception as exc:
         log.debug("Reflection embedding failed: %s", exc)
 

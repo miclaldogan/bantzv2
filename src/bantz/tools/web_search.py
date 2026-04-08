@@ -372,10 +372,12 @@ def _format_results(results: list[dict], query: str, cached: bool) -> str:
 class WebSearchTool(BaseTool):
     name = "web_search"
     description = (
-        "Search the internet via DuckDuckGo. "
-        "Use for: search, look up, find online, google, research, "
-        "anything about, is there any information about. "
-        "Be specific with query terms — NEVER use vague single-word queries."
+        "Search the internet for information — answers factual questions, "
+        "looks up people, places, concepts, current events, and any topic. "
+        "Params: query (str) = specific search terms. "
+        "Use for ANY knowledge question the assistant doesn't already know. "
+        "'who is X', 'what is Y', 'look it up', 'google Z', 'find info about' → web_search. "
+        "NEVER use vague single-word queries. NOT for opening apps or clicking things."
     )
     risk_level = "safe"
 

@@ -18,8 +18,9 @@ def _bytes_to_gb(b: int) -> float:
 class SystemTool(BaseTool):
     name = "system"
     description = (
-        "Returns system information: CPU usage, RAM, disk usage, uptime. "
-        "Used for performance-related questions to understand system status."
+        "Get live system metrics: CPU usage, RAM usage, disk usage, uptime, load average. "
+        "Params: metric (str) = 'all' (default), 'cpu', 'ram', 'disk'. "
+        "Use for: 'how much RAM am I using', 'CPU usage', 'disk space', 'system status'."
     )
     risk_level = "safe"
 

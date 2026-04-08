@@ -58,9 +58,9 @@ import bantz.core.notification_manager as _notif_mod
 log = logging.getLogger("bantz.brain")
 
 try:
-    from bantz.memory.graph import graph_memory
+    from bantz.memory.bridge import palace_bridge
 except ImportError:
-    graph_memory = None  # neo4j driver not installed
+    palace_bridge = None  # mempalace not installed
 _toast_callback = None  # written by app.py / tests
 
 
@@ -134,8 +134,8 @@ class Brain:
         return desktop_context()
 
     async def _ensure_graph(self) -> None:
-        if not self._graph_ready and graph_memory:
-            await graph_memory.init()
+        if not self._graph_ready and palace_bridge:
+            await palace_bridge.init()
             self._graph_ready = True
 
     async def _graph_context(self, user_msg: str) -> str:
@@ -152,21 +152,16 @@ class Brain:
         return await _deep_memory_ctx_fn(user_msg)
 
     def _fire_embeddings(self) -> None:
-        """Fire-and-forget: embed any queued messages from this exchange."""
-        try:
-            from bantz.core.memory import memory
-            if memory._embed_queue:
-                asyncio.ensure_future(memory.embed_pending())
-        except Exception:
-            pass
+        """No-op: embeddings now handled by MemPalace (ChromaDB built-in)."""
+        pass
 
     async def _graph_store(self, user_msg: str, assistant_msg: str,
                            tool_used: str | None = None,
                            tool_data: dict | None = None) -> None:
-        """Store entities from exchange in graph (fire-and-forget)."""
-        if graph_memory and graph_memory.enabled:
+        """Store entities from exchange in palace (fire-and-forget)."""
+        if palace_bridge and palace_bridge.enabled:
             try:
-                await graph_memory.extract_and_store(
+                await palace_bridge.store_exchange(
                     user_msg, assistant_msg, tool_used, tool_data)
             except Exception:
                 pass
@@ -941,7 +936,7 @@ class Brain:
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
         from bantz.memory.omni_memory import omni_memory
-        recall = await omni_memory.recall(en_input)
+        recall = await omni_memory.recall(en_input)  # omni_memory now delegates to bridge
         return await _finalize_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
@@ -955,7 +950,7 @@ class Brain:
     ) -> AsyncIterator[str] | None:
         """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
         from bantz.memory.omni_memory import omni_memory
-        recall = await omni_memory.recall(en_input)
+        recall = await omni_memory.recall(en_input)  # omni_memory now delegates to bridge
         return await _finalize_stream_fn(
             en_input, result, tc,
             style_hint=_style_hint(),

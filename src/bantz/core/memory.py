@@ -41,7 +41,7 @@ class Memory(ConversationStore):
         self._initialized: bool = False
         self._session_id: Optional[int] = None
         self._vector_store = None  # VectorStore — lazy init
-        self._embed_queue: list[tuple[int, str]] = []  # (msg_id, content) pending embed
+        self._embed_queue: list[tuple[int, str]] = []  # DEPRECATED: kept for compat, no longer consumed
 
     # ── Init ──────────────────────────────────────────────────────────────
 
@@ -94,23 +94,39 @@ class Memory(ConversationStore):
             except Exception:
                 pass   # FTS5 not compiled in — search will fall back to LIKE
 
-        # Distillation table (#118)
+        # Distillation table (#118) — now handled by MemPalace bridge
+        # Migration kept for backward compat with existing DBs
         try:
-            from bantz.memory.distiller import migrate_distillation_table
-            migrate_distillation_table()
+            from bantz.data.connection_pool import get_pool
+            with get_pool().connection(write=True) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS session_distillations (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id INTEGER NOT NULL UNIQUE,
+                        summary         TEXT    NOT NULL,
+                        topics          TEXT    NOT NULL DEFAULT '',
+                        decisions       TEXT    NOT NULL DEFAULT '',
+                        people          TEXT    NOT NULL DEFAULT '',
+                        tools_used      TEXT    NOT NULL DEFAULT '',
+                        exchange_count  INTEGER NOT NULL DEFAULT 0,
+                        embedding       BLOB,
+                        embed_dim       INTEGER,
+                        embed_model     TEXT,
+                        created_at      TEXT    NOT NULL,
+                        FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                    )""")
         except Exception as exc:
             log.debug("Distillation table migration skipped: %s", exc)
 
     def _init_vector_store(self) -> None:
-        """Initialize the vector store table."""
-        try:
-            from bantz.memory.vector_store import VectorStore
-            self._vector_store = VectorStore()
-            self._vector_store.migrate()
-            log.debug("Vector store initialized")
-        except Exception as exc:
-            log.debug("Vector store init failed: %s", exc)
-            self._vector_store = None
+        """Vector store now handled by MemPalace (ChromaDB).
+
+        Kept as no-op stub for backward compat — callers that reference
+        self._vector_store will get None (which is safe, all methods
+        check for None before using it).
+        """
+        self._vector_store = None
+        log.debug("Vector store delegated to MemPalace")
 
     # ── Session management ────────────────────────────────────────────────
 
@@ -137,21 +153,16 @@ class Memory(ConversationStore):
         return self._session_id
 
     def _fire_distillation(self, session_id: int) -> None:
-        """Fire-and-forget distillation of a completed session."""
+        """Fire-and-forget distillation of a completed session via MemPalace."""
         try:
             from bantz.config import config
             if not config.distillation_enabled:
                 return
 
-            from bantz.memory.distiller import distill_session
-            asyncio.ensure_future(
-                distill_session(
-                    session_id,
-                    min_exchanges=config.distillation_min_exchanges,
-                    embed=config.embedding_enabled,
-                )
-            )
-            log.debug("Distillation fired for session %d", session_id)
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                asyncio.ensure_future(palace_bridge.distill_session(session_id))
+                log.debug("MemPalace distillation fired for session %d", session_id)
         except Exception as exc:
             log.debug("Distillation fire failed: %s", exc)
 
@@ -200,9 +211,8 @@ class Memory(ConversationStore):
             )
             msg_id = cur.lastrowid
 
-        # Queue for async embedding (processed in embed_pending)
-        if role in ("user", "assistant") and len(content) > 10:
-            self._embed_queue.append((msg_id, content))
+        # Embedding note: MemPalace handles embeddings via
+        # palace_bridge.store_exchange() called from brain._graph_store()
 
         return msg_id
 
@@ -359,38 +369,13 @@ class Memory(ConversationStore):
         return self._vector_store
 
     async def embed_pending(self) -> int:
-        """Process the embed queue — call after each exchange.
+        """No-op: embeddings now handled by MemPalace (ChromaDB built-in).
 
-        Embeds queued messages via Ollama and stores vectors.
-        Returns the number of embeddings stored.
-        Fire-and-forget safe — errors are logged but don't propagate.
+        Returns 0 always. Kept for backward compat — callers may still
+        call this but it will harmlessly no-op.
         """
-        if not self._vector_store or not self._embed_queue:
-            return 0
-
-        from bantz.config import config
-        if not config.embedding_enabled:
-            self._embed_queue.clear()
-            return 0
-
-        from bantz.memory.embeddings import embedder
-
-        queue = self._embed_queue[:]
         self._embed_queue.clear()
-        stored = 0
-
-        for msg_id, content in queue:
-            try:
-                vec = await embedder.embed(content)
-                if vec:
-                    self._vector_store.store(msg_id, vec, model=embedder.model)
-                    stored += 1
-            except Exception as exc:
-                log.debug("Embed msg %d failed: %s", msg_id, exc)
-
-        if stored:
-            log.debug("Embedded %d/%d messages", stored, len(queue))
-        return stored
+        return 0
 
     async def semantic_search(
         self,
@@ -398,25 +383,20 @@ class Memory(ConversationStore):
         limit: int = 5,
         min_score: float = 0.3,
     ) -> list[dict]:
-        """Semantic search using vector cosine similarity.
+        """Semantic search via MemPalace L3 (ChromaDB).
 
-        Embeds the query, then finds closest messages by meaning.
-        Returns [] if embeddings are disabled or unavailable.
+        Delegates to palace_bridge.vector_context() for actual search.
+        Returns [] if MemPalace is disabled or unavailable.
         """
-        if not self._vector_store:
-            return []
-
-        from bantz.config import config
-        if not config.embedding_enabled:
-            return []
-
-        from bantz.memory.embeddings import embedder
-
-        query_vec = await embedder.embed(query)
-        if not query_vec:
-            return []
-
-        return self._vector_store.search(query_vec, limit=limit, min_score=min_score)
+        try:
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                result = palace_bridge.vector_context(query, limit=limit)
+                if result:
+                    return [{"role": "memory", "content": result, "source": "mempalace", "score": 1.0, "hybrid_score": 1.0}]
+        except Exception:
+            pass
+        return []
 
     async def hybrid_search(
         self,
@@ -479,44 +459,19 @@ class Memory(ConversationStore):
         return ranked[:limit]
 
     async def backfill_embeddings(self, batch_size: int = 50) -> int:
-        """Backfill embeddings for messages that don't have them yet.
-
-        Useful for upgrading existing databases.  Returns count embedded.
-        """
-        if not self._vector_store:
-            return 0
-
-        from bantz.config import config
-        if not config.embedding_enabled:
-            return 0
-
-        from bantz.memory.embeddings import embedder
-
-        unembedded = self._vector_store.unembedded_messages(limit=batch_size)
-        if not unembedded:
-            return 0
-
-        stored = 0
-        for msg in unembedded:
-            try:
-                vec = await embedder.embed(msg["content"])
-                if vec:
-                    self._vector_store.store(msg["id"], vec, model=embedder.model)
-                    stored += 1
-            except Exception as exc:
-                log.debug("Backfill embed %d failed: %s", msg["id"], exc)
-
-        log.info("Backfilled %d/%d embeddings", stored, len(unembedded))
-        return stored
+        """No-op: backfill is not needed — MemPalace handles embeddings."""
+        return 0
 
     def vector_stats(self) -> dict:
-        """Vector store statistics for diagnostics."""
-        if not self._vector_store:
-            return {"enabled": False}
-        return {
-            "enabled": True,
-            **self._vector_store.stats(),
-        }
+        """Vector store statistics via MemPalace bridge."""
+        try:
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                s = palace_bridge.stats()
+                return {"enabled": True, "drawers": s.get("drawers", 0), "backend": "mempalace"}
+        except Exception:
+            pass
+        return {"enabled": False}
 
     # ── Distillation queries (#118) ───────────────────────────────────────
 
@@ -526,34 +481,32 @@ class Memory(ConversationStore):
         limit: int = 3,
         min_score: float = 0.3,
     ) -> list[dict]:
-        """Search past session distillations by semantic similarity."""
+        """Search past session distillations via MemPalace deep search."""
         if not self._initialized:
             return []
 
-        from bantz.config import config
-        if not config.embedding_enabled or not config.distillation_enabled:
-            return []
-
         try:
-            from bantz.memory.embeddings import embedder
-            query_vec = await embedder.embed(query)
-            if not query_vec:
-                return []
-            from bantz.memory.distiller import search_distillations
-            return search_distillations(query_vec, limit, min_score)
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                result = palace_bridge.deep_memory(query)
+                if result:
+                    return [{"summary": result, "source": "mempalace", "score": 1.0}]
         except Exception as exc:
             log.debug("Distillation search failed: %s", exc)
-            return []
+        return []
 
     def distillation_stats(self) -> dict:
-        """Distillation statistics for diagnostics."""
+        """Distillation statistics via MemPalace bridge."""
         if not self._initialized:
             return {"enabled": False}
         try:
-            from bantz.memory.distiller import distillation_stats
-            return {"enabled": True, **distillation_stats()}
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                s = palace_bridge.stats()
+                return {"enabled": True, "backend": "mempalace", **s}
         except Exception:
-            return {"enabled": False}
+            pass
+        return {"enabled": False}
 
 
 def _now() -> str:

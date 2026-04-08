@@ -94,6 +94,17 @@ class TestQuickRoute:
         "run maintenance dry",
         "run reflection",
         "show reflections",
+        # GUI commands — moved to LLM routing (#340)
+        "open chrome",
+        "open firefox",
+        "launch terminal",
+        "aç dosya",
+        "go to google.com",
+        "navigate to wikipedia.org",
+        "new tab",
+        "click firefox",
+        "click terminal",
+        "click files",
     ])
     def test_removed_regex_returns_none(self, text):
         """Queries that were previously regex-matched must now return None."""

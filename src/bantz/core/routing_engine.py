@@ -5,9 +5,10 @@ Owns routing logic that decides *what* the brain should do for a given
 user utterance.
 
 1. **quick_route(orig, en)**
-   Regex fast-path for **hardware/UI controls ONLY**: TTS stop, wake-word
-   on/off, audio ducking, and clear-memory.  All natural-language tool
-   selection goes through ``cot_route()`` in ``intent.py`` (#272).
+   Regex fast-path for **hardware controls ONLY**: TTS stop, wake-word
+   on/off, audio ducking, and clear-memory.  GUI app launches, browser
+   navigation, and desktop clicks are now routed through ``cot_route()``
+   in ``intent.py`` so the LLM can reason about context (#340).
 
 2. **dispatch_internal(tool, args, user_input, en_input, tc, *, is_remote)**
    Handles every "internal" tool (``_tts_stop``, ``_briefing``, …) that
@@ -47,10 +48,12 @@ log = logging.getLogger("bantz.routing_engine")
 # ═══════════════════════════════════════════════════════════════════════════
 
 def quick_route(orig: str, en: str) -> dict | None:
-    """Hardware/UI controls only — instant routing, no LLM needed (#272).
+    """Hardware/UI controls ONLY — instant routing, no LLM needed (#272).
 
-    Everything else (shell, system metrics, weather, gmail, etc.) goes
-    through ``cot_route()`` so the LLM can reason about the request.
+    Covers only true hardware switches (TTS, wake word, audio ducking,
+    clear memory).  All other routing — including GUI app launches,
+    browser navigation, and desktop clicks — goes through ``cot_route()``
+    so the LLM can reason about context and pick the right tool (#340).
     """
     o = orig.lower().strip()
     e = en.lower().strip()
@@ -84,75 +87,29 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
 
-    # ── GUI fast-path: app launch / navigation / desktop click ────────
-    # These MUST bypass the LLM — small models routinely misroute them
-    # to web_search, filesystem, or planner.
-
-    # Fast-path 1: "open/launch/start [known_app]" → browser_control action=open
-    _launch_m = re.search(
-        r"(?:open|launch|start|run|aç|başlat)\s+"
-        r"(google\s+chrome|chromium|firefox|chrome"
-        r"|files?|file\s*manager|nautilus|dosya"
-        r"|terminal|bash|konsole|vscode|gedit)\b",
-        both, re.IGNORECASE,
+    # ── App launches (unambiguous desktop apps) ───────────────────────
+    # These bypass LLM entirely for instant response (#340 speed fix).
+    m = re.search(
+        r"(?:open|launch|start|run)\s+"
+        r"(firefox|chrome|chromium|terminal|files|vscode|gedit)",
+        both,
     )
-    if _launch_m:
-        _APP_MAP = {
-            "chrome": "chrome", "google chrome": "chrome", "chromium": "chrome",
-            "firefox": "firefox", "mozilla": "firefox",
-            "files": "files", "file manager": "files",
-            "nautilus": "files", "dosya": "files",
-            "terminal": "terminal", "bash": "terminal", "konsole": "terminal",
-            "vscode": "vscode", "code": "vscode",
-            "gedit": "gedit",
-        }
-        app_key = _APP_MAP.get(_launch_m.group(1).lower().strip(),
-                               _launch_m.group(1).lower().strip())
-        _args: dict = {"action": "open", "app": app_key}
-        # Inline URL? e.g. "open firefox and go to wikipedia.org"
-        _url_m = re.search(
-            r"(?:go\s+to|navigate\s+to)\s+"
-            r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)",
-            both, re.IGNORECASE,
-        )
-        if _url_m:
-            _u = _url_m.group(1)
-            _args["url"] = _u if _u.startswith("http") else "https://" + _u
-        return {"tool": "browser_control", "args": _args}
+    if m:
+        return {"tool": "browser_control", "args": {"action": "open", "app": m.group(1)}}
 
-    # Fast-path 2: "go to X" / "navigate to X" (whole utterance is navigation)
-    _nav_m = re.match(
-        r"^(?:go\s+to|navigate\s+to)\s+"
-        r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)$",
-        e.strip(), re.IGNORECASE,
-    ) or re.match(
-        r"^(?:go\s+to|navigate\s+to)\s+"
-        r"((?:https?://)?[\w.-]+\.(?:com|org|net|io|gov|edu)[\w/.-]*)$",
-        o.strip(), re.IGNORECASE,
+    # ── URL navigation (explicit URL in input) ────────────────────────
+    m = re.search(
+        r"(?:go\s+to|open|navigate\s+(?:to)?)\s+"
+        r"(https?://\S+|(?:www\.)\S+)",
+        both,
     )
-    if _nav_m and len(e.strip()) < 80:
-        _u = _nav_m.group(1)
-        return {"tool": "browser_control", "args": {
-            "action": "navigate",
-            "url": _u if _u.startswith("http") else "https://" + _u,
-        }}
+    if m:
+        url = m.group(1)
+        if not url.startswith("http"):
+            url = "https://" + url
+        return {"tool": "browser_control", "args": {"action": "navigate", "url": url}}
 
-    # Fast-path 2b: "new tab" / "open a new tab" → browser_control action=new_tab
-    if re.search(r"\bnew\s+tab\b", both, re.IGNORECASE):
-        return {"tool": "browser_control", "args": {"action": "new_tab"}}
-
-    # Fast-path 3: "click [known desktop element]" → visual_click
-    _DESKTOP_TARGETS = frozenset({
-        "chrome", "firefox", "chromium", "files", "file manager",
-        "terminal", "vscode", "nautilus", "trash", "settings",
-    })
-    _click_m = re.match(r"^click\s+(.+)$", e.strip(), re.IGNORECASE) or \
-               re.match(r"^click\s+(.+)$", o.strip(), re.IGNORECASE)
-    if _click_m:
-        _target = _click_m.group(1).strip().lower()
-        if _target in _DESKTOP_TARGETS:
-            return {"tool": "visual_click", "args": {"target": _target}}
-
+    # Everything else → cot_route (LLM-based reasoning)
     return None
 
 

@@ -96,10 +96,12 @@ def strip_html(html: str) -> str:
 class WebReaderTool(BaseTool):
     name = "read_url"
     description = (
-        "Fetch and read the full text content of a specific URL / webpage. "
-        "Use when you need the complete article text, not just a search snippet. "
-        "Returns clean plain text (HTML stripped). "
-        "Requires a valid URL — NEVER fabricate or guess URLs."
+        "Read the full text content of a specific URL. "
+        "Params: url (str) = the webpage URL to read. "
+        "Returns clean plain text with HTML stripped. "
+        "Use when you have a specific URL and need its full content. "
+        "For searching the web without a URL, use web_search instead. "
+        "NEVER fabricate or guess URLs."
     )
     risk_level = "safe"
 

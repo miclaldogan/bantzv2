@@ -52,11 +52,9 @@ class TestSectionFor:
         assert _section_for("ollama_model") == "Ollama"
         assert _section_for("ollama_base_url") == "Ollama"
 
-    def test_embeddings(self):
+    def test_vector_search(self):
         from bantz.__main__ import _section_for
-        assert _section_for("embedding_model") == "Embeddings"
-        assert _section_for("embedding_enabled") == "Embeddings"
-        assert _section_for("vector_search_weight") == "Embeddings"
+        assert _section_for("vector_search_weight") == "Vector Search"
 
     def test_gemini(self):
         from bantz.__main__ import _section_for
@@ -102,9 +100,9 @@ class TestSectionFor:
         from bantz.__main__ import _section_for
         assert _section_for("location_city") == "Location"
 
-    def test_neo4j(self):
+    def test_mempalace(self):
         from bantz.__main__ import _section_for
-        assert _section_for("neo4j_enabled") == "Neo4j"
+        assert _section_for("mempalace_enabled") == "MemPalace"
 
     def test_unknown_falls_to_general(self):
         from bantz.__main__ import _section_for
@@ -163,7 +161,7 @@ class TestSectionFor:
 class TestSecretFields:
     def test_expected_secrets(self):
         from bantz.__main__ import _SECRET_FIELDS
-        expected = {"gemini_api_key", "neo4j_password", "telegram_bot_token", "gps_relay_token"}
+        expected = {"gemini_api_key", "telegram_bot_token", "gps_relay_token"}
         assert _SECRET_FIELDS == expected
 
     def test_secrets_are_frozenset(self):
@@ -190,10 +188,6 @@ class TestShowConfig:
             _show_config()
         output = buf.getvalue()
         # gemini_api_key default is "" → should show "(empty)"
-        assert "(empty)" in output
-        # neo4j_password default is "bantzpass" → should be masked
-        assert "bantzpass" not in output
-        assert "bant****" in output
 
     def test_non_secrets_shown_in_clear(self):
         from bantz.__main__ import _show_config

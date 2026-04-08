@@ -606,7 +606,7 @@ def _cache_stats() -> None:
 # ── Config display ────────────────────────────────────────────────────────
 
 _SECRET_FIELDS = frozenset({
-    "gemini_api_key", "neo4j_password", "telegram_bot_token",
+    "gemini_api_key", "telegram_bot_token",
     "gps_relay_token",
 })
 
@@ -653,7 +653,7 @@ def _section_for(field_name: str) -> str:
     """Map a config field name to a human-readable section label."""
     _MAP = [
         (("ollama_",), "Ollama"),
-        (("embedding_", "vector_search_"), "Embeddings"),
+        (("vector_search_",), "Vector Search"),
         (("distillation_",), "Distillation"),
         (("vlm_", "screenshot_"), "Vision / VLM"),
         (("input_control_", "input_confirm_", "input_type_"), "Input Control"),
@@ -662,7 +662,7 @@ def _section_for(field_name: str) -> str:
         (("shell_",), "Shell Security"),
         (("location_",), "Location"),
         (("gps_relay_",), "GPS Relay"),
-        (("neo4j_",), "Neo4j"),
+        (("mempalace_","palace_"), "MemPalace"),
         (("data_dir",), "Storage"),
         (("morning_briefing_",), "Morning Briefing"),
         (("daily_digest_", "weekly_digest_"), "Digests"),
@@ -740,16 +740,18 @@ async def _doctor() -> None:
     else:
         print("⚪ Gemini: disabled  → bantz --setup gemini")
 
-    # Neo4j
-    if config.neo4j_enabled:
+    # MemPalace
+    if config.mempalace_enabled:
         try:
-            from bantz.data.layer import layer as _lay
-            _lay.init(config.db_path)
-            print(f"✅ Neo4j: connected ({config.neo4j_uri})")
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                print(f"✅ MemPalace: enabled (wing={config.mempalace_wing})")
+            else:
+                print("❌ MemPalace: enabled but bridge not initialized")
         except Exception:
-            print("❌ Neo4j: enabled but connection failed")
+            print("❌ MemPalace: enabled but import failed")
     else:
-        print("⚪ Neo4j: disabled  → BANTZ_NEO4J_ENABLED=true")
+        print("⚪ MemPalace: disabled  → BANTZ_MEMPALACE_ENABLED=true")
 
     # Vision / VLM
     if config.vlm_enabled:
@@ -798,11 +800,12 @@ async def _doctor() -> None:
     s = _mem.stats()
     print(f"✅ Memory DB: {s['total_conversations']} conversations, {s['total_messages']} messages")
 
-    # Embeddings
-    if config.embedding_enabled:
-        print(f"✅ Embeddings: {config.embedding_model}  (weight={config.vector_search_weight})")
+    # MemPalace (ChromaDB embeddings are handled internally)
+    from bantz.memory.bridge import palace_bridge
+    if palace_bridge.enabled:
+        print(f"✅ MemPalace: active  (vector_weight={config.vector_search_weight})")
     else:
-        print("⚪ Embeddings: disabled  → BANTZ_EMBEDDING_ENABLED=true")
+        print("⚪ MemPalace: not initialised")
 
     # Profile
     from bantz.core.profile import profile as _prof

@@ -22,10 +22,11 @@ from bantz.tools import BaseTool, ToolResult, registry
 class ReminderTool(BaseTool):
     name = "reminder"
     description = (
-        "Create, list, cancel, or snooze reminders and timers. "
+        "Manage reminders and timers: create, list, cancel, snooze. "
+        "Params: action (add|list|cancel|snooze), intent (str) = what to remind, "
+        "id (str) = reminder ID for cancel/snooze. "
         "Supports time-based and location-based triggers. "
-        "Use for: remind me, set a reminder, set a timer, my reminders, "
-        "cancel reminder, snooze, alarm, remind me when at X."
+        "Use for: 'remind me to X', 'set a timer', 'list my reminders'."
     )
     risk_level = "safe"
 
@@ -97,8 +98,8 @@ class ReminderTool(BaseTool):
             # Use a far-future fire_at as fallback expiry
             fire_at = datetime.now() + timedelta(days=365)
             rid = scheduler.add(title, fire_at, repeat=repeat, trigger_place=place_key)
-            # Dual-write to Neo4j
-            _store_reminder_neo4j(rid, title, trigger_place=place_key, repeat=repeat)
+            # Store reminder triple in KnowledgeGraph
+            _store_reminder_kg(rid, title, trigger_place=place_key, repeat=repeat)
             # Bridge to APScheduler (#128)
             ReminderTool._bridge_to_job_scheduler(title, fire_at, repeat)
             return ToolResult(
@@ -116,8 +117,8 @@ class ReminderTool(BaseTool):
         time_display = fire_at.strftime("%d %b %H:%M")
         repeat_info = f" (repeats: {repeat})" if repeat != "none" else ""
 
-        # Dual-write to Neo4j
-        _store_reminder_neo4j(rid, title, fire_at=fire_at, repeat=repeat)
+        # Store reminder triple in KnowledgeGraph
+        _store_reminder_kg(rid, title, fire_at=fire_at, repeat=repeat)
         # Bridge to APScheduler (#128)
         ReminderTool._bridge_to_job_scheduler(title, fire_at, repeat)
 
@@ -390,55 +391,38 @@ def _resolve_place(name: str) -> str | None:
         return None
 
 
-def _store_reminder_neo4j(
+def _store_reminder_kg(
     rid: int,
     title: str,
     fire_at: datetime | None = None,
     trigger_place: str | None = None,
     repeat: str = "none",
 ) -> None:
-    """Dual-write reminder to Neo4j graph as a Reminder node."""
+    """Store reminder as a KnowledgeGraph triple via MemPalace bridge."""
     try:
-        from bantz.memory.graph import graph_memory
-        if not graph_memory.enabled:
+        from bantz.memory.bridge import palace_bridge
+        if not palace_bridge or not palace_bridge.enabled:
             return
 
-        import asyncio
+        kg = palace_bridge.kg
+        if kg is None:
+            return
+
         from datetime import datetime as dt
 
-        props = {
-            "rid": rid,
-            "title": title,
-            "repeat": repeat,
-            "status": "active",
-            "created_at": dt.now().isoformat(),
-        }
+        # Build a descriptive triple: User → set_reminder → title (with metadata)
+        obj_parts = [title]
         if fire_at:
-            props["fire_at"] = fire_at.isoformat()
+            obj_parts.append(f"at {fire_at.isoformat()}")
         if trigger_place:
-            props["trigger_place"] = trigger_place
-            props["trigger_type"] = "location"
-        else:
-            props["trigger_type"] = "time"
+            obj_parts.append(f"place:{trigger_place}")
+        if repeat != "none":
+            obj_parts.append(f"repeat:{repeat}")
 
-        async def _write():
-            try:
-                driver = graph_memory._driver
-                if driver:
-                    async with driver.session() as s:
-                        await s.run(
-                            "MERGE (r:Reminder {rid: $rid}) "
-                            "ON CREATE SET r += $props "
-                            "ON MATCH SET r += $props",
-                            rid=rid, props=props,
-                        )
-            except Exception:
-                pass
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_write())
-        except RuntimeError:
-            asyncio.run(_write())
+        kg.add_triple(
+            subject="User",
+            predicate="set_reminder",
+            obj=" | ".join(obj_parts),
+        )
     except Exception:
         pass

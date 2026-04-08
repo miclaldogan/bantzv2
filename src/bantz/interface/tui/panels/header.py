@@ -7,7 +7,7 @@ model name, memory count, and session count.
 
 Visual:
   ╭─── BANTZ // OPERATIONS CENTER ────── (◕‿◕) chill ───╮
-  │ ● Ollama  ● Neo4j  ● Gemini  ● Telegram │ qwen3:8b  │
+  │ ● Ollama  ● Palace  ● Gemini  ● Telegram │ qwen3:8b  │
   │ Uptime: 3h 42m │ Memory: 847 │ Sessions: 4          │
   ╰──────────────────────────────────────────────────────╯
 
@@ -102,7 +102,7 @@ class OperationsHeader(Static):
 
     # Reactive state
     ollama_status: reactive[ServiceStatus] = reactive(ServiceStatus.UNCONFIGURED)
-    neo4j_status: reactive[ServiceStatus] = reactive(ServiceStatus.UNCONFIGURED)
+    palace_status: reactive[ServiceStatus] = reactive(ServiceStatus.UNCONFIGURED)
     gemini_status: reactive[ServiceStatus] = reactive(ServiceStatus.UNCONFIGURED)
     telegram_status: reactive[ServiceStatus] = reactive(ServiceStatus.UNCONFIGURED)
     uptime_text: reactive[str] = reactive("0m")
@@ -121,7 +121,7 @@ class OperationsHeader(Static):
     def on_mount(self) -> None:
         # ── Startup probes (one-time, background threaded) ────────
         self._probe_ollama()
-        self._probe_neo4j()
+        self._probe_palace()
         self._probe_gemini()
         self._probe_telegram()
         self._fetch_db_counts()
@@ -140,7 +140,7 @@ class OperationsHeader(Static):
 
         dots = (
             f"{STATUS_DOTS[self.ollama_status]} Ollama  "
-            f"{STATUS_DOTS[self.neo4j_status]} Neo4j  "
+            f"{STATUS_DOTS[self.palace_status]} Palace  "
             f"{STATUS_DOTS[self.gemini_status]} Gemini  "
             f"{STATUS_DOTS[self.telegram_status]} Telegram"
         )
@@ -162,7 +162,7 @@ class OperationsHeader(Static):
     def watch_ollama_status(self) -> None:
         self.refresh()
 
-    def watch_neo4j_status(self) -> None:
+    def watch_palace_status(self) -> None:
         self.refresh()
 
     def watch_gemini_status(self) -> None:
@@ -189,8 +189,8 @@ class OperationsHeader(Static):
         """React to health events from brain/integrations."""
         if msg.service == "ollama":
             self.ollama_status = msg.status
-        elif msg.service == "neo4j":
-            self.neo4j_status = msg.status
+        elif msg.service == "palace":
+            self.palace_status = msg.status
         elif msg.service == "gemini":
             self.gemini_status = msg.status
         elif msg.service == "telegram":
@@ -242,31 +242,26 @@ class OperationsHeader(Static):
             )
 
     @work(thread=True)
-    def _probe_neo4j(self) -> None:
-        """Startup probe: check neo4j config + driver connectivity."""
-        if not config.neo4j_enabled:
+    def _probe_palace(self) -> None:
+        """Startup probe: check MemPalace bridge enabled + initialized."""
+        if not config.mempalace_enabled:
             self.app.call_from_thread(
-                self._set_status, "neo4j", ServiceStatus.UNCONFIGURED,
+                self._set_status, "palace", ServiceStatus.UNCONFIGURED,
             )
             return
         try:
-            from neo4j import GraphDatabase
-            driver = GraphDatabase.driver(
-                config.neo4j_uri,
-                auth=(config.neo4j_user, config.neo4j_password),
-            )
-            driver.verify_connectivity()
-            driver.close()
-            self.app.call_from_thread(
-                self._set_status, "neo4j", ServiceStatus.UP,
-            )
-        except ImportError:
-            self.app.call_from_thread(
-                self._set_status, "neo4j", ServiceStatus.UNCONFIGURED,
-            )
+            from bantz.memory.bridge import palace_bridge
+            if palace_bridge and palace_bridge.enabled:
+                self.app.call_from_thread(
+                    self._set_status, "palace", ServiceStatus.UP,
+                )
+            else:
+                self.app.call_from_thread(
+                    self._set_status, "palace", ServiceStatus.DOWN,
+                )
         except Exception:
             self.app.call_from_thread(
-                self._set_status, "neo4j", ServiceStatus.DOWN,
+                self._set_status, "palace", ServiceStatus.DOWN,
             )
 
     @work(thread=True)
@@ -344,8 +339,8 @@ class OperationsHeader(Static):
     def _set_status(self, service: str, status: ServiceStatus) -> None:
         if service == "ollama":
             self.ollama_status = status
-        elif service == "neo4j":
-            self.neo4j_status = status
+        elif service == "palace":
+            self.palace_status = status
         elif service == "gemini":
             self.gemini_status = status
         elif service == "telegram":
