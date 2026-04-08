@@ -100,11 +100,11 @@ class BrowserTool(BaseTool):
 
     def fetch(self, url: str) -> str:
         """Return raw HTML from *url* via curl."""
-        return self._run(f"curl -sL --max-time 12 {url}")
+        return self._run(["curl", "-sL", "--max-time", "12", url])
 
     def extract_text(self, url: str) -> str:
         """Return clean article body via readability-cli."""
-        return self._run(f"readability-cli {url}", timeout=20)
+        return self._run(["readability-cli", url], timeout=20)
 
     def query(self, url: str, selector: str) -> str:
         """Return HTML elements matching *selector* (CSS) via pup."""
