@@ -339,25 +339,33 @@ class SQLiteReminderStore(ReminderStore):
                 (now_iso, now_iso),
             ).fetchall()
             due = []
+            one_offs = []
+            repeating = []
             for row in rows:
                 item = dict(row)
                 due.append(item)
                 repeat = item["repeat"]
                 if repeat == "none":
-                    conn.execute(
-                        "UPDATE reminders SET fired = 1 WHERE id = ?",
-                        (item["id"],),
-                    )
+                    one_offs.append((item["id"],))
                 else:
                     next_fire = self._next_occurrence(
                         datetime.fromisoformat(item["fire_at"]),
                         repeat,
                         item["repeat_interval"],
                     )
-                    conn.execute(
-                        "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
-                        (next_fire.isoformat(), item["id"]),
-                    )
+                    repeating.append((next_fire.isoformat(), item["id"]))
+
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            if one_offs:
+                conn.executemany(
+                    "UPDATE reminders SET fired = 1 WHERE id = ?",
+                    one_offs,
+                )
+            if repeating:
+                conn.executemany(
+                    "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
+                    repeating,
+                )
             return due
 
     def list_upcoming(self, limit: int = 10) -> list[dict]:
@@ -422,14 +430,19 @@ class SQLiteReminderStore(ReminderStore):
                 (place_key, datetime.now().isoformat()),
             ).fetchall()
             due = []
+            one_offs = []
             for row in rows:
                 item = dict(row)
                 due.append(item)
                 if item["repeat"] == "none":
-                    conn.execute(
-                        "UPDATE reminders SET fired = 1 WHERE id = ?",
-                        (item["id"],),
-                    )
+                    one_offs.append((item["id"],))
+
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            if one_offs:
+                conn.executemany(
+                    "UPDATE reminders SET fired = 1 WHERE id = ?",
+                    one_offs,
+                )
             return due
 
     def count_active(self) -> int:
@@ -495,11 +508,11 @@ class SQLiteProfileStore(ProfileStore):
         now = _now()
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM user_profile")
-            for k, v in data.items():
-                conn.execute(
-                    "INSERT INTO user_profile(key, value, updated_at) VALUES (?,?,?)",
-                    (k, json.dumps(v, ensure_ascii=False), now),
-                )
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            conn.executemany(
+                "INSERT INTO user_profile(key, value, updated_at) VALUES (?,?,?)",
+                [(k, json.dumps(v, ensure_ascii=False), now) for k, v in data.items()],
+            )
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
@@ -554,17 +567,20 @@ class SQLitePlaceStore(PlaceStore):
     def save_all(self, data: dict[str, dict]) -> None:
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM places")
-            for key, place in data.items():
-                conn.execute(
-                    "INSERT INTO places(key, label, lat, lon, radius) VALUES (?,?,?,?,?)",
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            conn.executemany(
+                "INSERT INTO places(key, label, lat, lon, radius) VALUES (?,?,?,?,?)",
+                [
                     (
                         key,
                         place.get("label", key),
                         place.get("lat", 0.0),
                         place.get("lon", 0.0),
                         place.get("radius", 100.0),
-                    ),
-                )
+                    )
+                    for key, place in data.items()
+                ],
+            )
 
     def upsert(self, key: str, place: dict) -> None:
         """Insert or update a single place."""
@@ -646,21 +662,24 @@ class SQLiteScheduleStore(ScheduleStore):
     def save(self, data: dict[str, list[dict]]) -> None:
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM schedule_entries")
-            for day, entries in data.items():
-                for idx, entry in enumerate(entries):
-                    conn.execute(
-                        """INSERT INTO schedule_entries
-                           (day, idx, name, time, duration, location, type)
-                           VALUES (?,?,?,?,?,?,?)""",
-                        (
-                            day, idx,
-                            entry.get("name", ""),
-                            entry.get("time", ""),
-                            entry.get("duration", 60),
-                            entry.get("location", ""),
-                            entry.get("type", ""),
-                        ),
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            conn.executemany(
+                """INSERT INTO schedule_entries
+                   (day, idx, name, time, duration, location, type)
+                   VALUES (?,?,?,?,?,?,?)""",
+                [
+                    (
+                        day, idx,
+                        entry.get("name", ""),
+                        entry.get("time", ""),
+                        entry.get("duration", 60),
+                        entry.get("location", ""),
+                        entry.get("type", ""),
                     )
+                    for day, entries in data.items()
+                    for idx, entry in enumerate(entries)
+                ],
+            )
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
@@ -712,11 +731,11 @@ class SQLiteSessionStore(SessionStore):
         now = _now()
         with get_pool().connection(write=True) as conn:
             conn.execute("DELETE FROM session_state")
-            for k, v in data.items():
-                conn.execute(
-                    "INSERT INTO session_state(key, value, updated_at) VALUES (?,?,?)",
-                    (k, json.dumps(v, ensure_ascii=False), now),
-                )
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            conn.executemany(
+                "INSERT INTO session_state(key, value, updated_at) VALUES (?,?,?)",
+                [(k, json.dumps(v, ensure_ascii=False), now) for k, v in data.items()],
+            )
 
     @property
     def path(self) -> Path:
