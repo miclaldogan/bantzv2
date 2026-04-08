@@ -688,7 +688,7 @@ def _check_whisper_model_cached(model_name: str) -> bool:
                 if d.is_dir() and model_name in d.name.lower() and "whisper" in d.name.lower():
                     return True
         # Also check CTranslate2 default cache
-        ct2_cache = Path.home() / ".cache" / "huggingface" / "hub"
+        Path.home() / ".cache" / "huggingface" / "hub"
         # faster-whisper may also download to a direct path
         alt_cache = Path.home() / ".cache" / "faster_whisper"
         if alt_cache.exists():
@@ -1305,7 +1305,7 @@ async def _daemon() -> None:
 
     # Init KV store for briefing cache
     from bantz.data.sqlite_store import SQLiteKVStore
-    kv = SQLiteKVStore(config.db_path)
+    SQLiteKVStore(config.db_path)
 
     # Start APScheduler
     if config.job_scheduler_enabled:

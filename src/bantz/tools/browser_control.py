@@ -200,7 +200,7 @@ class BrowserControlTool(BaseTool):
         # If a URL was provided, navigate immediately after opening
         url = kwargs.get("url", "")
         if url:
-            nav = await self._navigate({
+            await self._navigate({
                 "url": url, "app": app,
                 "wait": kwargs.get("nav_wait", 2.5),
             })
@@ -505,7 +505,7 @@ class BrowserControlTool(BaseTool):
 
             if search_url:
                 log.info("type_in_element: using direct search URL %s", search_url)
-                nav = await self._navigate({"url": search_url, "app": app, "wait": 2.5})
+                await self._navigate({"url": search_url, "app": app, "wait": 2.5})
                 display = text[:60] + "..." if len(text) > 60 else text
                 return ToolResult(
                     success=True,

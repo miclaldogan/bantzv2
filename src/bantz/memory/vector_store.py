@@ -163,7 +163,7 @@ class VectorStore:
                    JOIN messages m ON m.id = mv.message_id"""
             ).fetchall()
 
-        now_str = datetime.utcnow().isoformat()
+        datetime.utcnow().isoformat()
         scored: list[tuple[float, dict]] = []
         for row in rows:
             vec = _blob_to_vec(row["embedding"], row["dim"])

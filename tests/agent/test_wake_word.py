@@ -449,7 +449,8 @@ class TestTUIMessage:
 class TestScopeGuard:
     def test_no_whisper_in_wake_word(self):
         """wake_word.py must NOT import or call any STT/Whisper code."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import wake_word
         tree = ast.parse(inspect.getsource(wake_word))
         # Check imports don't reference whisper/stt
@@ -534,7 +535,8 @@ class TestWakeWordEventBus:
 
     def test_no_brain_or_tui_imports(self):
         """wake_word.py must NOT import from brain or TUI."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import wake_word
         tree = ast.parse(inspect.getsource(wake_word))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
