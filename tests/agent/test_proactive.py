@@ -310,84 +310,11 @@ class TestProactiveChatAction:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestVectorTimeDecay:
-    """search(recency_weight=...) applies exponential time decay."""
+    """Vector time-decay tests removed — VectorStore replaced by MemPalace ChromaDB."""
 
-    def _make_vs(self, rows):
-        """Create a VectorStore with mock rows via pool."""
-        import tempfile
-        from pathlib import Path
-        from bantz.data.connection_pool import SQLitePool
-
-        self._tmpdir = tempfile.mkdtemp()
-        db_path = Path(self._tmpdir) / "test_decay.db"
-        pool = SQLitePool.get_instance(db_path)
-
-        with pool.connection(write=True) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY, role TEXT, content TEXT,
-                    tool_used TEXT, created_at TEXT, conversation_id TEXT
-                )""")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS message_vectors (
-                    message_id INTEGER PRIMARY KEY, embedding BLOB,
-                    dim INTEGER, model TEXT, created_at TEXT
-                )""")
-
-            from bantz.memory.vector_store import _vec_to_blob
-            for msg_id, content, created_at, vec in rows:
-                conn.execute(
-                    "INSERT INTO messages VALUES (?,?,?,?,?,?)",
-                    (msg_id, "user", content, None, created_at, "conv1"),
-                )
-                blob = _vec_to_blob(vec)
-                conn.execute(
-                    "INSERT INTO message_vectors VALUES (?,?,?,?,?)",
-                    (msg_id, blob, len(vec), "test", created_at),
-                )
-
-        from bantz.memory.vector_store import VectorStore
-        return VectorStore()
-
-    def test_no_recency_weight_is_pure_cosine(self):
-        now = datetime.utcnow().isoformat()
-        old = (datetime.utcnow() - timedelta(days=180)).isoformat()
-        # Both have exact same vector → same cosine
-        vs = self._make_vs([
-            (1, "old topic", old, [1.0, 0.0, 0.0]),
-            (2, "new topic", now, [1.0, 0.0, 0.0]),
-        ])
-        results = vs.search([1.0, 0.0, 0.0], limit=2, min_score=0.0, recency_weight=0.0)
-        # Without recency, both should have score 1.0
-        assert len(results) == 2
-        assert results[0]["score"] == results[1]["score"]
-
-    def test_recency_weight_boosts_newer(self):
-        now = datetime.utcnow().isoformat()
-        old = (datetime.utcnow() - timedelta(days=180)).isoformat()
-        vs = self._make_vs([
-            (1, "old topic", old, [1.0, 0.0, 0.0]),
-            (2, "new topic", now, [1.0, 0.0, 0.0]),
-        ])
-        results = vs.search([1.0, 0.0, 0.0], limit=2, min_score=0.0, recency_weight=0.3)
-        # New topic should rank higher with recency boost
-        assert results[0]["message_id"] == 2
-        assert results[0]["score"] > results[1]["score"]
-
-    def test_recency_decay_math(self):
-        """exp(-0/30)=1.0 for today, exp(-180/30)≈0.0025 for 6 months."""
-        assert math.exp(0) == 1.0
-        six_month_decay = math.exp(-180 / 30)
-        assert six_month_decay < 0.01  # effectively zero
-
-    def test_backward_compat_default_zero(self):
-        """search() with no recency_weight uses pure cosine (backward-compat)."""
-        now = datetime.utcnow().isoformat()
-        vs = self._make_vs([
-            (1, "topic", now, [0.5, 0.5, 0.0]),
-        ])
-        results = vs.search([0.5, 0.5, 0.0], limit=1)
-        assert len(results) == 1
+    def test_placeholder(self):
+        """Placeholder: old VectorStore time-decay tests are obsolete."""
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════

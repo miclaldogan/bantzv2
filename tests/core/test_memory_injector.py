@@ -174,16 +174,16 @@ class TestDesktopContext:
 class TestGraphContext:
     @pytest.mark.asyncio
     async def test_returns_context_when_enabled(self):
-        mock_gm = MagicMock()
-        mock_gm.enabled = True
-        mock_gm.context_for = AsyncMock(return_value="Entity: Alice → knows → Bob")
-        with patch("bantz.memory.graph.graph_memory", mock_gm):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = True
+        mock_bridge.graph_context = MagicMock(return_value="Entity: Alice → knows → Bob")
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await graph_context("tell me about Alice")
         assert "Alice" in result
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_import_error(self):
-        with patch.dict("sys.modules", {"bantz.memory.graph": None}):
+        with patch.dict("sys.modules", {"bantz.memory.bridge": None}):
             result = await graph_context("hello")
         assert result == ""
 
@@ -191,21 +191,19 @@ class TestGraphContext:
 class TestVectorContext:
     @pytest.mark.asyncio
     async def test_returns_past_messages(self):
-        mock_mem = MagicMock()
-        mock_mem.hybrid_search = AsyncMock(return_value=[
-            {"source": "chat", "hybrid_score": 0.85, "role": "user", "content": "Hello there!"},
-        ])
-        mock_mem.search_distillations = AsyncMock(return_value=[])
-        with patch("bantz.core.memory.memory", mock_mem):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = True
+        mock_bridge.vector_context = MagicMock(return_value="[mempalace] Hello there!")
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await vector_context("hello")
-        assert "Relevant past context" in result
         assert "Hello there" in result
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_no_results(self):
-        mock_mem = MagicMock()
-        mock_mem.hybrid_search = AsyncMock(return_value=[])
-        with patch("bantz.core.memory.memory", mock_mem):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = True
+        mock_bridge.vector_context = MagicMock(return_value="")
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await vector_context("xyz")
         assert result == ""
 
@@ -213,15 +211,16 @@ class TestVectorContext:
 class TestDeepMemoryContext:
     @pytest.mark.asyncio
     async def test_returns_probe_output(self):
-        mock_probe = MagicMock()
-        mock_probe.probe = AsyncMock(return_value="You mentioned a cat named Whiskers")
-        with patch("bantz.memory.deep_probe.deep_probe", mock_probe):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = True
+        mock_bridge.deep_memory = MagicMock(return_value="You mentioned a cat named Whiskers")
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await deep_memory_context("do I have a pet?")
         assert "Whiskers" in result
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_error(self):
-        with patch.dict("sys.modules", {"bantz.memory.deep_probe": None}):
+        with patch.dict("sys.modules", {"bantz.memory.bridge": None}):
             result = await deep_memory_context("hello")
         assert result == ""
 

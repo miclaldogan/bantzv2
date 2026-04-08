@@ -397,7 +397,7 @@ async def cmd_hava(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.tools.gmail import GmailTool
-        result = await GmailTool().execute(action="filter", q="is:unread", max_results=10)
+        result = await GmailTool().execute(action="filter", full_text="is:unread", limit=10)
         if result.success:
             text = result.output.strip() or "No unread emails ✓"
         else:

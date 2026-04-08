@@ -41,7 +41,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "shell": "Run a bash command (ls, df, top, apt, etc.)",
     "system": "Live system metrics: CPU, RAM, disk usage, uptime",
     "filesystem": "Read, write, list files and folders under home directory",
-    "browser_control": "Launch apps AND control browser: open, navigate, click, type, scroll. Web services (YouTube, Spotify, Netflix…) = action=open app=firefox url=https://site.com",
+    "browser_control": "Launch apps AND control browser. Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
     "visual_click": "Click any visible UI element on screen by describing it",
     "screenshot": "Capture and deliver a screenshot image to the user",
     "news": "Fetch and summarize latest news headlines",
@@ -84,11 +84,14 @@ TOOLS:
 RULES:
 - ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
 - Factual / knowledge questions → web_search. NEVER answer from memory.
-- "open YouTube/Spotify/Netflix" etc. → browser_control action=open app=firefox url=https://youtube.com (web services are websites, not desktop apps).
+- "just open YouTube/Spotify/Netflix" (no specific content) → browser_control action=open app=firefox url=https://youtube.com
+- "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).
+- "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
 - Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
 - Literal bash commands (ls, df, top) → shell.
 - Multi-step with "then" / "and" / "after that" → route="planner".
 - Do NOT hallucinate data — always route to the real tool.
+- browser_control action names are EXACT: find_and_click (not 'click'), navigate (not 'navigate_to'), type_in_element (not 'type_in').
 
 OUTPUT — single JSON, no markdown:
 {{"route": "tool|planner|chat", "tool_name": "exact_name", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
@@ -404,6 +407,30 @@ async def cot_route(
         log.warning("CoT JSON parse failed (attempt 1): %s — raw: %.200s", exc, raw)
         # Fall through to attempt 2
     except Exception as exc:
+        # If the routing model is missing/broken, retry once with main model
+        err_lower = str(exc).lower()
+        if any(hint in err_lower for hint in ("404", "not found", "model")):
+            log.warning(
+                "Routing model '%s' failed (%s) — retrying with main model '%s'",
+                ollama.routing_model, exc, ollama.model,
+            )
+            try:
+                raw = await _stream_and_collect(
+                    messages, emit_thinking=True, source="cot_route_fallback",
+                    options=_ROUTING_OPTIONS, model_override=ollama.model,
+                )
+                if not _is_refusal(raw):
+                    _log_thinking(raw)
+                    plan = _extract_json(raw)
+                    log.info("CoT fallback parsed: route=%s tool=%s conf=%.2f",
+                             plan.get("route"), plan.get("tool_name"),
+                             plan.get("confidence", 0))
+                    if plan.get("confidence", 0.8) >= confidence_threshold:
+                        # Fix routing_model for subsequent calls this session
+                        ollama.routing_model = ollama.model
+                        return plan, None
+            except Exception as fb_exc:
+                log.warning("CoT fallback also failed: %s", fb_exc)
         log.warning("CoT error (attempt 1): %s", exc)
         return None, f"CoT routing error: {exc}"
 

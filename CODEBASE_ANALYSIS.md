@@ -946,13 +946,10 @@ __main__.py
 | **Ollama** | | |
 | `BANTZ_OLLAMA_MODEL` | `llama3.1:8b` | LLM model for chat/routing |
 | `BANTZ_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| **Embeddings** | | |
-| `BANTZ_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model for vector memory |
-| `BANTZ_EMBEDDING_ENABLED` | `true` | Enable/disable vector embeddings |
+| **Vector Search** | | |
 | `BANTZ_VECTOR_SEARCH_WEIGHT` | `0.5` | Weight for vector vs FTS in hybrid search |
 | **Distillation** | | |
 | `BANTZ_DISTILLATION_ENABLED` | `true` | Auto-summarize completed sessions |
-| `BANTZ_DISTILLATION_MIN_EXCHANGES` | `5` | Minimum exchanges before distilling |
 | **Vision/VLM** | | |
 | `BANTZ_VLM_ENABLED` | `false` | Enable remote VLM for screen analysis |
 | `BANTZ_VLM_ENDPOINT` | `http://localhost:8090` | VLM server URL |

@@ -77,6 +77,9 @@ _WEB_APPS: dict[str, str] = {
     "facebook": "https://www.facebook.com",
     "tiktok": "https://www.tiktok.com",
     "pinterest": "https://www.pinterest.com",
+    "yt music": "https://music.youtube.com",
+    "youtube music": "https://music.youtube.com",
+    "ytmusic": "https://music.youtube.com",
 }
 
 
@@ -543,7 +546,9 @@ class BrowserControlTool(BaseTool):
                     _url_host == d or _url_host.endswith("." + d) for d in domains
                 )
 
-            if _on_site("youtube", "youtube.com"):
+            if _on_site("music.youtube", "music.youtube.com") or "yt music" in site_hint or "ytmusic" in site_hint or "youtube music" in site_hint:
+                search_url = f"https://music.youtube.com/search?q={encoded}"
+            elif _on_site("youtube", "youtube.com"):
                 search_url = f"https://www.youtube.com/results?search_query={encoded}"
             elif _on_site("google", "google.com"):
                 search_url = f"https://www.google.com/search?q={encoded}"

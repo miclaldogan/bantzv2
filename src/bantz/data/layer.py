@@ -55,7 +55,7 @@ class DataLayer:
         places        — named GPS locations      (SQLite, auto-migrated from JSON)
         schedule      — weekly timetable         (SQLite, auto-migrated from JSON)
         session       — launch tracking          (SQLite, auto-migrated from JSON)
-        graph         — knowledge graph          (Neo4j, optional)
+        graph         — knowledge graph          (MemPalace KG)
     """
 
     def __init__(self) -> None:
@@ -261,17 +261,17 @@ class DataLayer:
             log.info("Auto-migrated JSON → SQLite: %s", ", ".join(migrated))
 
     async def init_graph(self) -> None:
-        """Initialize the optional graph store (Neo4j).
+        """Initialize the MemPalace bridge (replaces Neo4j graph).
 
-        Safe to call even if Neo4j is disabled or not installed.
+        Safe to call even if MemPalace is disabled or not installed.
         """
         try:
-            from bantz.memory.graph import graph_memory
+            from bantz.memory.bridge import palace_bridge
 
-            if await graph_memory.init():
-                self.graph = graph_memory  # type: ignore[assignment]
+            if palace_bridge.init():
+                self.graph = palace_bridge  # type: ignore[assignment]
         except ImportError:
-            log.debug("neo4j driver not installed — graph memory off")
+            log.debug("mempalace not installed — memory bridge off")
 
     # ── properties ────────────────────────────────────────────────────────
 
@@ -316,14 +316,8 @@ class DataLayer:
         except Exception:
             pass
         if self.graph is not None:
-            import asyncio
-
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self.graph.close())
-                else:
-                    loop.run_until_complete(self.graph.close())
+                self.graph.close()
             except Exception:
                 pass
         self._initialized = False

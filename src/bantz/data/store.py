@@ -11,7 +11,7 @@ Hierarchy:
     PlaceStore        — named GPS locations      (JSON → SQLite later)
     ScheduleStore     — weekly timetable         (JSON → SQLite later)
     SessionStore      — launch tracking          (JSON → SQLite later)
-    GraphStore        — knowledge graph          (Neo4j)
+    GraphStore        — knowledge graph          (MemPalace KG)
 """
 from __future__ import annotations
 
@@ -235,7 +235,7 @@ class SessionStore(ABC):
 
 
 class GraphStore(ABC):
-    """Knowledge-graph persistence (Neo4j or similar)."""
+    """Knowledge-graph persistence (MemPalace KG or similar)."""
 
     @abstractmethod
     async def init(self) -> bool:

@@ -1,5 +1,6 @@
-# ── Bantz v3 — Oracle Free Tier VPS (#93) ────────────────────────────────────
-# Services: Neo4j graph memory + Bantz daemon (Telegram bot + scheduler)
+# ── Bantz v4 — Oracle Free Tier VPS (#93) ────────────────────────────────────
+# Services: Ollama LLM + Bantz daemon (Telegram bot + scheduler)
+# Memory:   MemPalace (ChromaDB + SQLite KG) — no external DB required
 #
 # Quick start:
 #   cp .env.example .env && nano .env   # fill in Telegram token, etc.
@@ -7,28 +8,6 @@
 #   docker compose logs -f bantz
 
 services:
-
-  # ── Neo4j graph memory (optional — BANTZ_NEO4J_ENABLED=true) ──────────────
-  neo4j:
-    image: neo4j:5-community
-    container_name: bantz-neo4j
-    restart: unless-stopped
-    environment:
-      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-bantzpass}"
-      NEO4J_server_memory_heap_initial__size: "256m"
-      NEO4J_server_memory_heap_max__size: "512m"
-      NEO4J_server_memory_pagecache_size: "128m"
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-    ports:
-      - "127.0.0.1:7474:7474"   # browser UI — localhost only
-      - "127.0.0.1:7687:7687"   # bolt — localhost only
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
 
   # ── Ollama (optional — comment out if using remote GPU VPS via tunnel) ─────
   ollama:
@@ -51,8 +30,6 @@ services:
     container_name: bantz
     restart: unless-stopped
     depends_on:
-      neo4j:
-        condition: service_healthy
       ollama:
         condition: service_started
     env_file:
@@ -60,9 +37,6 @@ services:
     environment:
       # Override to point at Compose service names
       BANTZ_OLLAMA_BASE_URL: "http://ollama:11434"
-      BANTZ_NEO4J_URI: "bolt://neo4j:7687"
-      BANTZ_NEO4J_USER: "neo4j"
-      BANTZ_NEO4J_PASSWORD: "${NEO4J_PASSWORD:-bantzpass}"
     volumes:
       - bantz_data:/home/bantz/.local/share/bantz
       # Optional: mount Google OAuth credentials
@@ -71,7 +45,5 @@ services:
 
 
 volumes:
-  neo4j_data:
-  neo4j_logs:
   ollama_models:
   bantz_data:

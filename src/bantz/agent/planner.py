@@ -115,12 +115,7 @@ Step 3: Double-Check: I must not hallucinate the output of tool_A. I will use $R
   ...
 ]
 
-CRITICAL: The examples below are ILLUSTRATIONS ONLY. Their topics ("quantum computing",
-YouTube, etc.) are placeholders. Your output MUST reflect the user's ACTUAL request.
-NEVER copy example content into your plan. If the user says "open X", plan ONLY
-steps for X — do not substitute quantum computing, YouTube, or any other example topic.
-
-EXAMPLES:
+EXAMPLES: (format demonstrations ONLY — NEVER copy example content into your plan)
 
 User: "Search for articles about quantum computing, summarize the best one, and save to a file"
 <thinking>
@@ -135,46 +130,21 @@ Step 3: Double-Check: read_url needs a URL, which I will dynamically get from $R
   {{"step": 4, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": "quantum_computing_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save the summary to a file", "depends_on": 3}}
 ]
 
-User: "Create a research folder and save a summary of quantum computing into it"
-<thinking>
-Step 1: Goal is to create a folder, then search, summarize, and save into that folder.
-Step 2: filesystem -> web_search -> process_text -> filesystem.
-Step 3: Double-Check: Step 4 needs the folder path from Step 1. I must use $REF_STEP_1_PARAMS_folder_path NOT $REF_STEP_1 (which would be "Folder created" text).
-</thinking>
-[
-  {{"step": 1, "tool": "filesystem", "params": {{"action": "create_folder_and_file", "folder_path": "~/Desktop/research", "file_name": ".gitkeep", "content": ""}}, "description": "Create the research folder", "depends_on": null}},
-  {{"step": 2, "tool": "web_search", "params": {{"query": "quantum computing breakthroughs 2025"}}, "description": "Search for articles", "depends_on": null}},
-  {{"step": 3, "tool": "summarizer", "params": {{"instruction": "Summarize this article in detail: $REF_STEP_2"}}, "description": "Summarize the search results", "depends_on": 2}},
-  {{"step": 4, "tool": "filesystem", "params": {{"action": "write", "path": "$REF_STEP_1_PARAMS_folder_path/quantum_summary.txt", "content": "$REF_STEP_3"}}, "description": "Save summary into the research folder", "depends_on": 3}}
-]
-
 ANTI-HALLUCINATION RULE (CRITICAL):
 Plan ONLY what the user explicitly requested. NEVER add navigation, searches, or browsing steps that were not asked for.
 If the user says "click X" — plan ONLY a find_and_click step for X.
 If the user says "go to wikipedia" — plan ONLY a navigate step to wikipedia.org.
 Do NOT default to YouTube, Firefox, or any specific site unless the user mentioned it.
 
-User: "Open Chrome and go to github.com, then navigate to the trending page"
+User: "Open Chrome and go to reddit.com"
 <thinking>
-Step 1: Goal is to open Chrome, navigate to GitHub, then go to trending page.
-Step 2: GUI automation — browser_control for all steps.
-Step 3: 3 distinct actions — open, navigate to GitHub, navigate to trending.
+Step 1: Goal is to open Chrome browser and navigate to a URL. Two browser_control steps.
+Step 2: open chrome → navigate to URL. Simple.
+Step 3: Anti-hallucination: user said Reddit, planning for Reddit — not anything else.
 </thinking>
 [
   {{"step": 1, "tool": "browser_control", "params": {{"action": "open", "app": "chrome", "wait": 3.0}}, "description": "Open Chrome browser", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://github.com", "wait": 2.5}}, "description": "Navigate to GitHub", "depends_on": 1}},
-  {{"step": 3, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://github.com/trending", "wait": 2.5}}, "description": "Go to GitHub trending page", "depends_on": 2}}
-]
-
-User: "write wiki there and then click the search bar"
-<thinking>
-Step 1: "write X there" = type into address bar. Goal: type "wiki" in address bar, then click search bar.
-Step 2: type_in_element target="address bar" + find_and_click. Two explicit steps.
-Step 3: "write X there" → type_in_element address bar, NOT navigate URL. Real typing automation.
-</thinking>
-[
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "chrome", "target": "address bar", "text": "wiki", "press_enter": "true"}}, "description": "Type 'wiki' in address bar and press Enter", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "chrome", "target": "search bar"}}, "description": "Click the search bar", "depends_on": 1}}
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "navigate", "app": "chrome", "url": "https://www.reddit.com", "wait": 2.5}}, "description": "Navigate to Reddit", "depends_on": 1}}
 ]
 
 User: "open me a dr strange video on youtube" (or "find X video on youtube", "play X on youtube")
@@ -200,15 +170,16 @@ Step 3: Anti-hallucination — user didn't ask to open YouTube or search. Just c
   {{"step": 2, "tool": "screenshot", "params": {{}}, "description": "Take a screenshot", "depends_on": 1}}
 ]
 
-User: "Go to Wikipedia and search for artificial intelligence"
+User: "play back in black on yt music" (or "listen to X on youtube music")
 <thinking>
-Step 1: Goal is to navigate to Wikipedia then search for a specific topic.
-Step 2: Navigate to Wikipedia, then type in the search box.
-Step 3: Anti-hallucination: user asked for Wikipedia and AI, using exactly those.
+Step 1: Goal is to find and play a song on YouTube Music. Explicitly: search for "back in black" on YT Music, wait for results, click first song.
+Step 2: browser_control for all steps. type_in_element with site="yt music" uses direct YT Music search URL.
+Step 3: 3 steps — search, wait, click first result. Anti-hallucination: user asked for YT Music, so YT Music is correct.
 </thinking>
 [
-  {{"step": 1, "tool": "browser_control", "params": {{"action": "navigate", "app": "firefox", "url": "https://www.wikipedia.org", "wait": 2.5}}, "description": "Navigate to Wikipedia", "depends_on": null}},
-  {{"step": 2, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "artificial intelligence", "press_enter": "true"}}, "description": "Search Wikipedia for artificial intelligence", "depends_on": 1}}
+  {{"step": 1, "tool": "browser_control", "params": {{"action": "type_in_element", "app": "firefox", "target": "search box", "text": "back in black", "site": "yt music", "press_enter": "false"}}, "description": "Navigate to YT Music search results for back in black", "depends_on": null}},
+  {{"step": 2, "tool": "browser_control", "params": {{"action": "wait_for_load", "app": "firefox", "max_wait": 8.0}}, "description": "Wait for search results to load", "depends_on": 1}},
+  {{"step": 3, "tool": "browser_control", "params": {{"action": "find_and_click", "app": "firefox", "target": "first song result or top result", "site": "youtube music", "wait_load": "false"}}, "description": "Click the first song result to play it", "depends_on": 2}}
 ]
 
 User: "Check my emails, then check the weather in Istanbul, and tell me what's on my calendar"
@@ -221,7 +192,14 @@ Step 3: Double-Check: I have the city "Istanbul". I don't need any complex varia
   {{"step": 1, "tool": "gmail", "params": {{"action": "unread"}}, "description": "Check unread emails", "depends_on": null}},
   {{"step": 2, "tool": "weather", "params": {{"city": "Istanbul"}}, "description": "Check weather in Istanbul", "depends_on": null}},
   {{"step": 3, "tool": "calendar", "params": {{"action": "today"}}, "description": "Check today's calendar", "depends_on": null}}
-]\
+]
+
+═══ END OF EXAMPLES ═══
+FINAL REMINDER: The examples above are ONLY format references.
+Your plan MUST address the user's ACTUAL request — not any example topic.
+NEVER output "GitHub", "trending", "quantum computing", "Wikipedia", or any
+other example keyword unless the USER said it. Read the user message carefully
+and plan ONLY for what they asked.\
 """
 
 REPLAN_SYSTEM = """\
@@ -320,7 +298,9 @@ class PlannerAgent:
 
         messages = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": en_input},
+            {"role": "user", "content": (
+                f"Plan ONLY for this request (do NOT use example content): {en_input}"
+            )},
         ]
 
         raw = await _stream_and_collect(

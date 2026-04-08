@@ -20,6 +20,7 @@ dependencies = [
     "apscheduler>=3.10.0",
     "sqlalchemy>=2.0.0",
     "python-telegram-bot>=20.0",
+    "mempalace>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +38,6 @@ dev = [
 docs = [
     "pymupdf>=1.24.0",
     "python-docx>=1.0.0",
-]
-graph = [
-    "neo4j>=5.0.0",
 ]
 automation = [
     "pyautogui>=0.9.54",

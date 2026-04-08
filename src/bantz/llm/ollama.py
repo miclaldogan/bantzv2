@@ -107,6 +107,17 @@ class OllamaClient:
                 f"  Run: ollama pull {self.model}"
             )
 
+        # Layer 3b: routing model availability
+        if self.routing_model != self.model and self.routing_model not in available:
+            import logging as _logging
+            _log = _logging.getLogger("bantz.llm.ollama")
+            _log.warning(
+                "Routing model '%s' not found — falling back to main model '%s'. "
+                "Install it with: ollama pull %s",
+                self.routing_model, self.model, self.routing_model,
+            )
+            self.routing_model = self.model
+
     async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None, model_override: str = "") -> str:
         """Simple chat — returns a single string."""
         try:

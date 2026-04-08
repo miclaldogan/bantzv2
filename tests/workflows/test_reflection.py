@@ -476,21 +476,24 @@ class TestEntityResolution:
     @pytest.mark.asyncio
     async def test_fetch_existing_entities_graph_disabled(self):
         from bantz.agent.workflows.reflection import _fetch_existing_entities_from_graph
-        mock_graph = MagicMock()
-        mock_graph.enabled = False
-        with patch("bantz.memory.graph.graph_memory", mock_graph):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = False
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await _fetch_existing_entities_from_graph()
         assert "not available" in result.lower()
 
     @pytest.mark.asyncio
     async def test_fetch_existing_entities_graph_enabled(self):
         from bantz.agent.workflows.reflection import _fetch_existing_entities_from_graph
-        mock_graph = MagicMock()
-        mock_graph.enabled = True
-        mock_graph._query = AsyncMock(return_value=[
-            {"name": "Ali"}, {"name": "Bantz Project"},
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = True
+        mock_kg = MagicMock()
+        mock_kg.recent = MagicMock(return_value=[
+            {"subject": "Ali", "relation": "is_person", "object": "friend"},
+            {"subject": "Bantz Project", "relation": "is_topic", "object": "dev"},
         ])
-        with patch("bantz.memory.graph.graph_memory", mock_graph):
+        mock_bridge.kg = mock_kg
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             result = await _fetch_existing_entities_from_graph()
         assert "Ali" in result
         assert "Bantz Project" in result
@@ -498,7 +501,7 @@ class TestEntityResolution:
     @pytest.mark.asyncio
     async def test_fetch_existing_entities_no_graph(self):
         from bantz.agent.workflows.reflection import _fetch_existing_entities_from_graph
-        with patch.dict("sys.modules", {"bantz.memory.graph": None}):
+        with patch.dict("sys.modules", {"bantz.memory.bridge": None}):
             result = await _fetch_existing_entities_from_graph()
         assert "not available" in result.lower() or "graph" in result.lower()
 
@@ -656,9 +659,7 @@ class TestStoreReflection:
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._initialized = True
                 mock_mem.add = MagicMock()
-                with patch("bantz.config.config") as mock_cfg:
-                    mock_cfg.embedding_enabled = False
-                    await _store_reflection(result)
+                await _store_reflection(result)
 
         from bantz.data.sqlite_store import SQLiteKVStore
         kv = SQLiteKVStore(kv_db_path)
@@ -719,7 +720,6 @@ class TestRunReflection:
                     with patch("bantz.config.config") as mock_cfg:
                         mock_cfg.telegram_bot_token = ""
                         mock_cfg.telegram_allowed_users = ""
-                        mock_cfg.embedding_enabled = False
                         result = await run_reflection(dry_run=False)
 
         assert result.sessions == 0
@@ -777,7 +777,6 @@ class TestRunReflection:
                                 with patch("bantz.config.config") as mock_cfg:
                                     mock_cfg.telegram_bot_token = ""
                                     mock_cfg.telegram_allowed_users = ""
-                                    mock_cfg.embedding_enabled = False
                                     mock_cfg.db_path = tmp_path / "bantz.db"
                                     with patch("bantz.core.memory.memory") as mock_mem:
                                         mock_mem._initialized = True
@@ -816,7 +815,6 @@ class TestRunReflection:
                     with patch("bantz.config.config") as mock_cfg:
                         mock_cfg.telegram_bot_token = ""
                         mock_cfg.telegram_allowed_users = ""
-                        mock_cfg.embedding_enabled = False
                         result = await run_reflection(
                             dry_run=False,
                             date_override="2099-12-31",
@@ -960,9 +958,9 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_store_entities_graph_disabled(self):
         from bantz.agent.workflows.reflection import _store_entities_to_graph
-        mock_graph = MagicMock()
-        mock_graph.enabled = False
-        with patch("bantz.memory.graph.graph_memory", mock_graph):
+        mock_bridge = MagicMock()
+        mock_bridge.enabled = False
+        with patch("bantz.memory.bridge.palace_bridge", mock_bridge):
             count = await _store_entities_to_graph([
                 {"label": "Person", "key_prop": "name", "value": "Test"},
             ])

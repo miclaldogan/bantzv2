@@ -25,14 +25,11 @@ class Config(BaseSettings):
     # Leave empty (default) to use the main ollama_model for everything.
     ollama_routing_model: str = Field("", alias="BANTZ_OLLAMA_ROUTING_MODEL")
 
-    # ── Embeddings / Vector Memory ────────────────────────────────────────
-    embedding_model: str = Field("nomic-embed-text", alias="BANTZ_EMBEDDING_MODEL")
-    embedding_enabled: bool = Field(True, alias="BANTZ_EMBEDDING_ENABLED")
+    # ── Vector Search ─────────────────────────────────────────────────────
     vector_search_weight: float = Field(0.5, alias="BANTZ_VECTOR_SEARCH_WEIGHT")
 
     # ── Session Distillation ──────────────────────────────────────────────
     distillation_enabled: bool = Field(True, alias="BANTZ_DISTILLATION_ENABLED")
-    distillation_min_exchanges: int = Field(5, alias="BANTZ_DISTILLATION_MIN_EXCHANGES")
 
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")
@@ -70,11 +67,12 @@ class Config(BaseSettings):
     # ── GPS Relay ─────────────────────────────────────────────────────────
     gps_relay_token: str = Field("", alias="BANTZ_GPS_RELAY_TOKEN")
 
-    # ── Neo4j Graph Memory ────────────────────────────────────────────────
-    neo4j_enabled: bool = Field(False, alias="BANTZ_NEO4J_ENABLED")
-    neo4j_uri: str = Field("bolt://localhost:7687", alias="BANTZ_NEO4J_URI")
-    neo4j_user: str = Field("neo4j", alias="BANTZ_NEO4J_USER")
-    neo4j_password: str = Field("bantzpass", alias="BANTZ_NEO4J_PASSWORD")
+    # ── MemPalace Memory ──────────────────────────────────────────────
+    mempalace_enabled: bool = Field(True, alias="BANTZ_MEMPALACE_ENABLED")
+    palace_path: str = Field("", alias="BANTZ_PALACE_PATH")
+    mempalace_kg_path: str = Field("", alias="BANTZ_MEMPALACE_KG_PATH")
+    mempalace_wing: str = Field("bantz", alias="BANTZ_MEMPALACE_WING")
+    mempalace_identity_path: str = Field("", alias="BANTZ_MEMPALACE_IDENTITY_PATH")
 
     # ── Storage ───────────────────────────────────────────────────────────
     data_dir: str = Field("", alias="BANTZ_DATA_DIR")
@@ -279,6 +277,27 @@ class Config(BaseSettings):
             if old.exists():
                 old.rename(new)
         return new
+
+    @property
+    def resolved_palace_path(self) -> str:
+        """Resolved path for MemPalace ChromaDB storage."""
+        if self.palace_path:
+            return str(Path(self.palace_path).expanduser())
+        return str(Path.home() / ".mempalace" / "palace")
+
+    @property
+    def resolved_kg_path(self) -> str:
+        """Resolved path for MemPalace knowledge graph SQLite DB."""
+        if self.mempalace_kg_path:
+            return str(Path(self.mempalace_kg_path).expanduser())
+        return str(Path.home() / ".mempalace" / "knowledge_graph.sqlite3")
+
+    @property
+    def resolved_identity_path(self) -> str:
+        """Resolved path for MemPalace identity file."""
+        if self.mempalace_identity_path:
+            return str(Path(self.mempalace_identity_path).expanduser())
+        return str(Path.home() / ".mempalace" / "identity.txt")
 
     def ensure_dirs(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

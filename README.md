@@ -112,9 +112,9 @@ Bantz is built in five decoupled layers. Each layer communicates through typed c
 ├─────────────────────────────────────────────────────────────────────┤
 │                            DATA LAYER                               │
 │  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ SQLite + FTS5  │  │ Vector Store   │  │ Graph Memory (Neo4j)  │ │
-│  │ (conversations,│  │ (cosine sim.,  │  │ (entity graph,        │ │
-│  │  Q-table, mood)│  │  embeddings)   │  │  Cypher queries)      │ │
+│  │ SQLite + FTS5  │  │ Vector Store   │  │ MemPalace (ChromaDB  │ │
+│  │ (conversations,│  │ (cosine sim.,  │  │  + SQLite KG +       │ │
+│  │  Q-table, mood)│  │  embeddings)   │  │  entity registry)    │ │
 │  └────────────────┘  └────────────────┘  └───────────────────────┘ │
 │  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
 │  │ Connection Pool│  │ Distiller      │  │ Spatial Cache         │ │
@@ -166,7 +166,7 @@ src/bantz/
 │
 ├── memory/                       # Multi-tier Memory
 │   ├── vector_store.py           # Pure SQLite vector store (cosine similarity)
-│   ├── graph.py                  # Neo4j knowledge graph (entities + relations)
+│   ├── bridge.py                 # MemPalace adapter (ChromaDB + SQLite KG)
 │   ├── omni_memory.py            # OmniMemoryManager — context bloat control
 │   └── context_builder.py        # Graph → LLM context injection
 │
@@ -324,9 +324,9 @@ BANTZ_OLLAMA_BASE_URL=http://localhost:11434
 BANTZ_GEMINI_API_KEY=          # optional cloud fallback
 
 # Memory
-BANTZ_NEO4J_URI=bolt://localhost:7687
-BANTZ_NEO4J_USER=neo4j
-BANTZ_NEO4J_PASSWORD=
+BANTZ_MEMPALACE_ENABLED=true
+BANTZ_PALACE_PATH=                # leave blank for default
+BANTZ_MEMPALACE_WING=bantz
 
 # Voice (all disabled by default)
 BANTZ_VOICE_ENABLED=false
@@ -359,7 +359,7 @@ bantz                  # launch TUI
 
 **Requirements:** Python 3.11+, Ollama running locally, SQLite (stdlib).
 
-**Optional:** Neo4j (graph memory), Redis (session store), PortAudio (voice), `xdotool` (desktop automation), `chafa` (image rendering).
+**Optional:** Redis (session store), PortAudio (voice), `xdotool` (desktop automation), `chafa` (image rendering).
 
 ---
 
@@ -401,7 +401,7 @@ Active development priorities for v3:
 | **#3** | `ImageTool` — terminal image rendering via chafa, 24h cache | web | Planned |
 | **#4** | `SystemTool` — unified subprocess interface, audit log, safe-mode denylist | system | In progress |
 | **#5** | `GUITool` — pyautogui + xdotool bridge, DRY_RUN mode | system | In progress |
-| **#6** | Neo4j memory — entity graph, NER extraction, Cypher context retrieval | memory | In progress |
+| **#6** | MemPalace memory — entity graph, temporal KG, ChromaDB vector search | memory | ✅ Done |
 | **#7** | Redis session store — in-flight state, task queue, TUI↔Telegram pub/sub | memory | Planned |
 | **#8** | APScheduler — cron + one-shot tasks, Redis job store, natural language scheduling | scheduler | In progress |
 | **#9** | TUI migration: Textual → Rich Live (diff rendering, native asyncio, mouse scroll) | interface | Planned |
