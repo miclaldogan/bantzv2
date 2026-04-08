@@ -87,6 +87,32 @@ class TestRunSafeMode:
         with pytest.raises(DangerousCommandError):
             tool.run("echo 'evil' > /etc/passwd", safe_mode=True)
 
+    def test_blocks_bypass_attempts(self):
+        from bantz.tools.system_tool import DangerousCommandError
+        tool = self._tool()
+        # Bypass with quotes
+        with pytest.raises(DangerousCommandError):
+            tool.run("rm '-rf' /", safe_mode=True)
+        # Bypass with flag variants
+        with pytest.raises(DangerousCommandError):
+            tool.run("rm -fr /", safe_mode=True)
+        # Bypass with path variants
+        with pytest.raises(DangerousCommandError):
+            tool.run("rm -rf //", safe_mode=True)
+
+    def test_allows_non_blocked_substrings(self):
+        """Regression test for the 'add-user' bug where 'dd' is a substring."""
+        from bantz.tools.system_tool import SystemTool
+        tool = SystemTool()
+        # If we have a command like 'add-user' it shouldn't be blocked by 'dd'
+        # Since I don't have 'add-user' likely in this environment, I'll use a mock check
+        # Or just verify that 'dd-something' doesn't trigger 'dd' if it's not the exact executable.
+        # Actually my implementation checks os.path.basename(exe) == 'dd'
+        # So 'dd-something' is fine.
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", stderr="", returncode=0)
+            tool.run("dd-something", safe_mode=True)
+
     def test_safe_mode_false_skips_denylist(self):
         """safe_mode=False: dangerous-looking command is attempted (we pass echo to avoid actual harm)."""
         from bantz.tools.system_tool import SystemTool
@@ -107,9 +133,24 @@ class TestRunSafeMode:
     def test_failed_command_captures_returncode(self):
         from bantz.tools.system_tool import SystemTool
         tool = SystemTool()
-        result = tool.run("exit 42", safe_mode=False)
+        # Use sh -c because 'exit' is a shell builtin, not an executable
+        result = tool.run("sh -c 'exit 42'", safe_mode=False)
         assert result.returncode == 42
         assert not result.success
+
+    def test_empty_command_returns_error(self):
+        from bantz.tools.system_tool import SystemTool
+        tool = SystemTool()
+        result = tool.run("   ")
+        assert not result.success
+        assert "empty" in result.stderr.lower()
+
+    def test_nonexistent_executable_returns_127(self):
+        from bantz.tools.system_tool import SystemTool
+        tool = SystemTool()
+        result = tool.run("nonexistent_command_999", safe_mode=False)
+        assert result.returncode == 127
+        assert "No such file or directory" in result.stderr
 
 
 # ── SystemTool.run() — timeout ────────────────────────────────────────────────
@@ -140,7 +181,7 @@ class TestAuditLog:
         from bantz.tools.system_tool import SystemTool
         tool = SystemTool()
         tool.AUDIT_LOG = tmp_path / "audit.log"
-        tool.run("exit 1", safe_mode=False)
+        tool.run("sh -c 'exit 1'", safe_mode=False)
         log_content = tool.AUDIT_LOG.read_text()
         assert "rc=1" in log_content
 
