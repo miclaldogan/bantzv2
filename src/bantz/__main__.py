@@ -192,9 +192,9 @@ def _setup_telegram() -> None:
 
     import os
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    env_path.chmod(0o600)
     print(f"\n✅ Token saved: {env_path}")
     print("Start with: python -m bantz.interface.telegram_bot")
 
@@ -233,9 +233,9 @@ def _setup_gemini() -> None:
 
     import os
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    env_path.chmod(0o600)
     print(f"\n✅ Gemini configured: {env_path}")
     print(f"   Model: {model}")
     print("   Gemini will be used as the finalizer for high-quality responses.")
@@ -424,9 +424,9 @@ def _write_location_to_env(city: str, lat: float, lon: float) -> None:
 
     import os
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    env_path.chmod(0o600)
 
 
 def _setup_profile() -> None:
