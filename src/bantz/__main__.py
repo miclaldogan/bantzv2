@@ -507,6 +507,7 @@ def _setup_profile() -> None:
 def _setup_schedule() -> None:
     """Interactive schedule setup — writes schedule.json."""
     import json
+    import os
     from bantz.core.schedule import Schedule, DAYS_EN, DAYS_TR
 
     path = Schedule.setup_path()
@@ -561,7 +562,13 @@ def _setup_schedule() -> None:
         if classes:
             data[day_en] = sorted(classes, key=lambda c: c.get("time", ""))
 
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Write securely
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(content)
+    path.chmod(0o600)
     print(f"\n✅ Schedule saved: {path}")
     print("Test: bantz --once 'my classes today'")
 
