@@ -57,6 +57,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
     "feed": "Fetch and parse RSS/Atom feeds. action=fetch url=<feed_url> for a direct URL, action=category category=<name> for a group (tech, world, tr_news, science, gaming), action=list to show available categories.",
     "image": "Download, cache, and render images. action=render url=<image_url> for ANSI terminal art via chafa, action=download to cache only, action=raw for Telegram send_photo bytes.",
+    "gui": "Desktop GUI automation via pyautogui + xdotool. action=click x=<int> y=<int>, action=click_image template=<path>, action=type text=<str>, action=focus_window title=<pattern> wm_class=<class>, action=screenshot region=<x,y,w,h>, action=scroll x=<int> y=<int> clicks=<int>, action=action_log to inspect recorded actions.",
 }
 
 
