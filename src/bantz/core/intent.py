@@ -56,6 +56,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "computer_use": "Autonomous multi-step desktop automation using screen vision",
     "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
     "feed": "Fetch and parse RSS/Atom feeds. action=fetch url=<feed_url> for a direct URL, action=category category=<name> for a group (tech, world, tr_news, science, gaming), action=list to show available categories.",
+    "image": "Download, cache, and render images. action=render url=<image_url> for ANSI terminal art via chafa, action=download to cache only, action=raw for Telegram send_photo bytes.",
 }
 
 
