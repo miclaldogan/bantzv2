@@ -447,18 +447,20 @@ def _proc_running_apps() -> list[str]:
     }
     found: set[str] = set()
     try:
-        # Optimized: os.listdir is faster than Path("/proc").iterdir()
-        # for scanning thousands of PIDs, avoiding object instantiation overhead.
-        for pid_dir in os.listdir("/proc"):
-            if not pid_dir.isdigit():
-                continue
-            try:
-                with open(f"/proc/{pid_dir}/comm", "r", encoding="utf-8") as f:
-                    c = f.read().strip().lower()
-                if c in known:
-                    found.add(c)
-            except (OSError, PermissionError):
-                continue
+        # ⚡ Bolt: Replace os.listdir with os.scandir
+        # os.scandir avoids full string object instantiations and is faster
+        # when scanning thousands of PIDs in /proc.
+        with os.scandir("/proc") as it:
+            for entry in it:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry.name}/comm", "r", encoding="utf-8") as f:
+                        c = f.read().strip().lower()
+                    if c in known:
+                        found.add(c)
+                except (OSError, PermissionError):
+                    continue
     except OSError:
         pass
     return sorted(found)
