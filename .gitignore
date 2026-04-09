@@ -10,10 +10,26 @@ build/
 # Google OAuth secrets
 client_secret*.json
 credentials.json
+
+# Personal/generated files
 iclaldogancv.docx.pdf
 memory.db
 .coverage
 
-.ruff_cache/
+# Session logs & chat exports
+*_session.txt
+*_session_log.txt
+*_bantz_session.txt
+*_bantz_chat.txt
+latest_bantz_chat.txt
+
+# Picovoice wake word model (binary, licensed)
+*.ppn
+
+# Test/analysis artifacts
+pytest_final.txt
+CODEBASE_ANALYSIS.md
+LICENSE.txt
+
 .ruff_cache/
 mempalace/
