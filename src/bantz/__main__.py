@@ -102,7 +102,7 @@ def main() -> None:
         asyncio.run(_daemon())
         return
 
-    from bantz.interface.tui.app import run
+    from bantz.interface.live_ui import run
     run()
 
 
