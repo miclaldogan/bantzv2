@@ -1,0 +1,38 @@
+# Bantz Feed Registry (#289)
+# Edit this file to add/remove RSS/Atom feeds without code changes.
+# Categories group related feeds — use any name you like.
+#
+# Usage: the FeedTool reads this file at startup.
+#   action=category category=tech   → fetches all tech feeds
+#   action=list                     → shows available categories
+
+feeds:
+  tech:
+    - name: Hacker News
+      url: https://hnrss.org/frontpage
+    - name: Ars Technica
+      url: https://feeds.arstechnica.com/arstechnica/index
+    - name: The Verge
+      url: https://www.theverge.com/rss/index.xml
+
+  world:
+    - name: BBC World
+      url: https://feeds.bbci.co.uk/news/world/rss.xml
+    - name: Al Jazeera
+      url: https://www.aljazeera.com/xml/rss/all.xml
+
+  tr_news:
+    - name: NTV
+      url: https://www.ntv.com.tr/son-dakika.rss
+    - name: Habertürk
+      url: https://www.haberturk.com/rss
+
+  science:
+    - name: Nature
+      url: https://www.nature.com/nature.rss
+    - name: Science Daily
+      url: https://www.sciencedaily.com/rss/all.xml
+
+  gaming:
+    - name: Ars Technica Gaming
+      url: https://feeds.arstechnica.com/arstechnica/gaming
