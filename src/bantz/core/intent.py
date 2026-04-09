@@ -55,6 +55,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "gui_action": "Interact with a specific labeled UI element in a desktop app",
     "computer_use": "Autonomous multi-step desktop automation using screen vision",
     "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
+    "feed": "Fetch and parse RSS/Atom feeds. action=fetch url=<feed_url> for a direct URL, action=category category=<name> for a group (tech, world, tr_news, science, gaming), action=list to show available categories.",
 }
 
 
