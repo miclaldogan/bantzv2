@@ -550,11 +550,15 @@ class Brain:
             "click": "visual_click", "screen": "visual_click",
             "web": "web_search", "browse": "read_url",
             "remind": "reminder", "reminders": "reminder",
+            "cancel_reminder": "reminder", "delete_reminder": "reminder",
             "events": "calendar", "schedule": "calendar",
+            "create_event": "calendar", "delete_event": "calendar",
+            "add_event": "calendar",
             "class": "classroom", "homework": "classroom",
             "firefox": "browser_control", "chrome": "browser_control",
             "chromium": "browser_control", "browser": "browser_control",
             "accessibility": "accessibility",
+            "gemini": "browser_control", "chatgpt": "browser_control",
         }
         if tool_name:
             # Pass 1: fuzzy registry lookup (handles "Web Search" → "web_search")
@@ -570,6 +574,20 @@ class Brain:
                 alias = _TOOL_ALIASES.get(norm) or _TOOL_ALIASES.get(tool_name.lower())
                 if alias:
                     log.info("Normalised tool alias %r → %r", tool_name, alias)
+                    # Inject correct action when compound alias implies it
+                    _ALIAS_ACTIONS: dict[str, dict] = {
+                        "cancel_reminder": {"action": "cancel"},
+                        "delete_reminder": {"action": "cancel"},
+                        "create_event": {"action": "create"},
+                        "add_event": {"action": "create"},
+                        "delete_event": {"action": "delete"},
+                    }
+                    implied = _ALIAS_ACTIONS.get(norm) or _ALIAS_ACTIONS.get(tool_name.lower())
+                    if implied:
+                        for k, v in implied.items():
+                            if k not in tool_args:
+                                tool_args[k] = v
+                                log.info("Injected implied arg %s=%r from alias", k, v)
                     tool_name = alias
 
         # ── Step 4: route == "planner" → multi-step decomposition ─────

@@ -109,6 +109,40 @@ def quick_route(orig: str, en: str) -> dict | None:
             url = "https://" + url
         return {"tool": "browser_control", "args": {"action": "navigate", "url": url}}
 
+    # ── Well-known web apps (open Gemini, open ChatGPT, etc.) ─────────
+    _WEB_APP_URLS: dict[str, str] = {
+        "gemini": "https://gemini.google.com",
+        "chatgpt": "https://chatgpt.com",
+        "claude": "https://claude.ai",
+        "perplexity": "https://perplexity.ai",
+        "github": "https://github.com",
+        "reddit": "https://reddit.com",
+        "twitter": "https://x.com",
+        "x": "https://x.com",
+        "youtube": "https://youtube.com",
+        "spotify": "https://open.spotify.com",
+        "netflix": "https://netflix.com",
+        "google": "https://google.com",
+        "gmail": "https://mail.google.com",
+        "whatsapp": "https://web.whatsapp.com",
+        "discord": "https://discord.com/app",
+        "telegram": "https://web.telegram.org",
+        "linkedin": "https://linkedin.com",
+        "instagram": "https://instagram.com",
+        "wikipedia": "https://wikipedia.org",
+        "stackoverflow": "https://stackoverflow.com",
+    }
+    m = re.search(
+        r"(?:open|launch|go\s+to|navigate\s+to)\s+(\w+)"
+        r"(?:\s+(?:in\s+(?:the\s+)?)?(?:web\s*)?browser|\s+web(?:site)?)?",
+        both,
+    )
+    if m:
+        app_name = m.group(1).lower()
+        web_url = _WEB_APP_URLS.get(app_name)
+        if web_url:
+            return {"tool": "browser_control", "args": {"action": "navigate", "url": web_url}}
+
     # Everything else → cot_route (LLM-based reasoning)
     return None
 

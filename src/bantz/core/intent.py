@@ -34,16 +34,16 @@ log = logging.getLogger("bantz.intent")
 # Full descriptions live on the tool classes; these are routing-only summaries.
 _ROUTING_HINTS: dict[str, str] = {
     "web_search": "Search the internet for ANY factual/knowledge question or lookup",
-    "calendar": "Google Calendar: view, create, update, delete events and meetings",
-    "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails",
+    "calendar": "Google Calendar: view, create, update, delete events and meetings. action=create for 'add/schedule/create event/dinner/meeting'. action=today for 'what's on my calendar'. action=delete for 'remove/cancel event'.",
+    "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails. Use for ANY mention of email/mail/inbox/mails. action=summary for 'check my mail'. NEVER answer email questions from memory.",
     "weather": "Current weather and forecast for a city or user's location",
-    "reminder": "Create, list, cancel, snooze reminders and timers",
+    "reminder": "Create, list, cancel, snooze reminders and timers. action=add for new reminders. action=cancel with id=N for 'delete/cancel/remove reminder #N'. action=list for 'show my reminders'.",
     "shell": "Run a bash command (ls, df, top, apt, etc.)",
     "system": "Live system metrics: CPU, RAM, disk usage, uptime",
     "filesystem": "Read, write, list files and folders under home directory",
     "browser_control": "Launch apps AND control browser. Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
     "visual_click": "Click any visible UI element on screen by describing it",
-    "screenshot": "Capture and deliver a screenshot image to the user",
+    "screenshot": "Capture screen image (action=capture) OR analyze what's visible on screen (action=analyze). 'what do you see/what's on my screen' = action=analyze. 'take a screenshot/ss al' = action=capture.",
     "news": "Fetch and summarize latest news headlines",
     "document": "Read and summarize documents: PDF, DOCX, TXT, MD, CSV",
     "read_url": "Read full text content of a specific URL",
@@ -84,14 +84,22 @@ TOOLS:
 RULES:
 - ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
 - Factual / knowledge questions → web_search. NEVER answer from memory.
+- "check my mail/email/inbox" → gmail action=summary. NEVER hallucinate email content.
+- "add/create/schedule event/dinner/meeting at TIME" → calendar action=create with title and time. NOT action=today.
+- "delete/cancel/remove reminder #N" or "delete the no N reminder" → reminder action=cancel id=N. The tool name is "reminder" NOT "cancel_reminder".
+- "remind me in X minutes/a minute" → reminder action=add. Parse time carefully: "a minute" = 1 minute, NOT 1 hour.
 - "just open YouTube/Spotify/Netflix" (no specific content) → browser_control action=open app=firefox url=https://youtube.com
+- "open Gemini/ChatGPT/Claude" or any WEB APP → browser_control action=navigate url=<correct URL>. Known web apps: gemini=https://gemini.google.com, chatgpt=https://chatgpt.com, claude=https://claude.ai, perplexity=https://perplexity.ai, github=https://github.com, reddit=https://reddit.com
 - "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).
 - "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
+- "search X, do research, give detailed summary" / "research X and write a report" → route="planner" (needs web_search + read_url + summarizer, possibly filesystem).
 - Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
 - Literal bash commands (ls, df, top) → shell.
 - Multi-step with "then" / "and" / "after that" → route="planner".
+- Requests involving "research", "detailed summary", "write to file", or "in-depth analysis" → route="planner".
 - Do NOT hallucinate data — always route to the real tool.
 - browser_control action names are EXACT: find_and_click (not 'click'), navigate (not 'navigate_to'), type_in_element (not 'type_in').
+- Tool name must be EXACT registry name. Never invent tool names like "cancel_reminder" or "delete_event". Use the base tool with the right action param.
 
 OUTPUT — single JSON, no markdown:
 {{"route": "tool|planner|chat", "tool_name": "exact_name", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\

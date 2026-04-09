@@ -84,6 +84,13 @@ class ReminderTool(BaseTool):
             if repeat == "none" and parsed_repeat != "none":
                 repeat = parsed_repeat
 
+        # Also try parsing time from raw title/intent if time_str still empty
+        if not time_str and not place:
+            raw_text = intent or title or ""
+            _, fallback_time, _, _ = _parse_reminder_intent(raw_text)
+            if fallback_time:
+                time_str = fallback_time
+
         if not title:
             title = "Reminder"
 
@@ -111,7 +118,8 @@ class ReminderTool(BaseTool):
         # ── Time-based reminder ──
         fire_at = _resolve_time(time_str) if time_str else None
         if not fire_at:
-            fire_at = datetime.now() + timedelta(hours=1)
+            # Last resort: default to 5 minutes from now (NOT 1 hour)
+            fire_at = datetime.now() + timedelta(minutes=5)
 
         rid = scheduler.add(title, fire_at, repeat=repeat)
         time_display = fire_at.strftime("%d %b %H:%M")
@@ -249,6 +257,26 @@ def _parse_reminder_intent(text: str) -> tuple[str, str, str, str]:
             time_str = f"{dur_match.group(1)} {dur_match.group(2)}"
             cleaned = cleaned[:dur_match.start()] + cleaned[dur_match.end():]
 
+    # Extract "a minute/an hour/a few minutes" (no digit)
+    if not time_str:
+        a_dur_match = re.search(
+            r"\b(?:a|an|one)\s+(minute|min|hour|hr|second|sec)(?:\s+later|\s+from\s+now)?\b",
+            cleaned, re.IGNORECASE,
+        )
+        if a_dur_match:
+            time_str = f"1 {a_dur_match.group(1)}"
+            cleaned = cleaned[:a_dur_match.start()] + cleaned[a_dur_match.end():]
+
+    # Extract "X minutes/hours later" or "X min later"
+    if not time_str:
+        later_match = re.search(
+            r"\b(\d+)\s*(minute|min|hour|hr|second|sec)s?\s+later\b",
+            cleaned, re.IGNORECASE,
+        )
+        if later_match:
+            time_str = f"{later_match.group(1)} {later_match.group(2)}"
+            cleaned = cleaned[:later_match.start()] + cleaned[later_match.end():]
+
     # Extract "for X minutes" (timer style)
     if not time_str:
         timer_match = re.search(
@@ -287,11 +315,23 @@ def _resolve_time(time_str: str) -> datetime | None:
 
     Supports:
       - "3pm", "15:00", "3:30pm"
-      - "30 minutes", "2 hours"
+      - "30 minutes", "2 hours", "1 minute"
+      - "a minute", "an hour" (article-based durations)
       - "tomorrow 3pm"
     """
     now = datetime.now()
     t = time_str.strip().lower()
+
+    # "a minute", "an hour", "one minute" → map article to 1
+    art_match = re.match(r"(?:a|an|one)\s+(minute|min|hour|hr|second|sec)s?$", t)
+    if art_match:
+        unit = art_match.group(1)
+        if unit.startswith("hour") or unit.startswith("hr"):
+            return now + timedelta(hours=1)
+        elif unit.startswith("sec"):
+            return now + timedelta(seconds=1)
+        else:
+            return now + timedelta(minutes=1)
 
     # "X minutes/hours/seconds" → relative
     dur_match = re.match(r"(\d+)\s*(minute|min|hour|hr|second|sec)s?$", t)
