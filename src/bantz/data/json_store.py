@@ -40,9 +40,9 @@ def _write_json(path: Path, data: dict | list) -> None:
 
     content = json.dumps(data, ensure_ascii=False, indent=2)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
-    path.chmod(0o600)
 
 
 # ━━ Profile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
