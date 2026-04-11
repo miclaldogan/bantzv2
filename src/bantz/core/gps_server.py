@@ -584,7 +584,6 @@ class _GPSHandler(BaseHTTPRequestHandler):
                 .replace("%%DIRECT_URL%%", srv.url))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(html.encode())
 
@@ -606,7 +605,6 @@ class _GPSHandler(BaseHTTPRequestHandler):
         html = _PHONE_APP_TEMPLATE.replace("%%RELAY_TOPIC%%", srv.relay_topic)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(html.encode())
 
@@ -628,7 +626,6 @@ class _GPSHandler(BaseHTTPRequestHandler):
         })
         self.send_response(200)
         self.send_header("Content-Type", "application/manifest+json")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(manifest.encode())
 
@@ -654,19 +651,22 @@ class _GPSHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/javascript")
         self.send_header("Service-Worker-Allowed", "/")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(sw_js.encode())
 
     def _json_response(self, data: dict, code: int = 200):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
     def do_POST(self):
         if self.path == "/update":
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.startswith("application/json"):
+                self._json_response({"error": "Unsupported Media Type"}, 415)
+                return
+
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             try:
@@ -681,7 +681,6 @@ class _GPSHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
