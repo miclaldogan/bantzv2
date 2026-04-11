@@ -131,19 +131,22 @@ def migrate_to_sqlite(
                 data = json.loads(places_path.read_text("utf-8"))
                 count = 0
                 if not dry_run:
-                    for key, place in data.items():
-                        conn.execute(
-                            """INSERT OR REPLACE INTO places(key, label, lat, lon, radius)
-                               VALUES (?, ?, ?, ?, ?)""",
+                    # ⚡ Bolt: Replace N+1 queries with bulk operations
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO places(key, label, lat, lon, radius)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        [
                             (
                                 key,
                                 place.get("label", key),
                                 place.get("lat", 0.0),
                                 place.get("lon", 0.0),
                                 place.get("radius", 100.0),
-                            ),
-                        )
-                        count += 1
+                            )
+                            for key, place in data.items()
+                        ],
+                    )
+                    count = len(data)
                 else:
                     count = len(data)
                 results["places"] = {"migrated": count, "status": "ok"}
@@ -159,23 +162,27 @@ def migrate_to_sqlite(
                 data = json.loads(schedule_path.read_text("utf-8"))
                 count = 0
                 if not dry_run:
-                    for day, entries in data.items():
-                        for idx, entry in enumerate(entries):
-                            conn.execute(
-                                """INSERT OR REPLACE INTO schedule_entries
-                                       (day, idx, name, time, duration, location, type)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                (
-                                    day,
-                                    idx,
-                                    entry.get("name", ""),
-                                    entry.get("time", ""),
-                                    entry.get("duration", 60),
-                                    entry.get("location", ""),
-                                    entry.get("type", ""),
-                                ),
-                            )
-                            count += 1
+                    # ⚡ Bolt: Replace N+1 queries with bulk operations
+                    rows = [
+                        (
+                            day,
+                            idx,
+                            entry.get("name", ""),
+                            entry.get("time", ""),
+                            entry.get("duration", 60),
+                            entry.get("location", ""),
+                            entry.get("type", ""),
+                        )
+                        for day, entries in data.items()
+                        for idx, entry in enumerate(entries)
+                    ]
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO schedule_entries
+                               (day, idx, name, time, duration, location, type)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        rows,
+                    )
+                    count = len(rows)
                 else:
                     count = sum(len(v) for v in data.values() if isinstance(v, list))
                 results["schedule"] = {"migrated": count, "status": "ok"}
@@ -205,12 +212,12 @@ def _migrate_kv(
         data = json.loads(json_path.read_text("utf-8"))
         now = datetime.now().isoformat()
         if not dry_run:
-            for k, v in data.items():
-                conn.execute(
-                    f"""INSERT OR REPLACE INTO {table_name}(key, value, updated_at)
-                       VALUES (?, ?, ?)""",
-                    (k, json.dumps(v, ensure_ascii=False), now),
-                )
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            conn.executemany(
+                f"""INSERT OR REPLACE INTO {table_name}(key, value, updated_at)
+                   VALUES (?, ?, ?)""",
+                [(k, json.dumps(v, ensure_ascii=False), now) for k, v in data.items()],
+            )
         results[name] = {"migrated": len(data), "status": "ok"}
     except Exception as exc:
         results[name] = {"status": "error", "error": str(exc)}
