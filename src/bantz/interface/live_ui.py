@@ -152,6 +152,14 @@ class _MouseReader:
     def active(self) -> bool:
         return self._active
 
+    @staticmethod
+    def _raw_write(data: bytes) -> None:
+        """Write bytes directly to fd 1, bypassing Rich FileProxy."""
+        try:
+            os.write(1, data)
+        except OSError:
+            pass
+
     def start(self) -> None:
         if not _HAS_TERMIOS or self._active:
             return
@@ -161,8 +169,7 @@ class _MouseReader:
         except termios.error:
             return
         self._active = True
-        sys.stdout.write("\033[?1000h\033[?1006h")
-        sys.stdout.flush()
+        self._raw_write(b"\033[?1000h\033[?1006h")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -170,8 +177,7 @@ class _MouseReader:
         if not self._active:
             return
         self._active = False
-        sys.stdout.write("\033[?1000l\033[?1006l")
-        sys.stdout.flush()
+        self._raw_write(b"\033[?1000l\033[?1006l")
         if self._thread is not None:
             self._thread.join(timeout=0.3)
             self._thread = None
