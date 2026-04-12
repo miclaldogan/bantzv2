@@ -1,0 +1,30 @@
+# Bantz Hyprland Desktop — systemd user unit (#365)
+#
+# Install:
+#   cp bantz-desktop.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable bantz-desktop.service
+#
+# This service auto-restarts the Bantz chat terminal if it crashes
+# while the Hyprland session is active.
+#
+# Note: Hyprland itself (the compositor) is NOT managed by this unit.
+# It should be started by your display manager or via `bantz --desktop`.
+# This unit only manages the Bantz terminal inside the session.
+
+[Unit]
+Description=Bantz AI Desktop Terminal
+Documentation=https://github.com/miclaldogan/bantzv2
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=HYPRLAND_INSTANCE_SIGNATURE
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kitty --class bantz-chat -e bantz
+Restart=on-failure
+RestartSec=3
+Environment=TERM=xterm-256color
+
+[Install]
+WantedBy=graphical-session.target

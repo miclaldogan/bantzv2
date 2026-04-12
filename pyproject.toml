@@ -46,6 +46,8 @@ automation = [
 
 [project.scripts]
 bantz = "bantz.__main__:main"
+bantz-widget-data = "bantz.desktop.widgets:widget_data_cli"
+bantz-widget-status = "bantz.desktop.widgets:widget_status_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bantz"]

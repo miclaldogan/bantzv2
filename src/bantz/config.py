@@ -229,6 +229,14 @@ class Config(BaseSettings):
     multi_agent_max_concurrent: int = Field(3, alias="BANTZ_MULTI_AGENT_MAX_CONCURRENT")
     multi_agent_timeout: int = Field(120, alias="BANTZ_MULTI_AGENT_TIMEOUT")
 
+    # ── Hyprland Desktop (#365) ───────────────────────────────────────────
+    hyprland_enabled: bool = Field(False, alias="BANTZ_HYPRLAND_ENABLED")
+    hyprland_wallpaper: str = Field("", alias="BANTZ_HYPRLAND_WALLPAPER")
+    hyprland_left_ratio: float = Field(0.6, alias="BANTZ_HYPRLAND_LEFT_RATIO")
+    hyprland_monitor: str = Field(",preferred,auto,1", alias="BANTZ_HYPRLAND_MONITOR")
+    hyprland_config_dir: str = Field("", alias="BANTZ_HYPRLAND_CONFIG_DIR")
+    hyprland_widget_interval: int = Field(5, alias="BANTZ_HYPRLAND_WIDGET_INTERVAL")
+
     # ── Continuous Awareness (#325) ───────────────────────────────────────
     awareness_enabled: bool = Field(False, alias="BANTZ_AWARENESS_ENABLED")
     awareness_interval_s: float = Field(15.0, alias="BANTZ_AWARENESS_INTERVAL_S")

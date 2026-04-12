@@ -60,6 +60,14 @@ TOOL REFERENCE:
   • developer = shell, filesystem, code tasks
   • reviewer = analysis, validation, quality checking
   Use for: focused sub-tasks that need specialist expertise. Sub-agents have their own tool access and return structured results.
+- hyprland: control Hyprland desktop environment. Params: {{"action": "status|windows|focus|move|layout|exec|widgets", "title": "...", "workspace": N, "command": "...", "widget": "cpu|ram|gpu|weather|news"}}
+  • status = get desktop status (monitors, workspaces, active window)
+  • windows = list all open windows
+  • focus = focus a window by title or class (title= required)
+  • move = move window to workspace (target= workspace= required)
+  • layout = apply Bantz 60/40 tiling layout
+  • exec = launch a command via Hyprland
+  • widgets = get widget data (widget= param: cpu, ram, disk, gpu, weather, news, calendar, todos, status)
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
