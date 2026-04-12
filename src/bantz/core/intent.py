@@ -56,6 +56,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "computer_use": "Autonomous multi-step desktop automation using screen vision",
     "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
     "feed": "Fetch and parse RSS/Atom feeds. action=fetch url=<feed_url> for a direct URL, action=category category=<name> for a group (tech, world, tr_news, science, gaming), action=list to show available categories.",
+    "delegate_task": "Delegate a complex sub-task to a specialist agent. Roles: researcher (web search & synthesis), developer (code, shell, files), reviewer (validation, quality check). Use when a task needs focused multi-step expertise.",
     "image": "Download, cache, and render images. action=render url=<image_url> for ANSI terminal art via chafa, action=download to cache only, action=raw for Telegram send_photo bytes.",
     "gui": "Desktop GUI automation via pyautogui + xdotool. action=click x=<int> y=<int>, action=click_image template=<path>, action=type text=<str>, action=focus_window title=<pattern> wm_class=<class>, action=screenshot region=<x,y,w,h>, action=scroll x=<int> y=<int> clicks=<int>, action=action_log to inspect recorded actions.",
 }
@@ -100,6 +101,7 @@ RULES:
 - Literal bash commands (ls, df, top) → shell.
 - Multi-step with "then" / "and" / "after that" → route="planner".
 - Requests involving "research", "detailed summary", "write to file", or "in-depth analysis" → route="planner".
+- "delegate this to researcher/developer/reviewer" or "have the researcher look into X" → delegate_task with the specified role.
 - Do NOT hallucinate data — always route to the real tool.
 - browser_control action names are EXACT: find_and_click (not 'click'), navigate (not 'navigate_to'), type_in_element (not 'type_in').
 - Tool name must be EXACT registry name. Never invent tool names like "cancel_reminder" or "delete_event". Use the base tool with the right action param.

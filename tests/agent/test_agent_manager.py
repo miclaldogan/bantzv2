@@ -98,6 +98,20 @@ class TestAgentManagerInit:
             mgr.init()
         assert mgr.enabled is True
 
+    def test_init_reads_config_values(self):
+        """init() reads max_concurrent and timeout from config."""
+        mgr = AgentManager()
+        mock_cfg = MagicMock()
+        mock_cfg.multi_agent_enabled = True
+        mock_cfg.multi_agent_max_concurrent = 5
+        mock_cfg.multi_agent_timeout = 60
+        with patch("bantz.agent.agent_manager.config", mock_cfg, create=True), \
+             patch("bantz.config.config", mock_cfg):
+            mgr.init()
+        assert mgr.enabled is True
+        assert mgr.MAX_CONCURRENT == 5
+        assert mgr.DELEGATION_TIMEOUT == 60.0
+
     def test_init_disabled_stays_disabled(self):
         """init() with config.multi_agent_enabled=False keeps disabled."""
         mgr = AgentManager()

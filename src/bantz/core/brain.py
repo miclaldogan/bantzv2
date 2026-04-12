@@ -775,6 +775,7 @@ class Brain:
             "accessibility":    "Analysing the screen...",
             "browser_control":  "Operating the browser for you...",
             "classroom":     "Checking your assignments...",
+            "delegate_task":    "Delegating to a specialist agent...",
         }
         pre_line = _PRE_TOOL_LINES.get(tool_name)
         if pre_line:

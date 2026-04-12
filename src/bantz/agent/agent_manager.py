@@ -104,7 +104,12 @@ class AgentManager:
         from bantz.config import config
         self._enabled = getattr(config, "multi_agent_enabled", False)
         if self._enabled:
-            log.info("AgentManager initialised — %d roles available", len(AGENT_ROLES))
+            self.MAX_CONCURRENT = getattr(config, "multi_agent_max_concurrent", 3)
+            self.DELEGATION_TIMEOUT = float(getattr(config, "multi_agent_timeout", 120))
+            log.info(
+                "AgentManager initialised — %d roles, max_concurrent=%d, timeout=%.0fs",
+                len(AGENT_ROLES), self.MAX_CONCURRENT, self.DELEGATION_TIMEOUT,
+            )
 
     @property
     def total_delegations(self) -> int:
@@ -194,13 +199,24 @@ class AgentManager:
             agent.display_name, task[:80], self._active,
         )
 
-        # Toast notification
+        # Toast notification + event bus for TUI
         try:
             from bantz.core.notification_manager import notify_toast
             notify_toast(
                 f"🤖 Delegating to {agent.display_name}",
                 task[:60],
                 "info",
+            )
+        except Exception:
+            pass
+        try:
+            from bantz.core.event_bus import bus as _bus
+            await _bus.emit(
+                "delegation_start",
+                role=canonical,
+                display_name=agent.display_name,
+                task=task[:80],
+                active=self._active,
             )
         except Exception:
             pass
@@ -237,6 +253,37 @@ class AgentManager:
             record.duration_s,
             result.tools_used,
         )
+
+        # Completion event for TUI + toast
+        try:
+            from bantz.core.event_bus import bus as _bus
+            await _bus.emit(
+                "delegation_done",
+                role=canonical,
+                display_name=agent.display_name,
+                success=result.success,
+                duration_s=round(record.duration_s, 1),
+                tools_used=result.tools_used,
+                error=result.error,
+            )
+        except Exception:
+            pass
+        try:
+            from bantz.core.notification_manager import notify_toast
+            if result.success:
+                notify_toast(
+                    f"✅ {agent.display_name} finished",
+                    result.summary[:60],
+                    "info",
+                )
+            else:
+                notify_toast(
+                    f"❌ {agent.display_name} failed",
+                    result.error[:60],
+                    "warning",
+                )
+        except Exception:
+            pass
 
         return result
 

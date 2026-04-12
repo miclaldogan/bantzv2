@@ -55,6 +55,11 @@ TOOL REFERENCE:
   • action=screenshot → capture current screen state
   Use for: "open firefox", "go to a website", "search on YouTube", "click a button", "type in a form", any GUI automation.
   (Legacy alias: "process_text" also accepted by the executor.)
+- delegate_task: delegate a sub-task to a specialist agent. Params: {{"agent_role": "researcher|developer|reviewer", "task_description": "...", "context": {{...optional extra context}}}}
+  • researcher = web search, reading, information synthesis
+  • developer = shell, filesystem, code tasks
+  • reviewer = analysis, validation, quality checking
+  Use for: focused sub-tasks that need specialist expertise. Sub-agents have their own tool access and return structured results.
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.

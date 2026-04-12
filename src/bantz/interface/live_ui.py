@@ -659,6 +659,8 @@ class LiveUI:
         bus.on("ghost_loop_idle", self._on_bus_ghost_idle)
         bus.on("stt_model_ready", self._on_bus_stt_ready)
         bus.on("stt_model_failed", self._on_bus_stt_failed)
+        bus.on("delegation_start", self._on_bus_delegation_start)
+        bus.on("delegation_done", self._on_bus_delegation_done)
         logger.debug("EventBus → LiveUI bridge active")
 
     def _on_bus_voice_input(self, event: Event) -> None:
@@ -706,6 +708,23 @@ class LiveUI:
     def _on_bus_stt_failed(self, event: Event) -> None:
         error = event.data.get("error", "unknown")
         self.add_chat("error", f"Speech recognition failed: {error}")
+
+    def _on_bus_delegation_start(self, event: Event) -> None:
+        name = event.data.get("display_name", "Agent")
+        task = event.data.get("task", "")[:60]
+        self.add_log(f"🤖 [bold cyan]{name}[/] agent started: {task}")
+
+    def _on_bus_delegation_done(self, event: Event) -> None:
+        name = event.data.get("display_name", "Agent")
+        ok = event.data.get("success", False)
+        dur = event.data.get("duration_s", 0)
+        tools = event.data.get("tools_used", [])
+        if ok:
+            t_str = f" (tools: {', '.join(tools)})" if tools else ""
+            self.add_log(f"✅ [bold green]{name}[/] finished in {dur}s{t_str}")
+        else:
+            err = event.data.get("error", "unknown")[:60]
+            self.add_log(f"❌ [bold red]{name}[/] failed: {err}")
 
     # ══════════════════════════════════════════════════════════════
     # Chat loop
