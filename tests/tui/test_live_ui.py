@@ -115,18 +115,18 @@ class TestBuildLayout:
         layout = ui._build_layout()
         assert layout["header"] is not None
 
-    def test_layout_has_main(self, ui):
+    def test_layout_has_bottom(self, ui):
         layout = ui._build_layout()
-        assert layout["main"] is not None
+        assert layout["bottom"] is not None
 
     def test_layout_has_chat(self, ui):
         layout = ui._build_layout()
         assert layout["chat"] is not None
 
-    def test_main_has_stats_and_logs(self, ui):
+    def test_bottom_has_stats_and_logs(self, ui):
         layout = ui._build_layout()
-        assert layout["main"]["stats"] is not None
-        assert layout["main"]["logs"] is not None
+        assert layout["bottom"]["stats"] is not None
+        assert layout["bottom"]["logs"] is not None
 
 
 # ── Tests: Add chat / log ────────────────────────────────────────────────────
@@ -150,6 +150,11 @@ class TestAddChat:
             ui.add_chat("user", f"msg {i}")
         assert len(ui._chat_lines) == ui.CHAT_MAX
 
+    def test_add_chat_resets_chat_scroll(self, ui):
+        ui._chat_scroll_offset = 5
+        ui.add_chat("user", "new msg")
+        assert ui._chat_scroll_offset == 0
+
 
 class TestAddLog:
     def test_add_log_has_timestamp(self, ui):
@@ -171,33 +176,35 @@ class TestAddLog:
 # ── Tests: Scrolling ─────────────────────────────────────────────────────────
 
 class TestScrolling:
+    """_on_scroll now drives _chat_scroll_offset (chat panel)."""
+
     def test_scroll_up(self, ui):
-        ui._log_lines.extend(["line"] * 50)
+        ui._chat_lines.extend([("bantz", "msg")] * 50)
         ui._on_scroll(1)
-        assert ui._scroll_offset == 3
+        assert ui._chat_scroll_offset == 3
 
     def test_scroll_down(self, ui):
-        ui._scroll_offset = 10
+        ui._chat_scroll_offset = 10
         ui._on_scroll(-1)
-        assert ui._scroll_offset == 7
+        assert ui._chat_scroll_offset == 7
 
     def test_scroll_floor_zero(self, ui):
-        ui._scroll_offset = 1
+        ui._chat_scroll_offset = 1
         ui._on_scroll(-1)
-        assert ui._scroll_offset == 0
+        assert ui._chat_scroll_offset == 0
 
     def test_scroll_not_below_zero(self, ui):
         ui._on_scroll(-1)
-        assert ui._scroll_offset == 0
+        assert ui._chat_scroll_offset == 0
 
     def test_scroll_ceiling(self, ui):
         for _ in range(5):
-            ui._log_lines.append("x")
+            ui._chat_lines.append(("bantz", "x"))
         ui._on_scroll(1)
         ui._on_scroll(1)
         ui._on_scroll(1)
-        # should not exceed total lines - 1
-        assert ui._scroll_offset <= len(ui._log_lines) - 1
+        # should not exceed total chat lines - 1
+        assert ui._chat_scroll_offset <= len(ui._chat_lines) - 1
 
 
 # ── Tests: Render panels ────────────────────────────────────────────────────
@@ -300,8 +307,8 @@ class TestUpdatePanels:
         # All slots should now have Panel renderables
         for name in ("header", "chat"):
             assert layout[name] is not None
-        assert layout["main"]["stats"] is not None
-        assert layout["main"]["logs"] is not None
+        assert layout["bottom"]["stats"] is not None
+        assert layout["bottom"]["logs"] is not None
 
 
 # ── Tests: Mouse reader ─────────────────────────────────────────────────────
@@ -592,4 +599,5 @@ class TestDefaults:
         assert ui._busy is False
         assert ui._streaming_text is None
         assert ui._scroll_offset == 0
+        assert ui._chat_scroll_offset == 0
         assert ui._pending is None
