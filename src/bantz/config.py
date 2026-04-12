@@ -223,6 +223,10 @@ class Config(BaseSettings):
     deep_memory_threshold: float = Field(0.72, alias="BANTZ_DEEP_MEMORY_THRESHOLD")
     deep_memory_max_results: int = Field(3, alias="BANTZ_DEEP_MEMORY_MAX_RESULTS")
 
+    # ── Continuous Awareness (#325) ───────────────────────────────────────
+    awareness_enabled: bool = Field(False, alias="BANTZ_AWARENESS_ENABLED")
+    awareness_interval_s: float = Field(15.0, alias="BANTZ_AWARENESS_INTERVAL_S")
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @model_validator(mode="after")

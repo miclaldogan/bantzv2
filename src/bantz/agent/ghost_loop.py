@@ -214,6 +214,17 @@ class GhostLoop:
             bus.emit_threadsafe("voice_input", text=text)
             log.info("Ghost Loop: voice_input emitted to EventBus")
 
+            # Log current awareness snapshot alongside the transcription
+            try:
+                from bantz.config import config as _cfg
+                if _cfg.awareness_enabled:
+                    from bantz.agent.awareness import awareness_collector
+                    ctx = awareness_collector.get_current_context()
+                    if ctx:
+                        log.debug("Ghost Loop: awareness context — %s", ctx)
+            except Exception:
+                pass
+
             # Refresh conversation window — user can speak again without wake word
             self._conversation_end = time.monotonic() + CONVERSATION_WINDOW_SEC
             should_chain = True
