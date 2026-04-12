@@ -41,6 +41,7 @@ class Config(BaseSettings):
     input_control_enabled: bool = Field(False, alias="BANTZ_INPUT_CONTROL_ENABLED")
     input_confirm_destructive: bool = Field(True, alias="BANTZ_INPUT_CONFIRM_DESTRUCTIVE")
     input_type_interval_ms: int = Field(50, alias="BANTZ_INPUT_TYPE_INTERVAL_MS")
+    desktop_automation_enabled: bool = Field(False, alias="BANTZ_DESKTOP_AUTOMATION_ENABLED")
 
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")

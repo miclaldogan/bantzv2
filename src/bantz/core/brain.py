@@ -104,6 +104,10 @@ class Brain:
             import bantz.tools.screenshot_tool  # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass
+        try:
+            import bantz.tools.desktop  # noqa: F401  (#322)
+        except (ImportError, ModuleNotFoundError):
+            pass
         import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
         self._memory_ready = False
         self._graph_ready = False
