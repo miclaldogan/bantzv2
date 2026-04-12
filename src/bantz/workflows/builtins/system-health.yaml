@@ -1,0 +1,54 @@
+name: system-health
+description: "Run a system health check: CPU, RAM, disk, and optional cleanup"
+version: "1.0"
+triggers:
+  - manual: true
+inputs:
+  cleanup:
+    type: bool
+    default: "false"
+    description: "Whether to run cleanup commands"
+steps:
+  - name: check_system
+    action: tool
+    tool: system
+    args: {}
+    timeout_seconds: 10
+    description: "Collect CPU, RAM, disk usage"
+
+  - name: check_disk
+    action: shell_command
+    command: "df -h / | tail -1"
+    timeout_seconds: 5
+    description: "Check root partition usage"
+
+  - name: check_cleanup
+    action: conditional
+    condition: "{{ inputs.cleanup }}"
+    then_step: run_cleanup
+    else_step: summarize
+    description: "Decide whether to run cleanup"
+
+  - name: run_cleanup
+    action: shell_command
+    command: "sudo apt autoremove -y 2>/dev/null; echo 'Cleanup done'"
+    timeout_seconds: 60
+    description: "Auto-remove unused packages"
+    retry:
+      max_retries: 1
+      delay_seconds: 2
+
+  - name: summarize
+    action: ask_llm
+    prompt: |
+      Summarize this system health report concisely:
+      System: {{ steps.check_system.output }}
+      Disk: {{ steps.check_disk.output }}
+    timeout_seconds: 20
+    depends_on:
+      - check_system
+      - check_disk
+    description: "Generate health summary"
+
+on_failure: continue
+timeout_seconds: 180

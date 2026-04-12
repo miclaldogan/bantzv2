@@ -1,0 +1,54 @@
+name: research-and-save
+description: "Research a topic online and save the summary to a file"
+version: "1.0"
+triggers:
+  - manual: true
+inputs:
+  topic:
+    type: string
+    required: true
+    description: "Topic to research"
+  output_file:
+    type: string
+    default: "research_output.md"
+    description: "File to save the summary to"
+steps:
+  - name: search
+    action: tool
+    tool: web_search
+    args:
+      query: "{{ inputs.topic }}"
+    timeout_seconds: 20
+    retry:
+      max_retries: 2
+      delay_seconds: 3
+    description: "Search the web for the topic"
+
+  - name: summarize
+    action: ask_llm
+    prompt: |
+      Based on the following search results about "{{ inputs.topic }}",
+      write a comprehensive summary in Markdown format with headings,
+      bullet points, and key findings.
+
+      Search Results:
+      {{ steps.search.output }}
+    timeout_seconds: 45
+    depends_on:
+      - search
+    description: "Generate a detailed summary from search results"
+
+  - name: save_file
+    action: tool
+    tool: filesystem
+    args:
+      action: write
+      path: "{{ inputs.output_file }}"
+      content: "{{ steps.summarize.output }}"
+    timeout_seconds: 5
+    depends_on:
+      - summarize
+    description: "Save the summary to a file"
+
+on_failure: abort
+timeout_seconds: 120
