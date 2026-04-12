@@ -109,6 +109,10 @@ class Brain:
         except (ImportError, ModuleNotFoundError):
             pass
         try:
+            import bantz.tools.hyprland_tool  # noqa: F401  (#365)
+        except (ImportError, ModuleNotFoundError):
+            pass
+        try:
             import bantz.tools.delegate_task  # noqa: F401  (#321)
         except (ImportError, ModuleNotFoundError):
             pass

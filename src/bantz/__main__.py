@@ -48,6 +48,10 @@ def main() -> None:
                         help="Show 24h mood transition history")
     parser.add_argument("--config", action="store_true",
                         help="Show current configuration (secrets masked)")
+    parser.add_argument("--desktop", action="store_true",
+                        help="Launch Bantz Hyprland Desktop session (#365)")
+    parser.add_argument("--desktop-check", action="store_true",
+                        help="Check Hyprland desktop dependencies")
     args = parser.parse_args()
 
     if args.doctor:
@@ -94,6 +98,14 @@ def main() -> None:
         _show_config()
         return
 
+    if args.desktop_check:
+        _desktop_check()
+        return
+
+    if args.desktop:
+        _launch_desktop()
+        return
+
     if args.once:
         asyncio.run(_once(args.once))
         return
@@ -128,6 +140,9 @@ def _handle_setup(parts: list[str]) -> None:
         else:
             _setup_systemd()
         return
+    if len(parts) >= 1 and parts[0].lower() == "hyprland":
+        _setup_hyprland()
+        return
     if len(parts) >= 2 and parts[0].lower() == "google":
         service = parts[1].lower()
         from bantz.auth.google_oauth import setup_google
@@ -141,6 +156,7 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup telegram")
         print("  bantz --setup places")
         print("  bantz --setup gemini")
+        print("  bantz --setup hyprland")
         print("  bantz --setup systemd")
         print("  bantz --setup systemd --check")
 
@@ -1721,6 +1737,127 @@ def _format_uptime(timestamp_str: str) -> str:
         except ValueError:
             continue
     return timestamp_str  # fallback: return raw
+
+
+# ── Hyprland Desktop (#365) ──────────────────────────────────────────────────
+
+def _desktop_check() -> None:
+    """Check Hyprland desktop dependencies."""
+    from bantz.desktop.installer import DependencyChecker
+    checker = DependencyChecker()
+    report = checker.check()
+    print(report.summary())
+    # Also check Wayland
+    if not checker.check_wayland():
+        print("\n⚠️  Not running under Wayland. Hyprland requires a Wayland session.")
+    # GPU info
+    gpu = checker.check_gpu()
+    if gpu.get("renderer") and gpu["renderer"] != "unknown":
+        print(f"\n🎮 GPU: {gpu['renderer']}")
+
+
+def _setup_hyprland() -> None:
+    """Interactive Hyprland desktop setup — generate configs + check deps."""
+    from bantz.desktop.installer import DependencyChecker
+    from bantz.desktop.generator import ConfigGenerator
+    from bantz.config import config
+    from pathlib import Path
+
+    print("\n🖥️  Bantz Hyprland Desktop Setup")
+    print("─" * 50)
+
+    # 1. Check dependencies
+    checker = DependencyChecker()
+    report = checker.check()
+    print(report.summary())
+
+    if report.missing_required:
+        print("\n❌ Install required dependencies first:")
+        print(f"   {report.install_command}")
+        print("\nThen re-run: bantz --setup hyprland")
+        return
+
+    # 2. Ask about wallpaper
+    wallpaper = input("\nWallpaper path (blank = none): ").strip()
+
+    # 3. Ask about left ratio
+    ratio_str = input("Bantz panel width ratio (default: 0.6): ").strip()
+    left_ratio = float(ratio_str) if ratio_str else 0.6
+
+    # 4. Generate configs
+    config_dir = Path(config.hyprland_config_dir) if config.hyprland_config_dir else Path.home() / ".config"
+    gen = ConfigGenerator(
+        wallpaper=wallpaper,
+        left_ratio=left_ratio,
+    )
+
+    print(f"\n📁 Config directory: {config_dir}")
+    proceed = input("Generate configs? [Y/n]: ").strip().lower()
+    if proceed and proceed != "y":
+        print("Cancelled.")
+        return
+
+    written = gen.deploy(config_dir, backup=True)
+    print(f"\n✅ Generated {len(written)} config files:")
+    for p in written:
+        print(f"   {p}")
+
+    # 5. Install systemd user unit
+    install_service = input("\nInstall systemd user unit for auto-restart? [y/N]: ").strip().lower()
+    if install_service == "y":
+        import shutil
+        service_src = Path(__file__).parent.parent.parent.parent / "deploy" / "bantz-desktop.service"
+        service_dst = Path.home() / ".config" / "systemd" / "user" / "bantz-desktop.service"
+        if service_src.exists():
+            service_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(service_src, service_dst)
+            print(f"   Installed: {service_dst}")
+            print("   Run: systemctl --user daemon-reload && systemctl --user enable bantz-desktop")
+        else:
+            print(f"   ⚠️  Service file not found: {service_src}")
+
+    # 6. Update .env
+    update_env = input("\nAdd BANTZ_HYPRLAND_ENABLED=true to .env? [y/N]: ").strip().lower()
+    if update_env == "y":
+        env_file = Path.cwd() / ".env"
+        entries = [
+            f"\n# ── Hyprland Desktop (#365) ──\n",
+            f"BANTZ_HYPRLAND_ENABLED=true\n",
+        ]
+        if wallpaper:
+            entries.append(f"BANTZ_HYPRLAND_WALLPAPER={wallpaper}\n")
+        if left_ratio != 0.6:
+            entries.append(f"BANTZ_HYPRLAND_LEFT_RATIO={left_ratio}\n")
+        with open(env_file, "a") as f:
+            f.writelines(entries)
+        print(f"   Updated: {env_file}")
+
+    print("\n🎉 Setup complete!")
+    print("   Launch: bantz --desktop")
+    print("   Or add to display manager / TTY login")
+
+
+def _launch_desktop() -> None:
+    """Launch the Bantz Hyprland desktop session."""
+    from bantz.desktop.launcher import DesktopLauncher
+    from bantz.config import config
+
+    launcher = DesktopLauncher(
+        config_dir=config.hyprland_config_dir or None,
+        wallpaper=config.hyprland_wallpaper,
+        left_ratio=config.hyprland_left_ratio,
+        monitor_config=config.hyprland_monitor,
+    )
+
+    missing = launcher.missing_required()
+    if missing:
+        print(f"❌ Missing: {', '.join(missing)}")
+        print("   Run: bantz --setup hyprland")
+        return
+
+    print("🖥️  Launching Bantz Hyprland Desktop...")
+    exit_code = launcher.launch_hyprland()
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

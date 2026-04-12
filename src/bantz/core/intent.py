@@ -59,6 +59,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "delegate_task": "Delegate a complex sub-task to a specialist agent. Roles: researcher (web search & synthesis), developer (code, shell, files), reviewer (validation, quality check). Use when a task needs focused multi-step expertise.",
     "image": "Download, cache, and render images. action=render url=<image_url> for ANSI terminal art via chafa, action=download to cache only, action=raw for Telegram send_photo bytes.",
     "gui": "Desktop GUI automation via pyautogui + xdotool. action=click x=<int> y=<int>, action=click_image template=<path>, action=type text=<str>, action=focus_window title=<pattern> wm_class=<class>, action=screenshot region=<x,y,w,h>, action=scroll x=<int> y=<int> clicks=<int>, action=action_log to inspect recorded actions.",
+    "hyprland": "Control Hyprland desktop: window management, workspaces, tiling layout, widget data. action=status|windows|focus|move|layout|exec|widgets. Use for: 'show windows/workspaces', 'focus X', 'move Y to workspace 2', 'apply bantz layout', 'get system stats widget'.",
 }
 
 
