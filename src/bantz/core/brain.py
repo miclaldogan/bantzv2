@@ -122,11 +122,31 @@ class Brain:
         self._last_screen_description: str = ""
         self._screen_description_turn: int = -1
         self._pending_vlm_task: object = None  # asyncio.Task | None
+        # Continuous Awareness (#325): background collector task
+        self._awareness_task: object = None  # asyncio.Task | None
 
     def _ensure_memory(self) -> None:
         if not self._memory_ready:
             data_layer.init(config)
             self._memory_ready = True
+            # Start continuous awareness collector on first process() call (#325)
+            if config.awareness_enabled:
+                self._start_awareness()
+
+    def _start_awareness(self) -> None:
+        """Launch the AwarenessCollector background task (idempotent)."""
+        if self._awareness_task is not None:
+            return
+        try:
+            from bantz.agent.awareness import awareness_collector
+            awareness_collector.interval_s = config.awareness_interval_s
+            self._awareness_task = asyncio.create_task(
+                awareness_collector.run(),
+                name="bantz-awareness",
+            )
+            log.info("Awareness collector started (interval=%.0fs)", config.awareness_interval_s)
+        except Exception as exc:
+            log.warning("Failed to start awareness collector: %s", exc)
 
     def _desktop_context(self) -> str:
         """Compat shim → ``memory_injector.desktop_context`` (#227)."""
@@ -323,6 +343,16 @@ class Brain:
                 )
                 self._context_turn = self._turn_counter  # refresh TTL on use
 
+        # Continuous Awareness context (#325): inject desktop state when enabled
+        if config.awareness_enabled:
+            try:
+                from bantz.agent.awareness import awareness_collector
+                awareness_ctx = awareness_collector.get_current_context()
+                if awareness_ctx:
+                    parts.append(awareness_ctx)
+            except Exception as exc:
+                log.debug("Awareness context injection failed: %s", exc)
+
         return "\n\n".join(parts)
 
     async def _vlm_describe_screen(self, img_bytes: bytes) -> None:
@@ -341,6 +371,56 @@ class Brain:
                 log.debug("VLM screen description stored (%d chars)", len(result.raw_text))
         except Exception as exc:
             log.debug("VLM screen describe failed: %s", exc)
+
+    # ── Continuous Awareness helpers (#325) ───────────────────────────
+
+    # Deictic / visual-reference keywords (English + Turkish)
+    _AWARENESS_SCREENSHOT_TRIGGERS: frozenset[str] = frozenset({
+        # English
+        "this", "here", "what is this", "fix this", "what's this",
+        "what do you see", "what's on", "look at", "analyze this",
+        "check this", "read this", "explain this",
+        # Turkish
+        "bu", "bak", "buna", "bunu", "ne var", "ne görüyorsun",
+        "ekran", "burası", "burada", "şuna", "şu",
+    })
+
+    def _maybe_inject_awareness_screenshot(
+        self, en_input: str, orig_input: str,
+    ) -> None:
+        """If the message is a deictic reference, pre-load the awareness screenshot
+        into the VLM pipeline so the next LLM call has visual context.
+
+        This is a fire-and-forget background task — any failure is silent.
+        Uses word-boundary matching so short tokens like "bu" don't falsely
+        trigger on substrings (e.g. "Istanbul").
+        """
+        import re as _re
+        lower = (en_input + " " + orig_input).lower()
+        triggered = any(
+            _re.search(r"(?<!\w)" + _re.escape(kw) + r"(?!\w)", lower)
+            for kw in self._AWARENESS_SCREENSHOT_TRIGGERS
+        )
+        if not triggered:
+            return
+        try:
+            from bantz.agent.awareness import awareness_collector
+            screenshot_path = awareness_collector.get_screenshot_for_vlm()
+            if not screenshot_path:
+                return
+            import pathlib
+            img_bytes = pathlib.Path(screenshot_path).read_bytes()
+            if img_bytes and self._pending_vlm_task is None:
+                self._pending_vlm_task = asyncio.create_task(
+                    self._vlm_describe_screen(img_bytes),
+                    name="bantz-awareness-vlm",
+                )
+                log.debug(
+                    "Awareness: deictic trigger detected — loading screenshot for VLM (%d bytes)",
+                    len(img_bytes),
+                )
+        except Exception as exc:
+            log.debug("Awareness: screenshot VLM injection failed: %s", exc)
 
     @staticmethod
     def _quick_route(orig: str, en: str) -> dict | None:
@@ -493,6 +573,13 @@ class Brain:
                         tool_result=q_result, attachments=q_attachments,
                     )
                 log.warning("quick_route: external tool '%s' not in registry — falling through", q_tool)
+
+        # ── Awareness screenshot injection (#325) ─────────────────────
+        # If the message contains a deictic reference word and awareness is
+        # enabled, eagerly attach the latest screenshot to the VLM pipeline
+        # so the LLM has visual context for words like "this", "here", etc.
+        if config.awareness_enabled:
+            self._maybe_inject_awareness_screenshot(en_input, user_input)
 
         # ── Step 2: cot_route — LLM decides everything ───────────────
         tool_ctx = self._build_tool_context(en_input)
