@@ -5,3 +5,7 @@
 ## 2024-05-18 - [File System Traversal Optimization]
 **Learning:** In high-frequency polling scenarios (like scanning the `/proc` filesystem for process IDs), using `pathlib.Path.iterdir()` introduces significant overhead compared to `os.listdir()` due to the instantiation of a `Path` object for every directory entry. When scanning thousands of items, this object creation cost adds up unnecessarily.
 **Action:** Use `os.listdir()` and raw strings for paths when iterating over large directories in performance-critical or frequently-polled code paths, replacing `Path` object instantiation where appropriate.
+
+## 2026-04-12 - [N+1 Query Optimization in SQLite Migrations]
+**Learning:** The data migration script for converting JSON files into the new SQLite format (`src/bantz/data/migration.py`) was previously executing thousands of individual `conn.execute()` insert statements within `for` loops. This N+1 query pattern creates significant overhead during the initial database population, blocking the application startup.
+**Action:** Always identify loops that execute individual database inserts or updates. Refactor these to accumulate the data into lists and execute a single `conn.executemany()` to drastically reduce the SQLite statement compilation and execution overhead.
