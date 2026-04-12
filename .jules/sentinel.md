@@ -10,3 +10,7 @@
 **Vulnerability:** The local GPS server allowed wildcard CORS (`Access-Control-Allow-Origin: *`) across all endpoints and lacked `Content-Type` validation on its state-changing `/update` POST endpoint, exposing users to CSRF and SSRF attacks from malicious websites.
 **Learning:** Local servers, even those intended only for LAN use, are accessible from any origin in a standard browser unless restricted by CORS. An HTML `<form>` submission bypasses CORS preflight checks, meaning lack of `Content-Type` validation on POST endpoints enables trivial CSRF attacks.
 **Prevention:** Never use `Access-Control-Allow-Origin: *` for state-changing local APIs unless strictly necessary. Always enforce `Content-Type: application/json` for JSON APIs to block simple HTML form submissions.
+## 2025-04-10 - [TOCTOU Vulnerability in File Creations]
+**Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found where `path.chmod(0o600)` was used immediately after writing content to sensitive files.
+**Learning:** This leaves a race condition window between file creation and permission changes. A malicious symlink attack could change the target of `path.chmod`, or simply read the sensitive content before permissions are restricted.
+**Prevention:** Using `os.fchmod(fd, 0o600)` right after `os.open` tightly binds the permission changes to the file descriptor, rather than relying on a subsequent path-based `chmod` that is vulnerable to symlink race conditions.
