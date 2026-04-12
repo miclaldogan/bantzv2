@@ -108,6 +108,10 @@ class Brain:
             import bantz.tools.desktop  # noqa: F401  (#322)
         except (ImportError, ModuleNotFoundError):
             pass
+        try:
+            import bantz.tools.delegate_task  # noqa: F401  (#321)
+        except (ImportError, ModuleNotFoundError):
+            pass
         import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
         self._memory_ready = False
         self._graph_ready = False
@@ -133,6 +137,13 @@ class Brain:
         if not self._memory_ready:
             data_layer.init(config)
             self._memory_ready = True
+            # Initialise multi-agent subsystem (#321)
+            if config.multi_agent_enabled:
+                try:
+                    from bantz.agent.agent_manager import agent_manager
+                    agent_manager.init()
+                except Exception as exc:
+                    log.warning("Failed to initialise multi-agent: %s", exc)
             # Start continuous awareness collector on first process() call (#325)
             if config.awareness_enabled:
                 self._start_awareness()
@@ -764,6 +775,7 @@ class Brain:
             "accessibility":    "Analysing the screen...",
             "browser_control":  "Operating the browser for you...",
             "classroom":     "Checking your assignments...",
+            "delegate_task":    "Delegating to a specialist agent...",
         }
         pre_line = _PRE_TOOL_LINES.get(tool_name)
         if pre_line:

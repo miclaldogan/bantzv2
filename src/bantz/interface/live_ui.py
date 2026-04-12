@@ -152,6 +152,14 @@ class _MouseReader:
     def active(self) -> bool:
         return self._active
 
+    @staticmethod
+    def _raw_write(data: bytes) -> None:
+        """Write bytes directly to fd 1, bypassing Rich FileProxy."""
+        try:
+            os.write(1, data)
+        except OSError:
+            pass
+
     def start(self) -> None:
         if not _HAS_TERMIOS or self._active:
             return
@@ -161,8 +169,7 @@ class _MouseReader:
         except termios.error:
             return
         self._active = True
-        sys.stdout.write("\033[?1000h\033[?1006h")
-        sys.stdout.flush()
+        self._raw_write(b"\033[?1000h\033[?1006h")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -170,8 +177,7 @@ class _MouseReader:
         if not self._active:
             return
         self._active = False
-        sys.stdout.write("\033[?1000l\033[?1006l")
-        sys.stdout.flush()
+        self._raw_write(b"\033[?1000l\033[?1006l")
         if self._thread is not None:
             self._thread.join(timeout=0.3)
             self._thread = None
@@ -251,6 +257,7 @@ class LiveUI:
 
         # ── UI state ─────────────────────────────────────────────
         self._scroll_offset: int = 0
+        self._chat_scroll_offset: int = 0
         self._running: bool = True
         self._live: Live | None = None
         self._busy: bool = False
@@ -265,14 +272,14 @@ class LiveUI:
     # ── Scroll callback ───────────────────────────────────────────
 
     def _on_scroll(self, direction: int) -> None:
-        """Adjust log-panel scroll offset.  +1 = up, −1 = down."""
+        """Adjust chat-panel scroll offset.  +1 = up, −1 = down."""
         if direction > 0:
-            self._scroll_offset = min(
-                self._scroll_offset + 3,
-                max(0, len(self._log_lines) - 1),
+            self._chat_scroll_offset = min(
+                self._chat_scroll_offset + 3,
+                max(0, len(self._chat_lines) - 1),
             )
         else:
-            self._scroll_offset = max(self._scroll_offset - 3, 0)
+            self._chat_scroll_offset = max(self._chat_scroll_offset - 3, 0)
 
     # ── Layout ────────────────────────────────────────────────────
 
@@ -280,11 +287,11 @@ class LiveUI:
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=3),
-            Layout(name="main", ratio=1),
-            Layout(name="chat", size=14),
+            Layout(name="chat", ratio=3),
+            Layout(name="bottom", ratio=1, minimum_size=7),
         )
-        layout["main"].split_row(
-            Layout(name="stats", size=30),
+        layout["bottom"].split_row(
+            Layout(name="stats", size=28),
             Layout(name="logs", ratio=1),
         )
         return layout
@@ -304,32 +311,27 @@ class LiveUI:
 
     def _render_stats(self) -> Panel:
         lines: list[str] = [
-            f"  [dim]CPU [/] {_bar(self._cpu)}  {self._cpu:5.1f}%",
-            f"  [dim]RAM [/] {_bar(self._ram_pct)}  "
-            f"{self._ram_used_gb:.1f}/{self._ram_total_gb:.0f}GB",
-            f"  [dim]DISK[/] {_bar(self._disk_pct)}  "
-            f"{self._disk_used_gb:.0f}/{self._disk_total_gb:.0f}GB",
+            f" [dim]CPU [/]{_bar(self._cpu)} {self._cpu:4.0f}%",
+            f" [dim]RAM [/]{_bar(self._ram_pct)} "
+            f"{self._ram_used_gb:.1f}/{self._ram_total_gb:.0f}G",
+            f" [dim]DISK[/]{_bar(self._disk_pct)} "
+            f"{self._disk_used_gb:.0f}/{self._disk_total_gb:.0f}G",
         ]
         if self._vram_available:
             lines.append(
-                f"  [dim]VRAM[/] {_bar(self._vram_pct)}  "
-                f"{self._vram_used_mb:.0f}/{self._vram_total_mb:.0f}MB"
+                f" [dim]VRAM[/]{_bar(self._vram_pct)} "
+                f"{self._vram_used_mb:.0f}/{self._vram_total_mb:.0f}M"
             )
-
-        now = datetime.now()
-        lines.append("")
-        lines.append(f"  [bold]{now.strftime('%H:%M:%S')}[/]")
-        lines.append(f"  [dim]{now.strftime('%A, %d %B %Y')}[/]")
         return Panel(
             Text.from_markup("\n".join(lines)),
-            title="[bold cyan]SYSTEM[/]",
+            title="[bold cyan]SYS[/]",
             border_style="cyan",
         )
 
     def _render_logs(self) -> Panel:
         lines = list(self._log_lines)
         total = len(lines)
-        visible_count = 40
+        visible_count = 15
 
         if self._scroll_offset > 0 and total > 0:
             end = max(0, total - self._scroll_offset)
@@ -358,15 +360,28 @@ class LiveUI:
 
     def _render_chat(self) -> Panel:
         parts: list[Any] = []
-        recent = list(self._chat_lines)[-20:]
+        all_msgs = list(self._chat_lines)
+        total = len(all_msgs)
+        visible_count = 40
 
-        for role, msg in recent:
+        if self._chat_scroll_offset > 0 and total > 0:
+            end = max(0, total - self._chat_scroll_offset)
+            start = max(0, end - visible_count)
+            recent = all_msgs[start:end]
+        else:
+            recent = all_msgs[-visible_count:]
+
+        for i, (role, msg) in enumerate(recent):
             if role == "user":
+                if i > 0:
+                    parts.append(Text(""))
                 parts.append(
-                    Text.from_markup(f"[bold green]▶ You[/]   {escape(msg)}")
+                    Text.from_markup(f"[bold green]▶ You[/]  {escape(msg)}")
                 )
             elif role == "bantz":
-                if "```" in msg or len(msg) > 300:
+                if i > 0:
+                    parts.append(Text(""))
+                if "```" in msg or len(msg) > 120:
                     parts.append(Text.from_markup("[bold cyan]◆ Bantz[/]"))
                     parts.append(Markdown(msg))
                 else:
@@ -389,6 +404,7 @@ class LiveUI:
                 )
 
         if self._streaming_text is not None:
+            parts.append(Text(""))
             parts.append(
                 Text.from_markup(
                     f"[bold cyan]◆ Bantz[/]  {escape(self._streaming_text)}▌"
@@ -397,15 +413,23 @@ class LiveUI:
         elif self._busy:
             parts.append(Text("  ⟳ thinking...", style="dim cyan"))
 
+        scroll_hint = ""
+        if self._chat_scroll_offset > 0:
+            scroll_hint = f" [dim](↑{self._chat_scroll_offset})[/]"
+
         content = Group(*parts) if parts else Text("")
         return Panel(
-            content, title="[bold cyan]CHAT[/]", border_style="cyan",
+            content,
+            title=f"[bold cyan]CHAT[/]{scroll_hint}",
+            border_style="cyan",
+            subtitle="[dim]scroll ↑↓ to browse history[/]" if total > visible_count else None,
+            subtitle_align="right",
         )
 
     def _update_panels(self, layout: Layout) -> None:
         layout["header"].update(self._render_header())
-        layout["main"]["stats"].update(self._render_stats())
-        layout["main"]["logs"].update(self._render_logs())
+        layout["bottom"]["stats"].update(self._render_stats())
+        layout["bottom"]["logs"].update(self._render_logs())
         layout["chat"].update(self._render_chat())
 
     # ── Data helpers ──────────────────────────────────────────────
@@ -413,6 +437,7 @@ class LiveUI:
     def add_chat(self, role: str, msg: str) -> None:
         """Append a message to the chat panel."""
         self._chat_lines.append((role, msg))
+        self._chat_scroll_offset = 0  # auto-scroll to newest
 
     def add_log(self, msg: str) -> None:
         """Append a timestamped line to the log panel (auto-scroll)."""
@@ -659,6 +684,8 @@ class LiveUI:
         bus.on("ghost_loop_idle", self._on_bus_ghost_idle)
         bus.on("stt_model_ready", self._on_bus_stt_ready)
         bus.on("stt_model_failed", self._on_bus_stt_failed)
+        bus.on("delegation_start", self._on_bus_delegation_start)
+        bus.on("delegation_done", self._on_bus_delegation_done)
         logger.debug("EventBus → LiveUI bridge active")
 
     def _on_bus_voice_input(self, event: Event) -> None:
@@ -706,6 +733,23 @@ class LiveUI:
     def _on_bus_stt_failed(self, event: Event) -> None:
         error = event.data.get("error", "unknown")
         self.add_chat("error", f"Speech recognition failed: {error}")
+
+    def _on_bus_delegation_start(self, event: Event) -> None:
+        name = event.data.get("display_name", "Agent")
+        task = event.data.get("task", "")[:60]
+        self.add_log(f"🤖 [bold cyan]{name}[/] agent started: {task}")
+
+    def _on_bus_delegation_done(self, event: Event) -> None:
+        name = event.data.get("display_name", "Agent")
+        ok = event.data.get("success", False)
+        dur = event.data.get("duration_s", 0)
+        tools = event.data.get("tools_used", [])
+        if ok:
+            t_str = f" (tools: {', '.join(tools)})" if tools else ""
+            self.add_log(f"✅ [bold green]{name}[/] finished in {dur}s{t_str}")
+        else:
+            err = event.data.get("error", "unknown")[:60]
+            self.add_log(f"❌ [bold red]{name}[/] failed: {err}")
 
     # ══════════════════════════════════════════════════════════════
     # Chat loop

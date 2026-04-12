@@ -224,6 +224,11 @@ class Config(BaseSettings):
     deep_memory_threshold: float = Field(0.72, alias="BANTZ_DEEP_MEMORY_THRESHOLD")
     deep_memory_max_results: int = Field(3, alias="BANTZ_DEEP_MEMORY_MAX_RESULTS")
 
+    # ── Multi-Agent Hierarchy (#321) ──────────────────────────────────────
+    multi_agent_enabled: bool = Field(False, alias="BANTZ_MULTI_AGENT_ENABLED")
+    multi_agent_max_concurrent: int = Field(3, alias="BANTZ_MULTI_AGENT_MAX_CONCURRENT")
+    multi_agent_timeout: int = Field(120, alias="BANTZ_MULTI_AGENT_TIMEOUT")
+
     # ── Continuous Awareness (#325) ───────────────────────────────────────
     awareness_enabled: bool = Field(False, alias="BANTZ_AWARENESS_ENABLED")
     awareness_interval_s: float = Field(15.0, alias="BANTZ_AWARENESS_INTERVAL_S")
