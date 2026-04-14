@@ -516,7 +516,6 @@ class SQLiteProfileStore(ProfileStore):
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            # ⚡ Bolt: Optimize existence check by avoiding full table scan using SELECT 1 ... LIMIT 1
             row = conn.execute(
                 "SELECT 1 FROM user_profile LIMIT 1"
             ).fetchone()
@@ -606,7 +605,6 @@ class SQLitePlaceStore(PlaceStore):
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            # ⚡ Bolt: Optimize existence check by avoiding full table scan using SELECT 1 ... LIMIT 1
             row = conn.execute(
                 "SELECT 1 FROM places LIMIT 1"
             ).fetchone()
@@ -685,7 +683,6 @@ class SQLiteScheduleStore(ScheduleStore):
 
     def exists(self) -> bool:
         with get_pool().connection() as conn:
-            # ⚡ Bolt: Optimize existence check by avoiding full table scan using SELECT 1 ... LIMIT 1
             row = conn.execute(
                 "SELECT 1 FROM schedule_entries LIMIT 1"
             ).fetchone()
