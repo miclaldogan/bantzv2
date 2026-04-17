@@ -515,11 +515,12 @@ class SQLiteProfileStore(ProfileStore):
             )
 
     def exists(self) -> bool:
+        # Optimization: use LIMIT 1 for existence check instead of O(N) COUNT(*) scan
         with get_pool().connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM user_profile"
+                "SELECT 1 FROM user_profile LIMIT 1"
             ).fetchone()
-        return row[0] > 0
+        return row is not None
 
     @property
     def path(self) -> Path:
@@ -604,11 +605,12 @@ class SQLitePlaceStore(PlaceStore):
             return cur.rowcount > 0
 
     def exists(self) -> bool:
+        # Optimization: use LIMIT 1 for existence check instead of O(N) COUNT(*) scan
         with get_pool().connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM places"
+                "SELECT 1 FROM places LIMIT 1"
             ).fetchone()
-        return row[0] > 0
+        return row is not None
 
     @property
     def path(self) -> Path:
@@ -682,11 +684,12 @@ class SQLiteScheduleStore(ScheduleStore):
             )
 
     def exists(self) -> bool:
+        # Optimization: use LIMIT 1 for existence check instead of O(N) COUNT(*) scan
         with get_pool().connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM schedule_entries"
+                "SELECT 1 FROM schedule_entries LIMIT 1"
             ).fetchone()
-        return row[0] > 0
+        return row is not None
 
     @property
     def path(self) -> Path:
