@@ -5,3 +5,7 @@
 ## 2024-05-18 - [SQLite Bulk Insertion Optimization]
 **Learning:** In `src/bantz/data/migration.py`, data migration functions were looping over dictionaries and running `conn.execute(...)` for each key-value pair or list element. This creates a classic N+1 query performance bottleneck when migrating large datasets.
 **Action:** Replace `conn.execute(...)` loops with a list comprehension paired with `conn.executemany(...)` to run the operations in bulk, reducing database round-trips and significantly improving data loading performance.
+
+## 2024-05-18 - [SQLite Existence Checks]
+**Learning:** To optimize SQLite existence checks and avoid O(N) full table/index scans, `SELECT 1 FROM table LIMIT 1` should be used rather than `SELECT COUNT(*) FROM table`.
+**Action:** When checking if a table contains any data, write queries using `SELECT 1 FROM table LIMIT 1` and check if the result `is not None` instead of using `COUNT(*)`.
