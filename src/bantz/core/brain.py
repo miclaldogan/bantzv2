@@ -112,6 +112,10 @@ class Brain:
             import bantz.tools.delegate_task  # noqa: F401  (#321)
         except (ImportError, ModuleNotFoundError):
             pass
+        try:
+            import bantz.tools.workflow_tool  # noqa: F401  (#323)
+        except (ImportError, ModuleNotFoundError):
+            pass
         import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
         self._memory_ready = False
         self._graph_ready = False
@@ -776,6 +780,7 @@ class Brain:
             "browser_control":  "Operating the browser for you...",
             "classroom":     "Checking your assignments...",
             "delegate_task":    "Delegating to a specialist agent...",
+            "run_workflow":     "Running your workflow...",
         }
         pre_line = _PRE_TOOL_LINES.get(tool_name)
         if pre_line:

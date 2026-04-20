@@ -1,0 +1,57 @@
+name: morning-briefing
+description: "Collect weather, news, and today's calendar for a morning summary"
+version: "1.0"
+triggers:
+  - schedule: "08:00"
+  - manual: true
+inputs:
+  city:
+    type: string
+    default: ""
+    description: "City for weather (leave empty for configured location)"
+steps:
+  - name: get_weather
+    action: tool
+    tool: weather
+    args:
+      city: "{{ inputs.city }}"
+    timeout_seconds: 15
+    description: "Fetch current weather"
+
+  - name: get_news
+    action: tool
+    tool: news
+    args:
+      query: "top headlines"
+      count: "5"
+    timeout_seconds: 20
+    description: "Fetch top news headlines"
+
+  - name: get_events
+    action: tool
+    tool: calendar
+    args:
+      action: today
+    timeout_seconds: 15
+    description: "Fetch today's calendar events"
+
+  - name: summarize
+    action: ask_llm
+    prompt: |
+      Create a concise morning briefing from the following information.
+      Use a friendly tone and organize it clearly.
+
+      🌤️ Weather: {{ steps.get_weather.output }}
+
+      📰 News: {{ steps.get_news.output }}
+
+      📅 Today's Schedule: {{ steps.get_events.output }}
+    timeout_seconds: 30
+    depends_on:
+      - get_weather
+      - get_news
+      - get_events
+    description: "Generate a unified morning briefing"
+
+on_failure: continue
+timeout_seconds: 120

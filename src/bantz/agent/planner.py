@@ -60,6 +60,10 @@ TOOL REFERENCE:
   • developer = shell, filesystem, code tasks
   • reviewer = analysis, validation, quality checking
   Use for: focused sub-tasks that need specialist expertise. Sub-agents have their own tool access and return structured results.
+- run_workflow: execute a predefined YAML workflow. Params: {{"action": "run|list|create", "name": "workflow-name", "inputs": {{...}}}}
+  • action=run name=<name> inputs={{...}} → execute a deterministic multi-step pipeline
+  • action=list → show available workflows
+  Use for: known repeatable pipelines (morning briefing, system health, research-and-save).
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.

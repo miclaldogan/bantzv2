@@ -233,6 +233,10 @@ class Config(BaseSettings):
     awareness_enabled: bool = Field(False, alias="BANTZ_AWARENESS_ENABLED")
     awareness_interval_s: float = Field(15.0, alias="BANTZ_AWARENESS_INTERVAL_S")
 
+    # ── YAML Workflows (#323) ─────────────────────────────────────────────
+    workflows_enabled: bool = Field(True, alias="BANTZ_WORKFLOWS_ENABLED")
+    workflows_dir: str = Field("", alias="BANTZ_WORKFLOWS_DIR")
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @model_validator(mode="after")
