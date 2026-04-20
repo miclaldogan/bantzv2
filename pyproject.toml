@@ -25,7 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 translation = [
-    "transformers>=4.40.0",
+    "transformers>=5.5.3",
     "torch>=2.0.0",
     "sentencepiece>=0.2.0",
 ]
