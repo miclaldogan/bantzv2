@@ -7,7 +7,9 @@ LLM summarizes results into a natural paragraph.
 from __future__ import annotations
 
 import time
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from typing import Any
 
 import httpx
@@ -173,7 +175,11 @@ class NewsTool(BaseTool):
             resp = await client.get(url, follow_redirects=True, timeout=TIMEOUT)
             resp.raise_for_status()
 
-            root = ET.fromstring(resp.text)
+            try:
+                root = ET.fromstring(resp.text)
+            except (xml.etree.ElementTree.ParseError, DefusedXmlException):
+                return []
+
             items = root.findall(".//item")[:limit]
             titles = []
             for item in items:
