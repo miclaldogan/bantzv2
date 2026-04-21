@@ -14,3 +14,7 @@
 **Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found where `path.chmod(0o600)` was used immediately after writing content to sensitive files.
 **Learning:** This leaves a race condition window between file creation and permission changes. A malicious symlink attack could change the target of `path.chmod`, or simply read the sensitive content before permissions are restricted.
 **Prevention:** Using `os.fchmod(fd, 0o600)` right after `os.open` tightly binds the permission changes to the file descriptor, rather than relying on a subsequent path-based `chmod` that is vulnerable to symlink race conditions.
+## 2024-05-28 - [XML External Entity (XXE) Vulnerability in Feed Parsing]
+**Vulnerability:** Untrusted XML feeds were being parsed using the insecure standard library `xml.etree.ElementTree`, making the application vulnerable to XXE and Billion Laughs attacks.
+**Learning:** The codebase relies on fetching external data formats like RSS/Atom feeds which can contain malicious entity payloads.
+**Prevention:** Use `defusedxml` package as a drop-in replacement for standard XML parsers whenever processing untrusted input. Ensure `defusedxml.common.DefusedXmlException` is caught along with standard ParseErrors.
