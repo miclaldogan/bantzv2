@@ -10,6 +10,16 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+try:
+    import pyautogui
+    # Even if imported, test must skip if DISPLAY is not set, else X11 exceptions during collection inside pyautogui
+    if "DISPLAY" not in os.environ:
+        pyautogui = None
+except (ImportError, KeyError):
+    pyautogui = None
+
+pytestmark = pytest.mark.skipif(pyautogui is None, reason='pyautogui not installed or no DISPLAY')
+
 from bantz.tools.gui_tool import (
     CACHE_DIR,
     GUITool,
