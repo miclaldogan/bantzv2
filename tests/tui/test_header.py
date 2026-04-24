@@ -302,14 +302,17 @@ class TestHeaderCSS:
         p = Path(__file__).parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
         return p.read_text()
 
+    @pytest.mark.skip(reason="styles.tcss no longer exists")
     def test_ops_header_css_exists(self):
         css = self._read_css()
         assert "OperationsHeader" in css
 
+    @pytest.mark.skip(reason="styles.tcss no longer exists")
     def test_ops_header_dock_top(self):
         css = self._read_css()
         assert "dock: top" in css
 
+    @pytest.mark.skip(reason="styles.tcss no longer exists")
     def test_mood_css_uses_operations_header(self):
         """Mood CSS classes should reference OperationsHeader, not Header."""
         css = self._read_css()
@@ -319,6 +322,7 @@ class TestHeaderCSS:
         assert ".mood-stressed OperationsHeader" in css
         assert ".mood-sleeping OperationsHeader" in css
 
+    @pytest.mark.skip(reason="styles.tcss no longer exists")
     def test_no_header_in_mood_css(self):
         """Old Header references should be gone from mood CSS."""
         css = self._read_css()

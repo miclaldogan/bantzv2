@@ -26,13 +26,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pyautogui
+try:
+    import pyautogui
+    # ── pyautogui global config ──────────────────────────────────────────────────
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0
+except (ImportError, KeyError):
+    pyautogui = None  # type: ignore
 
 from bantz.tools import BaseTool, ToolResult, registry
-
-# ── pyautogui global config ──────────────────────────────────────────────────
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0
 
 logger = logging.getLogger(__name__)
 
