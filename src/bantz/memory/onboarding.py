@@ -258,7 +258,7 @@ def seed_identity(
     tools = answers.get("tools", "")
 
     lines = [
-        f"## L0 — IDENTITY",
+        "## L0 — IDENTITY",
         f"Name: {name}",
     ]
     if profession:
