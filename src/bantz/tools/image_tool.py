@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -53,13 +54,15 @@ def purge_stale_cache() -> int:
 
     now = time.time()
     purged = 0
-    for f in CACHE_DIR.iterdir():
-        if f.is_file() and (now - f.stat().st_mtime) > CACHE_TTL:
-            try:
-                f.unlink()
-                purged += 1
-            except OSError as exc:
-                log.debug("Failed to purge %s: %s", f, exc)
+    # ⚡ Bolt: Use os.scandir instead of iterdir for faster directory iteration
+    with os.scandir(CACHE_DIR) as it:
+        for f in it:
+            if f.is_file() and (now - f.stat().st_mtime) > CACHE_TTL:
+                try:
+                    os.unlink(f.path)
+                    purged += 1
+                except OSError as exc:
+                    log.debug("Failed to purge %s: %s", f.path, exc)
     if purged:
         log.info("Purged %d stale image(s) from cache", purged)
     return purged

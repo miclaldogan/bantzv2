@@ -6,6 +6,7 @@ Path security check - cannot go outside the home directory (by default).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -117,7 +118,9 @@ class FilesystemTool(BaseTool):
             )
         # directory
         try:
-            entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+            # ⚡ Bolt: Use os.scandir instead of iterdir for faster directory iteration
+            with os.scandir(p) as it:
+                entries = sorted(it, key=lambda e: (e.is_file(), e.name))
             lines = []
             for e in entries[:100]:   # max 100 entries
                 try:
