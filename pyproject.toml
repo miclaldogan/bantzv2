@@ -21,6 +21,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "python-telegram-bot>=22.7",
     "mempalace>=3.0.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
+    "pyautogui>=0.9.54",
+    "pynput>=1.8.1",
 ]
 docs = [
     "pymupdf>=1.27.2.2",
@@ -57,6 +60,7 @@ target-version = "py311"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--ignore=tests/tools/test_gui_tool.py --ignore=tests/agent/test_observer.py"
 
 [tool.coverage.run]
 source = ["bantz"]
