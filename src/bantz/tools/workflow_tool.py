@@ -15,7 +15,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
 
 from bantz.tools import BaseTool, ToolResult, registry
 from bantz.workflows import (
@@ -111,7 +110,7 @@ class WorkflowTool(BaseTool):
             for sr in result.steps:
                 status = "✓" if sr.success else "✗"
                 step_summary.append(f"  {status} {sr.step_name} ({sr.duration_ms:.0f}ms)")
-            output += f"\n\n**Steps:**\n" + "\n".join(step_summary)
+            output += "\n\n**Steps:**\n" + "\n".join(step_summary)
             output += f"\n\nTotal: {result.total_duration_ms:.0f}ms"
         else:
             output = f"Workflow '{name}' failed: {result.error}"

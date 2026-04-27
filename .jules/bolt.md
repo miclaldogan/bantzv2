@@ -9,3 +9,6 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+## 2024-05-18 - Replacing N+1 DB Queries in Loops with `executemany`
+**Learning:** In SQLite storage modules like `src/bantz/core/scheduler.py` or `src/bantz/data/sqlite_store.py`, `conn.execute(...)` inside a loop can introduce severe N+1 query performance bottlenecks.
+**Action:** Always collect query parameters into arrays within loops and use `conn.executemany(...)` outside the loop to batch update and boost performance.

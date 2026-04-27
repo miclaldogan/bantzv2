@@ -448,7 +448,6 @@ def _store_reminder_kg(
         if kg is None:
             return
 
-        from datetime import datetime as dt
 
         # Build a descriptive triple: User → set_reminder → title (with metadata)
         obj_parts = [title]

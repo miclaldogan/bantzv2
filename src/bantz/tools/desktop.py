@@ -30,11 +30,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import shutil
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 from bantz.tools import BaseTool, ToolResult, registry
 
@@ -379,7 +378,7 @@ class DesktopTool(BaseTool):
             )
 
         cx, cy = element["center"]
-        score = element.get("score", 0.0)
+        _score = element.get("score", 0.0)
 
         # Perform the action
         if interact_action in ("click", "left_click"):

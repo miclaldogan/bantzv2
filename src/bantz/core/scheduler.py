@@ -144,16 +144,15 @@ class Scheduler(ReminderStore):
             ).fetchall()
 
             due = []
+            one_offs = []
+            repeating = []
             for row in rows:
                 item = dict(row)
                 due.append(item)
 
                 repeat = item["repeat"]
                 if repeat == "none":
-                    conn.execute(
-                        "UPDATE reminders SET fired = 1 WHERE id = ?",
-                        (item["id"],),
-                    )
+                    one_offs.append((item["id"],))
                 else:
                     # Advance to next occurrence
                     next_fire = self._next_occurrence(
@@ -161,10 +160,19 @@ class Scheduler(ReminderStore):
                         repeat,
                         item["repeat_interval"],
                     )
-                    conn.execute(
-                        "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
-                        (next_fire.isoformat(), item["id"]),
-                    )
+                    repeating.append((next_fire.isoformat(), item["id"]))
+
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            if one_offs:
+                conn.executemany(
+                    "UPDATE reminders SET fired = 1 WHERE id = ?",
+                    one_offs,
+                )
+            if repeating:
+                conn.executemany(
+                    "UPDATE reminders SET fire_at = ?, snoozed_until = NULL WHERE id = ?",
+                    repeating,
+                )
 
             return due
 
@@ -260,17 +268,23 @@ class Scheduler(ReminderStore):
             ).fetchall()
 
             due = []
+            one_offs = []
             for row in rows:
                 item = dict(row)
                 due.append(item)
 
                 repeat = item["repeat"]
                 if repeat == "none":
-                    conn.execute(
-                        "UPDATE reminders SET fired = 1 WHERE id = ?",
-                        (item["id"],),
-                    )
+                    one_offs.append((item["id"],))
                 # Recurring location reminders stay active
+
+            # ⚡ Bolt: Replace N+1 queries with bulk operations
+            if one_offs:
+                conn.executemany(
+                    "UPDATE reminders SET fired = 1 WHERE id = ?",
+                    one_offs,
+                )
+
             return due
 
     def count_active(self) -> int:
