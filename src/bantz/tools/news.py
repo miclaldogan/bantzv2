@@ -7,7 +7,8 @@ LLM summarizes results into a natural paragraph.
 from __future__ import annotations
 
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from typing import Any
 
 import httpx
@@ -158,6 +159,8 @@ class NewsTool(BaseTool):
 
             _cache.set(cache_key, titles)
             return titles
+        except (ET.ParseError, DefusedXmlException):
+            return []
         except Exception:
             return []
 
