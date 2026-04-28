@@ -71,18 +71,18 @@ class TestClick:
     @patch("bantz.tools.gui_tool._get_pyautogui")
     @patch("bantz.tools.gui_tool.time")
     def test_click_calls_pyautogui(self, mock_time, mock_get_pag, tool, no_dry):
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.click(100, 200)
         mock_time.sleep.assert_called_once_with(0.3)
-        mock_get_pag.click.assert_called_once_with(100, 200)
+        mock_pag.click.assert_called_once_with(100, 200)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
     def test_click_dry_run(self, mock_get_pag, tool, dry):
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.click(100, 200)
-        mock_get_pag.click.assert_not_called()
+        mock_pag.click.assert_not_called()
 
     def test_click_logs_action(self, tool, dry):
         tool.click(50, 60)
@@ -106,49 +106,49 @@ class TestClickImage:
         assert result == (0, 0)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_not_implemented_opencv(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, fake_template):
-        mock_get_pag.locateOnScreen.side_effect = NotImplementedError
+    def test_not_implemented_opencv(self, mock_get_pag, tool, no_dry, fake_template):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
+        mock_pag.locateOnScreen.side_effect = NotImplementedError
         with pytest.raises(GUIToolError, match="OpenCV is required"):
             tool.click_image(fake_template)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_image_not_found_exception(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, fake_template):
-        mock_get_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
-        mock_get_pag.locateOnScreen.side_effect = mock_get_pag.ImageNotFoundException
+    def test_image_not_found_exception(self, mock_get_pag, tool, no_dry, fake_template):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
+        mock_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
+        mock_pag.locateOnScreen.side_effect = mock_pag.ImageNotFoundException
         with pytest.raises(GUIToolError, match="Image not found on screen"):
             tool.click_image(fake_template)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_image_not_found_none(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, fake_template):
+    def test_image_not_found_none(self, mock_get_pag, tool, no_dry, fake_template):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         """Legacy pyautogui returns None instead of raising."""
-        mock_get_pag.locateOnScreen.return_value = None
-        mock_get_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
+        mock_pag.locateOnScreen.return_value = None
+        mock_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
         with pytest.raises(GUIToolError, match="Image not found on screen"):
             tool.click_image(fake_template)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_click_image_success(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, fake_template):
-        mock_get_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
+    def test_click_image_success(self, mock_get_pag, tool, no_dry, fake_template):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
+        mock_pag.ImageNotFoundException = type("ImageNotFoundException", (Exception,), {})
         mock_loc = MagicMock()
-        mock_get_pag.locateOnScreen.return_value = mock_loc
+        mock_pag.locateOnScreen.return_value = mock_loc
         mock_center = SimpleNamespace(x=150, y=250)
-        mock_get_pag.center.return_value = mock_center
+        mock_pag.center.return_value = mock_center
 
         result = tool.click_image(fake_template, confidence=0.8)
 
-        mock_get_pag.locateOnScreen.assert_called_once_with(
+        mock_pag.locateOnScreen.assert_called_once_with(
             fake_template, confidence=0.8
         )
-        mock_get_pag.center.assert_called_once_with(mock_loc)
-        mock_get_pag.click.assert_called_once_with(mock_center)
+        mock_pag.center.assert_called_once_with(mock_loc)
+        mock_pag.click.assert_called_once_with(mock_center)
         assert result == (150, 250)
 
     def test_click_image_logs_action(self, tool, dry, fake_template):
@@ -163,19 +163,19 @@ class TestClickImage:
 class TestTypeText:
     @patch("bantz.tools.gui_tool._get_pyautogui")
     @patch("bantz.tools.gui_tool.time")
-    def test_type_calls_typewrite(self, mock_time, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag):
+    def test_type_calls_typewrite(self, mock_time, mock_get_pag, tool, no_dry):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.type_text("hello", interval=0.1)
         mock_time.sleep.assert_called_once_with(0.3)
-        mock_get_pag.typewrite.assert_called_once_with("hello", interval=0.1)
+        mock_pag.typewrite.assert_called_once_with("hello", interval=0.1)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
     def test_type_dry_run(self, mock_get_pag, tool, dry):
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.type_text("secret")
-        mock_get_pag.typewrite.assert_not_called()
+        mock_pag.typewrite.assert_not_called()
 
     def test_type_logs_action(self, tool, dry):
         tool.type_text("hi")
@@ -279,36 +279,36 @@ class TestFocusWindow:
 
 class TestScreenshot:
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_screenshot_full(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, tmp_path, monkeypatch):
+    def test_screenshot_full(self, mock_get_pag, tool, no_dry, tmp_path, monkeypatch):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         import bantz.tools.gui_tool as mod
         monkeypatch.setattr(mod, "CACHE_DIR", tmp_path)
 
         mock_img = MagicMock()
-        mock_get_pag.screenshot.return_value = mock_img
+        mock_pag.screenshot.return_value = mock_img
 
         path = tool.screenshot()
 
-        mock_get_pag.screenshot.assert_called_once_with(region=None)
+        mock_pag.screenshot.assert_called_once_with(region=None)
         assert path.startswith(str(tmp_path))
         assert path.endswith(".png")
         mock_img.save.assert_called_once()
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
-    def test_screenshot_region(self, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag, tmp_path, monkeypatch):
+    def test_screenshot_region(self, mock_get_pag, tool, no_dry, tmp_path, monkeypatch):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         import bantz.tools.gui_tool as mod
         monkeypatch.setattr(mod, "CACHE_DIR", tmp_path)
 
         mock_img = MagicMock()
-        mock_get_pag.screenshot.return_value = mock_img
+        mock_pag.screenshot.return_value = mock_img
         region = (10, 20, 300, 400)
 
         path = tool.screenshot(region=region)
 
-        mock_get_pag.screenshot.assert_called_once_with(region=region)
+        mock_pag.screenshot.assert_called_once_with(region=region)
 
     def test_screenshot_dry_run(self, tool, dry):
         path = tool.screenshot()
@@ -326,21 +326,21 @@ class TestScreenshot:
 class TestScroll:
     @patch("bantz.tools.gui_tool._get_pyautogui")
     @patch("bantz.tools.gui_tool.time")
-    def test_scroll_calls_pyautogui(self, mock_time, mock_get_pag, tool, no_dry:
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag):
+    def test_scroll_calls_pyautogui(self, mock_time, mock_get_pag, tool, no_dry):
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.scroll(100, 200, 5)
         mock_time.sleep.assert_called_once_with(0.3)
-        mock_get_pag.moveTo.assert_called_once_with(100, 200)
-        mock_get_pag.scroll.assert_called_once_with(5)
+        mock_pag.moveTo.assert_called_once_with(100, 200)
+        mock_pag.scroll.assert_called_once_with(5)
 
     @patch("bantz.tools.gui_tool._get_pyautogui")
     def test_scroll_dry_run(self, mock_get_pag, tool, dry):
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         tool.scroll(100, 200, 5)
-        mock_get_pag.moveTo.assert_not_called()
-        mock_get_pag.scroll.assert_not_called()
+        mock_pag.moveTo.assert_not_called()
+        mock_pag.scroll.assert_not_called()
 
     def test_scroll_logs_action(self, tool, dry):
         tool.scroll(10, 20, -3)
@@ -381,8 +381,8 @@ class TestExecute:
     @pytest.mark.asyncio
     @patch("bantz.tools.gui_tool._get_pyautogui")
     async def test_execute_click(self, mock_get_pag, tool, no_dry):
-        mock_get_pag = MagicMock()
-        mock_get_pag.return_value = mock_get_pag
+        mock_pag = MagicMock()
+        mock_get_pag.return_value = mock_pag
         r = await tool.execute(action="click", x=10, y=20)
         assert r.success is True
         assert "10" in r.output and "20" in r.output

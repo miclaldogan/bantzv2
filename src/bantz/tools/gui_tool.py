@@ -41,9 +41,9 @@ def _get_pyautogui():
             pg.PAUSE = 0
             pyautogui = pg
             _pyautogui_loaded = True
-        except KeyError as e:
-            if "DISPLAY" in str(e):
-                logging.warning("pyautogui could not load (no DISPLAY found). GUI tools will fail.")
+        except (KeyError, ModuleNotFoundError) as e:
+            if "DISPLAY" in str(e) or isinstance(e, ModuleNotFoundError):
+                logging.warning(f"pyautogui could not load ({e}). GUI tools will fail.")
                 pyautogui = None
                 _pyautogui_loaded = True
             else:
