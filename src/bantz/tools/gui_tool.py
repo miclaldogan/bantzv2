@@ -26,13 +26,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pyautogui
-
 from bantz.tools import BaseTool, ToolResult, registry
 
-# ── pyautogui global config ──────────────────────────────────────────────────
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0
+# ── pyautogui lazy import ────────────────────────────────────────────────────
+_pyautogui_loaded = False
+pyautogui = None
+
+def _get_pyautogui():
+    global _pyautogui_loaded, pyautogui
+    if not _pyautogui_loaded:
+        try:
+            import pyautogui as pg
+            pg.FAILSAFE = False
+            pg.PAUSE = 0
+            pyautogui = pg
+            _pyautogui_loaded = True
+        except KeyError as e:
+            if "DISPLAY" in str(e):
+                logging.warning("pyautogui could not load (no DISPLAY found). GUI tools will fail.")
+                pyautogui = None
+                _pyautogui_loaded = True
+            else:
+                raise
+    return pyautogui
+
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +103,10 @@ class GUITool(BaseTool):
         if self._dry_run:
             logger.info("[DRY_RUN] click(%d, %d)", x, y)
             return
-        pyautogui.click(x, y)
+        pg = _get_pyautogui()
+        if not pg:
+            raise GUIToolError("GUI tools unavailable (no DISPLAY)")
+        pg.click(x, y)
 
     # ── click_image ───────────────────────────────────────────────────────
 
@@ -110,8 +130,11 @@ class GUITool(BaseTool):
         if self._dry_run:
             logger.info("[DRY_RUN] click_image(%s)", template_path)
             return (0, 0)
+        pg = _get_pyautogui()
+        if not pg:
+            raise GUIToolError("GUI tools unavailable (no DISPLAY)")
         try:
-            location = pyautogui.locateOnScreen(
+            location = pg.locateOnScreen(
                 template_path, confidence=confidence
             )
         except NotImplementedError:
@@ -119,12 +142,12 @@ class GUITool(BaseTool):
                 "OpenCV is required for confidence matching. "
                 "Run: pip install opencv-python"
             )
-        except pyautogui.ImageNotFoundException:
+        except pg.ImageNotFoundException:
             raise GUIToolError(f"Image not found on screen: {template_path}")
         if location is None:
             raise GUIToolError(f"Image not found on screen: {template_path}")
-        center = pyautogui.center(location)
-        pyautogui.click(center)
+        center = pg.center(location)
+        pg.click(center)
         return (center.x, center.y)
 
     # ── type ──────────────────────────────────────────────────────────────
@@ -136,7 +159,10 @@ class GUITool(BaseTool):
         if self._dry_run:
             logger.info("[DRY_RUN] type(%r)", text)
             return
-        pyautogui.typewrite(text, interval=interval)
+        pg = _get_pyautogui()
+        if not pg:
+            raise GUIToolError("GUI tools unavailable (no DISPLAY)")
+        pg.typewrite(text, interval=interval)
 
     # ── focus_window ──────────────────────────────────────────────────────
 
@@ -194,7 +220,10 @@ class GUITool(BaseTool):
         if self._dry_run:
             logger.info("[DRY_RUN] screenshot(region=%s)", region)
             return str(CACHE_DIR / "dry_run_screenshot.png")
-        img = pyautogui.screenshot(region=region)
+        pg = _get_pyautogui()
+        if not pg:
+            raise GUIToolError("GUI tools unavailable (no DISPLAY)")
+        img = pg.screenshot(region=region)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         path = CACHE_DIR / f"screenshot_{ts}.png"
         img.save(str(path))
@@ -209,8 +238,11 @@ class GUITool(BaseTool):
         if self._dry_run:
             logger.info("[DRY_RUN] scroll(%d, %d, %d)", x, y, clicks)
             return
-        pyautogui.moveTo(x, y)
-        pyautogui.scroll(clicks)
+        pg = _get_pyautogui()
+        if not pg:
+            raise GUIToolError("GUI tools unavailable (no DISPLAY)")
+        pg.moveTo(x, y)
+        pg.scroll(clicks)
 
     # ── action log access ─────────────────────────────────────────────────
 
