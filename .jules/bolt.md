@@ -9,6 +9,3 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
-## 2024-05-18 - Scheduler test location
-**Learning:** Tests for `src/bantz/core/scheduler.py` are uniquely located at `tests/scheduler/test_scheduler.py` instead of mapping directly to the `tests/core/` directory structure.
-**Action:** Always verify test locations with `find tests/ -name "*something*.py"` rather than assuming the test hierarchy exactly mirrors `src/`.
