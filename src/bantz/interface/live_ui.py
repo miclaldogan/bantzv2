@@ -25,6 +25,7 @@ Design decisions (from issue #296 discussion)
    ``emit_log_threadsafe(msg)``  — shared global ``asyncio.Queue``.
 •  No Textual imports anywhere in this module.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,9 +35,8 @@ import re
 import subprocess
 import sys
 import threading
-import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -99,6 +99,7 @@ class _QueueLogHandler(logging.Handler):
 # Service status
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class ServiceDot(str, Enum):
     UP = "up"
     DOWN = "down"
@@ -117,6 +118,7 @@ _DOT_STYLE: dict[ServiceDot, str] = {
 # ═══════════════════════════════════════════════════════════════════════════
 # Rendering helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _bar(value: float, max_val: float = 100.0, width: int = 10) -> str:
     """Colored bar using block characters."""
@@ -184,7 +186,9 @@ class _MouseReader:
         if self._old_attrs is not None:
             try:
                 termios.tcsetattr(
-                    sys.stdin.fileno(), termios.TCSADRAIN, self._old_attrs,
+                    sys.stdin.fileno(),
+                    termios.TCSADRAIN,
+                    self._old_attrs,
                 )
             except (termios.error, ValueError):
                 pass
@@ -217,6 +221,7 @@ class _MouseReader:
 # ═══════════════════════════════════════════════════════════════════════════
 # LiveUI — main application class
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class LiveUI:
     """Rich Live-based terminal UI for Bantz v3."""
@@ -265,9 +270,7 @@ class LiveUI:
         self._pending: Any = None
 
         # ── mouse ─────────────────────────────────────────────────
-        self._mouse: _MouseReader | None = (
-            _MouseReader(self._on_scroll) if _HAS_TERMIOS else None
-        )
+        self._mouse: _MouseReader | None = _MouseReader(self._on_scroll) if _HAS_TERMIOS else None
 
     # ── Scroll callback ───────────────────────────────────────────
 
@@ -299,21 +302,17 @@ class LiveUI:
     # ── Panel renderers ───────────────────────────────────────────
 
     def _render_header(self) -> Panel:
-        dots = "  ".join(
-            f"{_DOT_STYLE[s]} {n}" for n, s in self._services.items()
-        )
+        dots = "  ".join(f"{_DOT_STYLE[s]} {n}" for n, s in self._services.items())
         now = datetime.now().strftime("%H:%M:%S")
         content = Text.from_markup(
-            f"  [bold]BANTZ // OPERATIONS CENTER[/]"
-            f"      {dots}  [dim]│[/]  [bold]{now}[/]"
+            f"  [bold]BANTZ // OPERATIONS CENTER[/]      {dots}  [dim]│[/]  [bold]{now}[/]"
         )
         return Panel(content, style="bold blue", height=3)
 
     def _render_stats(self) -> Panel:
         lines: list[str] = [
             f" [dim]CPU [/]{_bar(self._cpu)} {self._cpu:4.0f}%",
-            f" [dim]RAM [/]{_bar(self._ram_pct)} "
-            f"{self._ram_used_gb:.1f}/{self._ram_total_gb:.0f}G",
+            f" [dim]RAM [/]{_bar(self._ram_pct)} {self._ram_used_gb:.1f}/{self._ram_total_gb:.0f}G",
             f" [dim]DISK[/]{_bar(self._disk_pct)} "
             f"{self._disk_used_gb:.0f}/{self._disk_total_gb:.0f}G",
         ]
@@ -375,9 +374,7 @@ class LiveUI:
             if role == "user":
                 if i > 0:
                     parts.append(Text(""))
-                parts.append(
-                    Text.from_markup(f"[bold green]▶ You[/]  {escape(msg)}")
-                )
+                parts.append(Text.from_markup(f"[bold green]▶ You[/]  {escape(msg)}"))
             elif role == "bantz":
                 if i > 0:
                     parts.append(Text(""))
@@ -385,30 +382,18 @@ class LiveUI:
                     parts.append(Text.from_markup("[bold cyan]◆ Bantz[/]"))
                     parts.append(Markdown(msg))
                 else:
-                    parts.append(
-                        Text.from_markup(
-                            f"[bold cyan]◆ Bantz[/]  {escape(msg)}"
-                        )
-                    )
+                    parts.append(Text.from_markup(f"[bold cyan]◆ Bantz[/]  {escape(msg)}"))
             elif role == "system":
                 parts.append(Text.from_markup(f"  [dim]{escape(msg)}[/]"))
             elif role == "error":
-                parts.append(
-                    Text.from_markup(f"  [bold red]✗ {escape(msg)}[/]")
-                )
+                parts.append(Text.from_markup(f"  [bold red]✗ {escape(msg)}[/]"))
             elif role == "tool":
-                parts.append(
-                    Text.from_markup(
-                        f"  [dim magenta]⚙ \\[{escape(msg)}][/]"
-                    )
-                )
+                parts.append(Text.from_markup(f"  [dim magenta]⚙ \\[{escape(msg)}][/]"))
 
         if self._streaming_text is not None:
             parts.append(Text(""))
             parts.append(
-                Text.from_markup(
-                    f"[bold cyan]◆ Bantz[/]  {escape(self._streaming_text)}▌"
-                )
+                Text.from_markup(f"[bold cyan]◆ Bantz[/]  {escape(self._streaming_text)}▌")
             )
         elif self._busy:
             parts.append(Text("  ⟳ thinking...", style="dim cyan"))
@@ -465,12 +450,12 @@ class LiveUI:
                 self._cpu = psutil.cpu_percent(interval=None)
                 mem = psutil.virtual_memory()
                 self._ram_pct = mem.percent
-                self._ram_used_gb = mem.used / (1024 ** 3)
-                self._ram_total_gb = mem.total / (1024 ** 3)
+                self._ram_used_gb = mem.used / (1024**3)
+                self._ram_total_gb = mem.total / (1024**3)
                 disk = psutil.disk_usage("/")
                 self._disk_pct = disk.percent
-                self._disk_used_gb = disk.used / (1024 ** 3)
-                self._disk_total_gb = disk.total / (1024 ** 3)
+                self._disk_used_gb = disk.used / (1024**3)
+                self._disk_total_gb = disk.total / (1024**3)
                 # VRAM via nvidia-smi  (best-effort)
                 self._collect_vram()
             except Exception:
@@ -513,90 +498,91 @@ class LiveUI:
         """One-shot health probes for all monitored services."""
         import httpx
 
-        # ── Ollama ────────────────────────────────────────────────
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as c:
-                r = await c.get(f"{config.ollama_base_url}/api/tags")
+        async def probe_ollama(client: httpx.AsyncClient):
+            try:
+                r = await client.get(f"{config.ollama_base_url}/api/tags")
                 self._services["Ollama"] = (
-                    ServiceDot.UP if r.status_code == 200
-                    else ServiceDot.DEGRADED
+                    ServiceDot.UP if r.status_code == 200 else ServiceDot.DEGRADED
                 )
-                self.add_log(
-                    f"✓ Ollama connected → {config.ollama_model}"
-                )
-        except Exception:
-            self._services["Ollama"] = ServiceDot.DOWN
-            self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
+                self.add_log(f"✓ Ollama connected → {config.ollama_model}")
+            except Exception:
+                self._services["Ollama"] = ServiceDot.DOWN
+                self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
 
-        # ── Neo4j / Palace ────────────────────────────────────────
-        try:
-            if getattr(config, "mempalace_enabled", False):
-                from bantz.memory.bridge import palace_bridge
-                if palace_bridge and palace_bridge.enabled:
-                    self._services["Neo4j"] = ServiceDot.UP
+        async def probe_neo4j():
+            try:
+                if getattr(config, "mempalace_enabled", False):
+                    from bantz.memory.bridge import palace_bridge
+
+                    if palace_bridge and palace_bridge.enabled:
+                        self._services["Neo4j"] = ServiceDot.UP
+                    else:
+                        self._services["Neo4j"] = ServiceDot.DOWN
                 else:
-                    self._services["Neo4j"] = ServiceDot.DOWN
-            else:
-                self._services["Neo4j"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Neo4j"] = ServiceDot.DOWN
+                    self._services["Neo4j"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Neo4j"] = ServiceDot.DOWN
 
-        # ── Redis ─────────────────────────────────────────────────
-        try:
-            redis_url = getattr(config, "redis_url", None)
-            if redis_url:
-                import redis.asyncio as aioredis
-                rc = aioredis.from_url(redis_url)
-                await rc.ping()
-                await rc.aclose()
-                self._services["Redis"] = ServiceDot.UP
-            else:
-                self._services["Redis"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Redis"] = ServiceDot.DOWN
+        async def probe_redis():
+            try:
+                redis_url = getattr(config, "redis_url", None)
+                if redis_url:
+                    import redis.asyncio as aioredis
 
-        # ── Gemini ────────────────────────────────────────────────
-        try:
-            if (
-                getattr(config, "gemini_enabled", False)
-                and getattr(config, "gemini_api_key", None)
-            ):
-                async with httpx.AsyncClient(timeout=3.0) as c:
-                    r = await c.get(
+                    rc = aioredis.from_url(redis_url)
+                    await rc.ping()
+                    await rc.aclose()
+                    self._services["Redis"] = ServiceDot.UP
+                else:
+                    self._services["Redis"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Redis"] = ServiceDot.DOWN
+
+        async def probe_gemini(client: httpx.AsyncClient):
+            try:
+                if getattr(config, "gemini_enabled", False) and getattr(
+                    config, "gemini_api_key", None
+                ):
+                    r = await client.get(
                         "https://generativelanguage.googleapis.com"
                         f"/v1beta/models?key={config.gemini_api_key}"
                     )
                     self._services["Gemini"] = (
-                        ServiceDot.UP if r.status_code == 200
-                        else ServiceDot.DOWN
+                        ServiceDot.UP if r.status_code == 200 else ServiceDot.DOWN
                     )
-            else:
-                self._services["Gemini"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Gemini"] = ServiceDot.DOWN
+                else:
+                    self._services["Gemini"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Gemini"] = ServiceDot.DOWN
 
-        # ── Telegram ──────────────────────────────────────────────
-        try:
-            token = getattr(config, "telegram_bot_token", None)
-            if token:
-                async with httpx.AsyncClient(timeout=3.0) as c:
-                    r = await c.get(
-                        f"https://api.telegram.org/bot{token}/getMe"
-                    )
+        async def probe_telegram(client: httpx.AsyncClient):
+            try:
+                token = getattr(config, "telegram_bot_token", None)
+                if token:
+                    r = await client.get(f"https://api.telegram.org/bot{token}/getMe")
                     self._services["Telegram"] = (
-                        ServiceDot.UP if r.status_code == 200
-                        else ServiceDot.DOWN
+                        ServiceDot.UP if r.status_code == 200 else ServiceDot.DOWN
                     )
-            else:
-                self._services["Telegram"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Telegram"] = ServiceDot.DOWN
+                else:
+                    self._services["Telegram"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Telegram"] = ServiceDot.DOWN
+
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            await asyncio.gather(
+                probe_ollama(c),
+                probe_neo4j(),
+                probe_redis(),
+                probe_gemini(c),
+                probe_telegram(c),
+            )
 
         self.add_log("Service probes complete")
 
     async def _warm_ollama(self) -> None:
         try:
             from bantz.llm.ollama import ollama
+
             await ollama.chat([{"role": "user", "content": "hi"}])
         except Exception:
             pass
@@ -629,9 +615,7 @@ class LiveUI:
                 due = scheduler.check_due()
                 for r in due:
                     repeat = (
-                        f" (repeats {r['repeat']})"
-                        if r.get("repeat", "none") != "none"
-                        else ""
+                        f" (repeats {r['repeat']})" if r.get("repeat", "none") != "none" else ""
                     )
                     text = f"⏰ Reminder: {r['title']}{repeat}"
                     self.add_chat("bantz", text)
@@ -864,7 +848,12 @@ class LiveUI:
         pending = self._pending
         self._pending = None
         confirmed = text.lower().strip() in (
-            "yes", "y", "ok", "evet", "e", "tamam",
+            "yes",
+            "y",
+            "ok",
+            "evet",
+            "e",
+            "tamam",
         )
         if not confirmed:
             self.add_chat("system", "Cancelled.")
@@ -889,7 +878,8 @@ class LiveUI:
                     return
 
             result = await brain.process(
-                pending.pending_command, confirmed=True,
+                pending.pending_command,
+                confirmed=True,
             )
             if result.tool_used:
                 self.add_chat("tool", result.tool_used)
@@ -960,6 +950,7 @@ class LiveUI:
 # ═══════════════════════════════════════════════════════════════════════════
 # Module entry point
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def run() -> None:
     """Launch the Bantz Rich Live TUI."""
