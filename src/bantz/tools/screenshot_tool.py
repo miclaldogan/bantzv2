@@ -140,7 +140,7 @@ class ScreenshotTool(BaseTool):
             return ToolResult(
                 success=True,
                 output=(
-                    f"Screenshot captured ({width}×{height}), ready for dispatch."
+                    f"Daguerreotype captured ({width}×{height}), ready for dispatch."
                 ),
                 data={
                     "screenshot": image_data,

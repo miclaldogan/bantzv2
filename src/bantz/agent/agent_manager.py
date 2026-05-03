@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bantz.agent.sub_agent import (
-    SubAgent,
     SubAgentResult,
     create_agent,
     resolve_role,
