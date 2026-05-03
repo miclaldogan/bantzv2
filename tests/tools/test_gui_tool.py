@@ -1,6 +1,12 @@
 """Tests for GUITool (#292)."""
 from __future__ import annotations
 
+import pytest
+import os
+if "DISPLAY" not in os.environ:
+    pytest.skip("Skipping GUI tests: no DISPLAY available", allow_module_level=True)
+
+
 import os
 import subprocess
 import time

@@ -16,6 +16,12 @@ from __future__ import annotations
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
+import os
+if "DISPLAY" not in os.environ:
+    pytest.skip("Skipping GUI tests: no DISPLAY available", allow_module_level=True)
+
+
+import pytest
 
 pytest.importorskip('textual')
 
