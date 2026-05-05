@@ -20,7 +20,7 @@ import logging
 import subprocess
 import defusedxml.common
 import defusedxml.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
