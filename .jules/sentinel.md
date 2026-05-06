@@ -14,3 +14,7 @@
 **Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found where `path.chmod(0o600)` was used immediately after writing content to sensitive files.
 **Learning:** This leaves a race condition window between file creation and permission changes. A malicious symlink attack could change the target of `path.chmod`, or simply read the sensitive content before permissions are restricted.
 **Prevention:** Using `os.fchmod(fd, 0o600)` right after `os.open` tightly binds the permission changes to the file descriptor, rather than relying on a subsequent path-based `chmod` that is vulnerable to symlink race conditions.
+## 2024-05-06 - Replace vulnerable standard XML parser with defusedxml
+**Vulnerability:** Found `xml.etree.ElementTree` being used to parse external untrusted XML RSS and Atom feeds in `src/bantz/tools/feed_tool.py` and `src/bantz/tools/news.py`. This is vulnerable to XXE (XML External Entity) injection attacks.
+**Learning:** `defusedxml` must be used for all untrusted XML parsing. Exceptions raised by `defusedxml` such as `DefusedXmlException` do not inherit from `xml.etree.ElementTree.ParseError`, requiring explicit catching of both when migrating existing code.
+**Prevention:** Avoid standard library `xml` modules (like `xml.etree`) in favor of `defusedxml` drop-in replacements for any code dealing with external data.
