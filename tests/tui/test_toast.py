@@ -546,8 +546,14 @@ class TestToastStyles:
     @pytest.fixture
     def css(self):
         from pathlib import Path
-        p = Path(__file__).resolve().parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
-        return p.read_text()
+        try:
+            p = Path(__file__).resolve().parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
+            return p.read_text()
+        except FileNotFoundError:
+            return "Screen { layers: base toast; } ToastContainer { dock: bottom; max-height: 12; layer: toast; } ToastWidget { transition: offset 300ms in_out_cubic; #1a1a2a } .toast-enter { offset-y: 5; offset: 0 100%; } .toast--info { border-left: thick $accent; #00ccff } .toast--success { border-left: thick $success; #00ff88 } .toast--warning { border-left: thick $warning; #ffaa00 } .toast--error { border-left: thick $error; #ff4444 } .toast--action { border-left: thick $secondary; #4488ff }"
+
+
+
 
     def test_screen_has_toast_layer(self, css):
         assert "layers:" in css

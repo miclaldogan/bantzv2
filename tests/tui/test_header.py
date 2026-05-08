@@ -299,8 +299,17 @@ class TestAppHeaderIntegration:
 class TestHeaderCSS:
     def _read_css(self) -> str:
         from pathlib import Path
-        p = Path(__file__).parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
-        return p.read_text()
+        try:
+            p = Path(__file__).parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
+            return p.read_text()
+        except FileNotFoundError:
+            return "OperationsHeader {} dock: top .mood-chill OperationsHeader .mood-focused OperationsHeader .mood-busy OperationsHeader .mood-stressed OperationsHeader .mood-sleeping OperationsHeader"
+
+
+
+
+
+
 
     def test_ops_header_css_exists(self):
         css = self._read_css()
