@@ -10,7 +10,15 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+import sys
+from unittest.mock import MagicMock
+try:
+    import pyautogui
+except Exception:
+    sys.modules['pyautogui'] = MagicMock()
+
 from bantz.tools.gui_tool import (
+
     CACHE_DIR,
     GUITool,
     GUIToolError,
