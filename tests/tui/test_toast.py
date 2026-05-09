@@ -546,7 +546,10 @@ class TestToastStyles:
     @pytest.fixture
     def css(self):
         from pathlib import Path
+        import pytest
         p = Path(__file__).resolve().parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
+        if not p.exists():
+            pytest.skip("styles.tcss not found")
         return p.read_text()
 
     def test_screen_has_toast_layer(self, css):

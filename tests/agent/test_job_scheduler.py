@@ -24,6 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("sqlalchemy")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures

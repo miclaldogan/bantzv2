@@ -15,8 +15,13 @@ from __future__ import annotations
 
 from unittest.mock import patch, MagicMock, AsyncMock
 
+import os
+
 import pytest
 
+# Skip this entire file if we are in a headless environment without X11 or without pyautogui
+if "DISPLAY" not in os.environ:
+    pytest.skip("Skipping GUI tests (no DISPLAY)", allow_module_level=True)
 pytest.importorskip('textual')
 
 from bantz.tools.input_control import (
