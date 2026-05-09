@@ -10,6 +10,11 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+# Skip this entire file if we are in a headless environment without X11 or without pyautogui
+if "DISPLAY" not in os.environ:
+    pytest.skip("Skipping GUI tests (no DISPLAY)", allow_module_level=True)
+pytest.importorskip("pyautogui")
+
 from bantz.tools.gui_tool import (
     CACHE_DIR,
     GUITool,
