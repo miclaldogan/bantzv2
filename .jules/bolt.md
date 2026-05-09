@@ -9,3 +9,7 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+
+## 2024-05-18 - [Optimizing service health checks in live_ui]
+**Learning:** Performing multiple independent network requests sequentially causes cumulative latency equal to the sum of all response times, creating a noticeable delay.
+**Action:** When making multiple independent network or health check calls, wrap them in individual coroutines and run them concurrently using `asyncio.gather`. Additionally, use a shared `httpx.AsyncClient` context manager to share the same connection pool, further improving performance and resource utilization.
