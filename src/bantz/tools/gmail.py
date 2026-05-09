@@ -110,7 +110,8 @@ class GmailTool(BaseTool):
         "Params: action (unread|compose|compose_and_send|read|search|filter|send|reply|forward|contacts), "
         "to (str), intent/body (str), subject (str), id (str). "
         "compose_and_send: drafts AND sends in one step when recipient and intent are given. "
-        "For follow-ups about a previously shown email, use action='read' with its Message ID."
+        "For follow-ups about a previously shown email, use action='read' with its Message ID. "
+        "NEVER repeat a search."
     )
     risk_level = "safe"
 

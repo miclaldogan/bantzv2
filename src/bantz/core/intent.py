@@ -87,13 +87,15 @@ TOOLS:
 </thinking>
 
 RULES:
-- ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
-- Factual / knowledge questions → web_search. NEVER answer from memory.
+- ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions. Unambiguous action only. When in doubt, chat.
+- Factual / knowledge questions → web_search. NEVER answer from memory. Never guess.
 - "check my mail/email/inbox" → gmail action=summary. NEVER hallucinate email content.
 - "add/create/schedule event/dinner/meeting at TIME" → calendar action=create with title and time. NOT action=today.
-- "delete/cancel/remove reminder #N" or "delete the no N reminder" → reminder action=cancel id=N. The tool name is "reminder" NOT "cancel_reminder".
+- "delete/cancel/remove reminder #N" or "delete the no N reminder" → reminder action=cancel id=N. The tool name is "reminder" NOT "cancel_reminder". Use snake_case.
 - "remind me in X minutes/a minute" → reminder action=add. Parse time carefully: "a minute" = 1 minute, NOT 1 hour.
 - "just open YouTube/Spotify/Netflix" (no specific content) → browser_control action=open app=firefox url=https://youtube.com
+- GUI interaction → visual_click: click a button on the screen with "target".
+- Conversational phrasing or slang / idioms / emotional or corrective / "got me wrong" or "what does this stand for" → route to "chat" based on full sentence meaning.
 - "open Gemini/ChatGPT/Claude" or any WEB APP → browser_control action=navigate url=<correct URL>. Known web apps: gemini=https://gemini.google.com, chatgpt=https://chatgpt.com, claude=https://claude.ai, perplexity=https://perplexity.ai, github=https://github.com, reddit=https://reddit.com
 - "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).
 - "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
