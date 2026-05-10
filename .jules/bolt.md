@@ -9,3 +9,7 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+
+## 2024-05-18 - [Concurrent Health Probes with shared AsyncClient]
+**Learning:** In async applications, performing multiple independent network requests (like health probes for Ollama, Redis, etc.) sequentially using `await` causes latency to stack additively. Additionally, creating a new `httpx.AsyncClient` inside a loop or tight block misses out on connection pooling benefits.
+**Action:** Use `asyncio.gather` to execute independent network requests concurrently. Furthermore, wrap the concurrent block within a single `async with httpx.AsyncClient() as c:` context to allow the underlying connection pool to be shared across the concurrent requests, reducing total execution time to roughly the duration of the slowest single request.

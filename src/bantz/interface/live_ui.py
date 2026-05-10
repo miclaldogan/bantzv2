@@ -34,9 +34,8 @@ import re
 import subprocess
 import sys
 import threading
-import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -513,55 +512,51 @@ class LiveUI:
         """One-shot health probes for all monitored services."""
         import httpx
 
-        # ── Ollama ────────────────────────────────────────────────
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as c:
+        async def check_ollama(c: httpx.AsyncClient) -> None:
+            try:
                 r = await c.get(f"{config.ollama_base_url}/api/tags")
                 self._services["Ollama"] = (
                     ServiceDot.UP if r.status_code == 200
                     else ServiceDot.DEGRADED
                 )
-                self.add_log(
-                    f"✓ Ollama connected → {config.ollama_model}"
-                )
-        except Exception:
-            self._services["Ollama"] = ServiceDot.DOWN
-            self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
+                self.add_log(f"✓ Ollama connected → {config.ollama_model}")
+            except Exception:
+                self._services["Ollama"] = ServiceDot.DOWN
+                self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
 
-        # ── Neo4j / Palace ────────────────────────────────────────
-        try:
-            if getattr(config, "mempalace_enabled", False):
-                from bantz.memory.bridge import palace_bridge
-                if palace_bridge and palace_bridge.enabled:
-                    self._services["Neo4j"] = ServiceDot.UP
+        async def check_neo4j() -> None:
+            try:
+                if getattr(config, "mempalace_enabled", False):
+                    from bantz.memory.bridge import palace_bridge
+                    if palace_bridge and palace_bridge.enabled:
+                        self._services["Neo4j"] = ServiceDot.UP
+                    else:
+                        self._services["Neo4j"] = ServiceDot.DOWN
                 else:
-                    self._services["Neo4j"] = ServiceDot.DOWN
-            else:
-                self._services["Neo4j"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Neo4j"] = ServiceDot.DOWN
+                    self._services["Neo4j"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Neo4j"] = ServiceDot.DOWN
 
-        # ── Redis ─────────────────────────────────────────────────
-        try:
-            redis_url = getattr(config, "redis_url", None)
-            if redis_url:
-                import redis.asyncio as aioredis
-                rc = aioredis.from_url(redis_url)
-                await rc.ping()
-                await rc.aclose()
-                self._services["Redis"] = ServiceDot.UP
-            else:
-                self._services["Redis"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Redis"] = ServiceDot.DOWN
+        async def check_redis() -> None:
+            try:
+                redis_url = getattr(config, "redis_url", None)
+                if redis_url:
+                    import redis.asyncio as aioredis
+                    rc = aioredis.from_url(redis_url)
+                    await rc.ping()
+                    await rc.aclose()
+                    self._services["Redis"] = ServiceDot.UP
+                else:
+                    self._services["Redis"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Redis"] = ServiceDot.DOWN
 
-        # ── Gemini ────────────────────────────────────────────────
-        try:
-            if (
-                getattr(config, "gemini_enabled", False)
-                and getattr(config, "gemini_api_key", None)
-            ):
-                async with httpx.AsyncClient(timeout=3.0) as c:
+        async def check_gemini(c: httpx.AsyncClient) -> None:
+            try:
+                if (
+                    getattr(config, "gemini_enabled", False)
+                    and getattr(config, "gemini_api_key", None)
+                ):
                     r = await c.get(
                         "https://generativelanguage.googleapis.com"
                         f"/v1beta/models?key={config.gemini_api_key}"
@@ -570,16 +565,15 @@ class LiveUI:
                         ServiceDot.UP if r.status_code == 200
                         else ServiceDot.DOWN
                     )
-            else:
-                self._services["Gemini"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Gemini"] = ServiceDot.DOWN
+                else:
+                    self._services["Gemini"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Gemini"] = ServiceDot.DOWN
 
-        # ── Telegram ──────────────────────────────────────────────
-        try:
-            token = getattr(config, "telegram_bot_token", None)
-            if token:
-                async with httpx.AsyncClient(timeout=3.0) as c:
+        async def check_telegram(c: httpx.AsyncClient) -> None:
+            try:
+                token = getattr(config, "telegram_bot_token", None)
+                if token:
                     r = await c.get(
                         f"https://api.telegram.org/bot{token}/getMe"
                     )
@@ -587,10 +581,20 @@ class LiveUI:
                         ServiceDot.UP if r.status_code == 200
                         else ServiceDot.DOWN
                     )
-            else:
-                self._services["Telegram"] = ServiceDot.UNCONFIGURED
-        except Exception:
-            self._services["Telegram"] = ServiceDot.DOWN
+                else:
+                    self._services["Telegram"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Telegram"] = ServiceDot.DOWN
+
+        # ⚡ Bolt: Execute probes concurrently with a shared client
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            await asyncio.gather(
+                check_ollama(c),
+                check_neo4j(),
+                check_redis(),
+                check_gemini(c),
+                check_telegram(c),
+            )
 
         self.add_log("Service probes complete")
 
