@@ -14,3 +14,7 @@
 **Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found where `path.chmod(0o600)` was used immediately after writing content to sensitive files.
 **Learning:** This leaves a race condition window between file creation and permission changes. A malicious symlink attack could change the target of `path.chmod`, or simply read the sensitive content before permissions are restricted.
 **Prevention:** Using `os.fchmod(fd, 0o600)` right after `os.open` tightly binds the permission changes to the file descriptor, rather than relying on a subsequent path-based `chmod` that is vulnerable to symlink race conditions.
+## 2024-05-24 - [XXE Vulnerability]
+**Vulnerability:** Found uses of the standard Python `xml.etree.ElementTree` module in `src/bantz/tools/news.py` and `src/bantz/tools/feed_tool.py`, which are susceptible to XML External Entity (XXE) attacks.
+**Learning:** XML parsers must be configured properly to disable external entities. The default Python library `xml.etree.ElementTree` is not secure by default against maliciously constructed data.
+**Prevention:** Always use the `defusedxml` package when parsing untrusted XML data to prevent XXE. Use `import defusedxml.ElementTree as ET` instead of `import xml.etree.ElementTree as ET`.
