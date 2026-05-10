@@ -10,6 +10,10 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+import pytest
+import os
+if "DISPLAY" not in os.environ:
+    pytest.skip("DISPLAY not set", allow_module_level=True)
 from bantz.tools.gui_tool import (
     CACHE_DIR,
     GUITool,
