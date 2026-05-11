@@ -1,0 +1,4 @@
+💡 What: Refactored `_probe_services` in `src/bantz/interface/live_ui.py` to execute network probes concurrently using `asyncio.gather` and a single shared `httpx.AsyncClient`.
+🎯 Why: Previously, probes (Ollama, Neo4j, Redis, Gemini, Telegram) were executed sequentially and each instantiated a new `httpx.AsyncClient`. This was a performance anti-pattern that caused the total probe time to be the sum of all individual response times, blocking the event loop unnecessarily during startup or status updates.
+📊 Impact: Reduces total service probing latency from O(sum(all responses)) to O(max(longest response)) and reduces HTTP connection overhead by reusing a single connection pool.
+🔬 Measurement: Visual load time of the `LiveUI` will be noticeably faster if any single service is slow to respond. Can be verified by running `live_ui` with mock delayed services.
