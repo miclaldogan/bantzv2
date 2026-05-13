@@ -21,7 +21,6 @@ from bantz.agent.sub_agent import (
     DeveloperAgent,
     ResearcherAgent,
     ReviewerAgent,
-    SubAgent,
     SubAgentResult,
     available_roles,
     create_agent,

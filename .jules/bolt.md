@@ -9,3 +9,6 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+## 2026-05-13 - [Concurrent Async Operations in Python]
+**Learning:** Awaiting multiple independent network requests (e.g., using `httpx`) sequentially in an asynchronous function causes the total execution time to scale linearly with the number of requests (N+1 bottleneck), blocking the event loop or calling function unnecessarily.
+**Action:** When executing multiple independent I/O-bound asynchronous tasks within a function, wrap them in individual helper functions or coroutines and use `asyncio.gather` to execute them concurrently, significantly reducing the overall execution time.
