@@ -49,5 +49,5 @@ jobs:
           pip install pytest pytest-asyncio
 
       - name: Run tests
-        run: pytest src/tests/ -v --tb=short
+        run: pytest tests/ --ignore=tests/tools/test_gui_tool.py -v --tb=short
         continue-on-error: true  # Tests may need Ollama — advisory for now

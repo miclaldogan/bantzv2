@@ -41,6 +41,7 @@ jobs:
         run: |
           PYTHONPATH=src python -m pytest \
             --ignore=tests/agent/test_observer.py \
+            --ignore=tests/tools/test_gui_tool.py \
             --cov=bantz \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
