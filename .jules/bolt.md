@@ -9,3 +9,7 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+
+## 2024-05-18 - [Concurrent Health Probes with asyncio.gather]
+**Learning:** Sequential await loops for multiple independent network requests (like health probes in `src/bantz/interface/live_ui.py`) create an unnecessary performance bottleneck where the total time is the sum of all individual timeouts.
+**Action:** When performing multiple independent async network requests, execute them concurrently using `asyncio.gather()` alongside a single shared `httpx.AsyncClient`. This bounds the total execution time to the duration of the slowest single request.
