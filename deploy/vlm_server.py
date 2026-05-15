@@ -28,11 +28,9 @@ from __future__ import annotations
 
 import argparse
 import base64
-import io
 import json
 import logging
 import time
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
