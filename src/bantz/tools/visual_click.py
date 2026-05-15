@@ -36,7 +36,7 @@ class VisualClickTool(BaseTool):
         "app (str, optional) = narrow the search to a specific app. "
         "Supports: click, double_click, right_click, hover. "
         "The tool finds the element automatically via accessibility tree + screen vision. "
-        "Use for: 'click X', 'press the Y button', 'open the Z menu', 'click terminal'. "
+        "Use for: 'click X', 'press the Y button', 'open the Z menu', 'click terminal'. Example: 'click the terminal'. "
         "Do NOT use shell or bash for GUI clicking."
     )
     risk_level = "moderate"

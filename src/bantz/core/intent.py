@@ -107,6 +107,9 @@ RULES:
 - Do NOT hallucinate data — always route to the real tool.
 - browser_control action names are EXACT: find_and_click (not 'click'), navigate (not 'navigate_to'), type_in_element (not 'type_in').
 - Tool name must be EXACT registry name. Never invent tool names like "cancel_reminder" or "delete_event". Use the base tool with the right action param.
+- Entity lookup requests ("who is X", "what is X", "look up X") → web_search.
+- File system tasks like "create_folder_and_file" must map to filesystem. Include folder_path and file_name params.
+- GUI / visual_click requires visual context. Do not use this tool for regular shell commands. Use visual_click for that. Example: click any visible ui element on screen.
 
 OUTPUT — single JSON, no markdown:
 {{"route": "tool|planner|chat", "tool_name": "exact_name", "tool_args": {{}}, "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\

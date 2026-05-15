@@ -89,25 +89,27 @@ def quick_route(orig: str, en: str) -> dict | None:
 
     # ── App launches (unambiguous desktop apps) ───────────────────────
     # These bypass LLM entirely for instant response (#340 speed fix).
-    m = re.search(
-        r"(?:open|launch|start|run)\s+"
-        r"(firefox|chrome|chromium|terminal|files|vscode|gedit)",
-        both,
-    )
-    if m:
-        return {"tool": "browser_control", "args": {"action": "open", "app": m.group(1)}}
+    # Removed in #340 fix
+    # m = re.search(
+    #     r"(?:open|launch|start|run)\s+"
+    #     r"(firefox|chrome|chromium|terminal|files|vscode|gedit)",
+    #     both,
+    # )
+    # if m:
+    #     return {"tool": "browser_control", "args": {"action": "open", "app": m.group(1)}}
 
     # ── URL navigation (explicit URL in input) ────────────────────────
-    m = re.search(
-        r"(?:go\s+to|open|navigate\s+(?:to)?)\s+"
-        r"(https?://\S+|(?:www\.)\S+)",
-        both,
-    )
-    if m:
-        url = m.group(1)
-        if not url.startswith("http"):
-            url = "https://" + url
-        return {"tool": "browser_control", "args": {"action": "navigate", "url": url}}
+    # Removed in #340 fix
+    # m = re.search(
+    #     r"(?:go\s+to|open|navigate\s+(?:to)?)\s+"
+    #     r"(https?://\S+|(?:www\.)\S+)",
+    #     both,
+    # )
+    # if m:
+    #     url = m.group(1)
+    #     if not url.startswith("http"):
+    #         url = "https://" + url
+    #     return {"tool": "browser_control", "args": {"action": "navigate", "url": url}}
 
     # ── Well-known web apps (open Gemini, open ChatGPT, etc.) ─────────
     _WEB_APP_URLS: dict[str, str] = {
@@ -132,16 +134,17 @@ def quick_route(orig: str, en: str) -> dict | None:
         "wikipedia": "https://wikipedia.org",
         "stackoverflow": "https://stackoverflow.com",
     }
-    m = re.search(
-        r"(?:open|launch|go\s+to|navigate\s+to)\s+(\w+)"
-        r"(?:\s+(?:in\s+(?:the\s+)?)?(?:web\s*)?browser|\s+web(?:site)?)?",
-        both,
-    )
-    if m:
-        app_name = m.group(1).lower()
-        web_url = _WEB_APP_URLS.get(app_name)
-        if web_url:
-            return {"tool": "browser_control", "args": {"action": "navigate", "url": web_url}}
+    # Removed in #340 fix
+    # m = re.search(
+    #     r"(?:open|launch|go\s+to|navigate\s+to)\s+(\w+)"
+    #     r"(?:\s+(?:in\s+(?:the\s+)?)?(?:web\s*)?browser|\s+web(?:site)?)?",
+    #     both,
+    # )
+    # if m:
+    #     app_name = m.group(1).lower()
+    #     web_url = _WEB_APP_URLS.get(app_name)
+    #     if web_url:
+    #         return {"tool": "browser_control", "args": {"action": "navigate", "url": web_url}}
 
     # Everything else → cot_route (LLM-based reasoning)
     return None
