@@ -1,17 +1,13 @@
 """Tests for GUITool (#292)."""
 from __future__ import annotations
 
-import os
 import subprocess
-import time
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bantz.tools.gui_tool import (
-    CACHE_DIR,
     GUITool,
     GUIToolError,
     gui_tool,
@@ -285,7 +281,7 @@ class TestScreenshot:
         mock_pag.screenshot.return_value = mock_img
         region = (10, 20, 300, 400)
 
-        path = tool.screenshot(region=region)
+        tool.screenshot(region=region)
 
         mock_pag.screenshot.assert_called_once_with(region=region)
 

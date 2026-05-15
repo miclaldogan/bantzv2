@@ -186,7 +186,7 @@ class TestShowConfig:
         buf = io.StringIO()
         with redirect_stdout(buf):
             _show_config()
-        output = buf.getvalue()
+        buf.getvalue()
         # gemini_api_key default is "" → should show "(empty)"
 
     def test_non_secrets_shown_in_clear(self):

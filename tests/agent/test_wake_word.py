@@ -168,7 +168,7 @@ class TestThreadArchitecture:
         import inspect
         tree = ast.parse(inspect.getsource(wake_word))
         # Strip docstrings/comments by looking at executable code only
-        code_tokens = ast.dump(tree)
+        ast.dump(tree)
         # Check actual import statements
         imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
         for imp in imports:
@@ -325,7 +325,6 @@ class TestKeywordDiscovery:
             mock_file.resolve.return_value.parent.parent.parent.parent = empty
             mock_path.return_value = empty
             # Override side_effect to handle the __file__ case
-            call_count = [0]
             def smart_path(arg=""):
                 p = real_path(arg)
                 return p
@@ -449,7 +448,8 @@ class TestTUIMessage:
 class TestScopeGuard:
     def test_no_whisper_in_wake_word(self):
         """wake_word.py must NOT import or call any STT/Whisper code."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import wake_word
         tree = ast.parse(inspect.getsource(wake_word))
         # Check imports don't reference whisper/stt
@@ -534,7 +534,8 @@ class TestWakeWordEventBus:
 
     def test_no_brain_or_tui_imports(self):
         """wake_word.py must NOT import from brain or TUI."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import wake_word
         tree = ast.parse(inspect.getsource(wake_word))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]

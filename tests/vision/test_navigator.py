@@ -267,7 +267,7 @@ class TestNavigatorActions(IsolatedAsyncioTestCase):
 
     async def test_execute_focus(self):
         """Focus action doesn't need navigation."""
-        with patch("bantz.vision.navigator.focus_window", create=True) as mf:
+        with patch("bantz.vision.navigator.focus_window", create=True):
             # Patch at import-time in the method
             with patch.object(self.nav, "_action_focus") as af:
                 af.return_value = ActionResult(

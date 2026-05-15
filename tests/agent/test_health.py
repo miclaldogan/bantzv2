@@ -715,7 +715,7 @@ class TestHealthEventBus:
              patch("bantz.agent.health.get_idle_ms", return_value=0), \
              patch("bantz.agent.health.is_screen_locked", return_value=False), \
              patch("bantz.agent.health.bus") as mock_bus:
-            results = engine.evaluate_all()
+            engine.evaluate_all()
             mock_bus.emit_threadsafe.assert_not_called()
 
     def test_telemetry_cache_via_bus(self):
@@ -732,7 +732,8 @@ class TestHealthEventBus:
 
     def test_no_tui_telemetry_import(self):
         """health.py must NOT import from bantz.interface.tui."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import health
         tree = ast.parse(inspect.getsource(health))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
@@ -743,7 +744,8 @@ class TestHealthEventBus:
 
     def test_no_brain_import(self):
         """health.py must NOT import from bantz.core.brain."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import health
         tree = ast.parse(inspect.getsource(health))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]

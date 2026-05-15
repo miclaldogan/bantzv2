@@ -9,9 +9,6 @@ Run: pytest tests/memory/test_bridge_smoke.py -v
 from __future__ import annotations
 
 import asyncio
-import os
-import shutil
-import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -199,7 +196,7 @@ class TestStoreExchange:
                 )
 
         # Now search should find PostgreSQL-related content
-        result = bridge.vector_context("PostgreSQL database decision")
+        bridge.vector_context("PostgreSQL database decision")
         # ChromaDB needs at least some data to search meaningfully
         import chromadb
         client = chromadb.PersistentClient(path=mock_config.resolved_palace_path)
@@ -325,7 +322,7 @@ class TestSpontaneousProbe:
 
             fires = 0
             for i in range(9):
-                result = probe.probe(f"msg {i}", mock_l3)
+                probe.probe(f"msg {i}", mock_l3)
                 if mock_l3.search_raw.called:
                     fires += 1
                     mock_l3.search_raw.reset_mock()

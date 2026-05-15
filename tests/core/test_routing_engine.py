@@ -179,7 +179,7 @@ class TestDispatchInternal:
     def test_list_reflections_dispatch(self):
         with patch("bantz.core.routing_engine.data_layer") as dl, \
              patch("bantz.core.routing_engine.handle_list_reflections",
-                   return_value="🤔 Recent reflections:") as mock_r:
+                   return_value="🤔 Recent reflections:"):
             dl.conversations = MagicMock()
             result = _run(self.dispatch(
                 "_list_reflections", {},

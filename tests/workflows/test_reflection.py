@@ -647,7 +647,7 @@ class TestStoreReflection:
         from bantz.data.connection_pool import get_pool
         # The KV store inside _store_reflection opens _data_dir()/bantz.db
         kv_db_path = tmp_path / "bantz.db"
-        pool = get_pool(kv_db_path)
+        get_pool(kv_db_path)
 
         result = ReflectionResult(
             date="2026-03-10",

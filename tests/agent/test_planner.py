@@ -401,7 +401,7 @@ class TestContextPassing:
             mock_tool.execute = mock_execute
             mock_reg.get = MagicMock(return_value=mock_tool)
 
-            result = await executor.run(steps)
+            await executor.run(steps)
 
         # Step 2 params should NOT have step 1 output injected
         assert "content" not in captured[1]  # news has no content key
@@ -1223,7 +1223,7 @@ class TestBrainProcessTextIntegration:
 
             from bantz.core.routing_engine import execute_plan
 
-            result = await execute_plan(
+            await execute_plan(
                 "search AI and summarize",
                 "search AI and summarize",
                 {},
@@ -1810,15 +1810,13 @@ class TestButlerLoreToasts:
         mock_weather = AsyncMock(return_value=ToolResult(
             success=True, output="London: 15°C"))
 
-        toast_calls: list = []
-        original_toast = None
 
         executor = PlanExecutor()
         with patch("bantz.agent.executor.registry") as mock_reg, \
              patch("bantz.agent.executor.notify_toast") as mock_toast:
             mock_reg.get = MagicMock(
                 return_value=MagicMock(execute=mock_weather))
-            result = await executor.run(steps)
+            await executor.run(steps)
 
         mock_toast.assert_called()
         # Should contain step info

@@ -1222,7 +1222,7 @@ class TestLayerIntegration:
         with _patch.object(config, "app_detector_enabled", True), \
              _patch.object(config, "app_detector_cache_ttl", 3.0), \
              _patch.object(config, "app_detector_polling_interval", 10), \
-             _patch("bantz.agent.app_detector.app_detector") as mock_ad:
+             _patch("bantz.agent.app_detector.app_detector"):
             # Import fresh to trigger init
             # We can't easily test this without a full DataLayer init
             # Just verify the config field exists as expected

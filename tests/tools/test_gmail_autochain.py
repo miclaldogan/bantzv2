@@ -182,7 +182,7 @@ class TestExecuteDispatcher:
             "bantz.auth.token_store.token_store.get", return_value=_fake_creds()
         )
         with creds_patch:
-            result = _run(tool.execute(
+            _run(tool.execute(
                 action="compose_and_send",
                 to="alice@example.com",
                 intent="say hello",

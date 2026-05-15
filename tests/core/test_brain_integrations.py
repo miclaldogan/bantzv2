@@ -244,7 +244,7 @@ class TestReminderBridge:
         mock_js.add_reminder.return_value = "job_daily"
 
         with patch("bantz.agent.job_scheduler.job_scheduler", mock_js):
-            result = ReminderTool._bridge_to_job_scheduler("daily check", fire_at, "daily")
+            ReminderTool._bridge_to_job_scheduler("daily check", fire_at, "daily")
 
         mock_js.add_reminder.assert_called_once_with("daily check", fire_at, repeat="daily")
 
@@ -295,7 +295,7 @@ class TestMaintenanceHandler:
         mock_run = AsyncMock(return_value=mock_report)
 
         with patch("bantz.agent.workflows.maintenance.run_maintenance", mock_run):
-            text = _run(b._handle_maintenance(dry_run=True))
+            _run(b._handle_maintenance(dry_run=True))
 
         mock_run.assert_awaited_once_with(dry_run=True)
 
@@ -381,7 +381,7 @@ class TestReflectionHandlers:
         mock_run = AsyncMock(return_value=mock_result)
 
         with patch("bantz.agent.workflows.reflection.run_reflection", mock_run):
-            text = _run(b._handle_run_reflection(dry_run=True))
+            _run(b._handle_run_reflection(dry_run=True))
 
         mock_run.assert_awaited_once_with(dry_run=True)
 
@@ -467,7 +467,7 @@ class TestProcessRLWiring:
             mock_dl.conversations = MagicMock()
             mock_reg.get.return_value = mock_tool
 
-            result = _run(b.process("weather"))
+            _run(b.process("weather"))
 
         b._rl_reward_hook.assert_called_once_with("weather", mock_result)
 
@@ -525,7 +525,7 @@ class TestProcessMaintenanceReflectionRouting:
                    return_value=(cot_plan, None)), \
              patch("bantz.core.routing_engine.handle_maintenance",
                    new_callable=AsyncMock,
-                   return_value="🔧 Maintenance: all ok") as mock_maint:
+                   return_value="🔧 Maintenance: all ok"):
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
             dl_re.conversations = MagicMock()
@@ -556,7 +556,7 @@ class TestProcessMaintenanceReflectionRouting:
              patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
                    return_value=(cot_plan, None)), \
              patch("bantz.core.routing_engine.handle_list_reflections",
-                   return_value="🤔 Recent reflections:\n  • 2025-07-14") as mock_refl:
+                   return_value="🤔 Recent reflections:\n  • 2025-07-14"):
             mock_tc.snapshot.return_value = {"prompt_hint": ""}
             mock_dl.conversations = MagicMock()
             dl_re.conversations = MagicMock()
@@ -867,7 +867,7 @@ class TestAudioDuckRoutes:
         b = self._make_brain()
         mock_ducker = MagicMock()
         mock_ducker.available.return_value = True
-        with patch("bantz.core.brain.data_layer") as dl, \
+        with patch("bantz.core.brain.data_layer"), \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
             dl_re.conversations = MagicMock()
@@ -879,7 +879,7 @@ class TestAudioDuckRoutes:
         b = self._make_brain()
         mock_ducker = MagicMock()
         mock_ducker.available.return_value = False
-        with patch("bantz.core.brain.data_layer") as dl, \
+        with patch("bantz.core.brain.data_layer"), \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
             dl_re.conversations = MagicMock()
@@ -889,7 +889,7 @@ class TestAudioDuckRoutes:
     def test_process_duck_off(self):
         b = self._make_brain()
         mock_ducker = MagicMock()
-        with patch("bantz.core.brain.data_layer") as dl, \
+        with patch("bantz.core.brain.data_layer"), \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch.dict("sys.modules", {"bantz.agent.audio_ducker": MagicMock(audio_ducker=mock_ducker)}):
             dl_re.conversations = MagicMock()
@@ -966,7 +966,7 @@ class TestAmbientRoutes:
             "reasoning": "User wants ambient status.",
         }
 
-        with patch("bantz.core.brain.data_layer") as dl, \
+        with patch("bantz.core.brain.data_layer"), \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
                    return_value=(cot_plan, None)), \
@@ -987,7 +987,7 @@ class TestAmbientRoutes:
             "reasoning": "User wants ambient status.",
         }
 
-        with patch("bantz.core.brain.data_layer") as dl, \
+        with patch("bantz.core.brain.data_layer"), \
              patch("bantz.core.routing_engine.data_layer") as dl_re, \
              patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
                    return_value=(cot_plan, None)), \

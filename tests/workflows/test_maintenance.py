@@ -285,8 +285,7 @@ class TestStepTempCleanup:
         os.utime(old_file, (old_time, old_time))
 
         # Patch targets to use tmp_path
-        targets = [(tmp_path, "bantz*")]
-        with patch("bantz.agent.workflows.maintenance._step_temp_cleanup") as mock_step:
+        with patch("bantz.agent.workflows.maintenance._step_temp_cleanup"):
             # Instead of patching internals, test the real function with controlled input
             pass
 
@@ -337,7 +336,7 @@ class TestStepDiskCheck:
         from bantz.agent.workflows.maintenance import _step_disk_check
         with patch("bantz.agent.workflows.maintenance._disk_usage", return_value=(1 * 1024**3, 3.0)):
             with patch("shutil.rmtree") as mock_rm:
-                r = await _step_disk_check(dry_run=True)
+                await _step_disk_check(dry_run=True)
         # dry_run should NOT call rmtree
         mock_rm.assert_not_called()
 
@@ -523,7 +522,7 @@ class TestStepReport:
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
                 with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
-                    r = await _step_report(report)
+                    await _step_report(report)
 
         assert report.rl_reward_given
         mock_rl.add_reward.assert_called_once()
@@ -548,7 +547,7 @@ class TestStepReport:
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
                 with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
-                    r = await _step_report(report)
+                    await _step_report(report)
 
         assert not report.rl_reward_given
         mock_rl.add_reward.assert_not_called()
@@ -574,7 +573,7 @@ class TestStepReport:
             with patch("bantz.core.memory.memory") as mock_mem:
                 mock_mem._conn = None
                 with patch("bantz.agent.affinity_engine.affinity_engine", mock_rl):
-                    r = await _step_report(report)
+                    await _step_report(report)
 
         assert not report.rl_reward_given
         mock_rl.add_reward.assert_not_called()
@@ -767,7 +766,7 @@ class TestEdgeCases:
                 with patch("bantz.core.memory.memory") as mock_mem:
                     mock_mem._conn = None
                     with patch("bantz.agent.workflows.maintenance._get_client") as mock_http:
-                        r = await _step_report(report)
+                        await _step_report(report)
         # No telegram call should happen
         mock_http.assert_not_called()
 

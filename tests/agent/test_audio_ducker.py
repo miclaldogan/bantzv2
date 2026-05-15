@@ -497,7 +497,7 @@ class TestArchitectureAudit:
         """Must NOT use wpctl (PipeWire-native CLI) — pactl only."""
         import inspect
         from bantz.agent import audio_ducker
-        src = inspect.getsource(audio_ducker)
+        inspect.getsource(audio_ducker)
         # wpctl may appear in docstring as explanation; check actual code
         import ast
         tree = ast.parse(inspect.getsource(audio_ducker))

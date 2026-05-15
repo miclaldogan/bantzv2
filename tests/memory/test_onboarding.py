@@ -1,10 +1,8 @@
 """Tests for MemPalace onboarding + KG write verification."""
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -343,7 +341,7 @@ class TestOnboarding:
         bridge._initialized = True
 
         # Run onboarding
-        count = run_onboarding_noninteractive(
+        run_onboarding_noninteractive(
             answers=self._sample_answers(),
             identity_path=identity_path,
             kg=bridge._kg,

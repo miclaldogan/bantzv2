@@ -597,7 +597,7 @@ class TestStreamThinking:
             mock_llm.chat_stream = _mock_stream(response)
             mock_bus.emit = capture_emit
 
-            result = await _stream_and_collect(
+            await _stream_and_collect(
                 [{"role": "user", "content": "test"}],
                 emit_thinking=True, source="test",
             )

@@ -660,7 +660,7 @@ class TestRunOvernightPoll:
             mock_kv.return_value = kv
             mg.return_value = PollSourceResult(source="gmail", status="ok", data={})
 
-            result = await run_overnight_poll(dry_run=False, sources=("gmail",))
+            await run_overnight_poll(dry_run=False, sources=("gmail",))
             mg.assert_awaited_once()
             mc.assert_not_awaited()
             mcr.assert_not_awaited()

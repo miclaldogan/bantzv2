@@ -21,7 +21,6 @@ from bantz.agent.sub_agent import (
     DeveloperAgent,
     ResearcherAgent,
     ReviewerAgent,
-    SubAgent,
     SubAgentResult,
     available_roles,
     create_agent,
@@ -451,7 +450,7 @@ class TestSubAgentRun:
 
         with patch.object(agent, "_llm_chat", side_effect=mock_chat), \
              patch("bantz.tools.registry", mock_registry):
-            result = await agent.run("Run many searches")
+            await agent.run("Run many searches")
 
         # Only 3 calls should have been made
         assert mock_tool.execute.call_count == 3

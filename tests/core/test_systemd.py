@@ -308,7 +308,7 @@ class TestSetupSystemd:
 
     def test_enable_and_start_flow(self, tmp_path):
         from bantz.__main__ import _setup_systemd
-        systemd_dir = tmp_path / ".config" / "systemd" / "user"
+        tmp_path / ".config" / "systemd" / "user"
 
         with patch("pathlib.Path.home", return_value=tmp_path), \
              patch.dict(os.environ, {"USER": "testuser"}), \

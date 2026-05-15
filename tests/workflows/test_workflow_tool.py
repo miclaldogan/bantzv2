@@ -4,8 +4,7 @@ Tests for bantz.tools.workflow_tool — the agent-facing run_workflow tool.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from bantz.tools.workflow_tool import WorkflowTool
 from bantz.workflows.models import WorkflowDef, StepResult, WorkflowResult
@@ -137,7 +136,7 @@ class TestCreateAction:
     @pytest.mark.asyncio
     async def test_create_valid(self, tool, tmp_path):
         with patch("bantz.tools.workflow_tool.workflow_registry") as mock_reg, \
-             patch("bantz.tools.workflow_tool.Path") as mock_path_cls:
+             patch("bantz.tools.workflow_tool.Path"):
             mock_reg.parse_yaml.return_value = WorkflowDef(
                 name="test-wf",
                 steps=[{"name": "s1", "action": "set_variable", "variable": "x", "value": "1"}],

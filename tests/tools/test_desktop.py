@@ -19,7 +19,7 @@ Covers:
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -29,7 +29,6 @@ from bantz.tools.desktop import (
     _resolve_app_command,
     _format_tree_compact,
     _extract_interactive_elements,
-    _APP_COMMANDS,
 )
 
 
@@ -576,7 +575,7 @@ class TestOpenApp:
         mock_proc = AsyncMock()
         mock_proc.returncode = None  # still running
         mock_proc.pid = 12345
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec, \
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
              patch("asyncio.sleep", new_callable=AsyncMock):
             result = await tool.execute(action="open_app", app="calculator")
         assert result.success is True

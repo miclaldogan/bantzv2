@@ -400,7 +400,7 @@ class TestProcessInterventionsToast:
         assert "push_toast" in src
         # Should NOT contain add_bantz as primary path (only fallback)
         # The push_toast line should come before any add_bantz fallback
-        toast_pos = src.index("push_toast")
+        src.index("push_toast")
         # Verify toast container is the primary rendering path
         assert "ToastContainer" in src or "toast-container" in src
 
