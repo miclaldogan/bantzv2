@@ -6,6 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import sys
+from unittest.mock import MagicMock
+sys.modules['pyautogui'] = MagicMock()
 
 from bantz.tools.gui_tool import (
     GUITool,
