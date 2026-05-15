@@ -13,7 +13,8 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest

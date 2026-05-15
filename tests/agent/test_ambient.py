@@ -383,8 +383,7 @@ class TestAmbientEventBus:
 
     def test_no_brain_or_tui_imports(self):
         """ambient.py must NOT import from brain or TUI."""
-        import ast
-        import inspect
+        import ast, inspect
         from bantz.agent import ambient
         tree = ast.parse(inspect.getsource(ambient))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]

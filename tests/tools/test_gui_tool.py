@@ -1,13 +1,17 @@
 """Tests for GUITool (#292)."""
 from __future__ import annotations
 
+import os
 import subprocess
+import time
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from bantz.tools.gui_tool import (
+    CACHE_DIR,
     GUITool,
     GUIToolError,
     gui_tool,

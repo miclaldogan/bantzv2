@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 

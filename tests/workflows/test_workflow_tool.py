@@ -4,7 +4,8 @@ Tests for bantz.tools.workflow_tool — the agent-facing run_workflow tool.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from pathlib import Path
 
 from bantz.tools.workflow_tool import WorkflowTool
 from bantz.workflows.models import WorkflowDef, StepResult, WorkflowResult

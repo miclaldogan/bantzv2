@@ -4,11 +4,12 @@ from __future__ import annotations
 import subprocess
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
 from bantz.tools.image_tool import (
+    CACHE_DIR,
     CACHE_TTL,
     ImageTool,
     ImageToolError,
@@ -43,6 +44,7 @@ def fake_image(tmp_path):
 
 class TestCacheManagement:
     def test_ensure_cache_dir(self, tmp_cache):
+        import bantz.tools.image_tool as mod
         # Remove and recreate
         if tmp_cache.exists():
             import shutil

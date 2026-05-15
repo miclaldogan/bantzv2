@@ -1,8 +1,10 @@
 """Tests for MemPalace onboarding + KG write verification."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
