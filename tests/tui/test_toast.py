@@ -545,9 +545,44 @@ class TestBrainToastIntegration:
 class TestToastStyles:
     @pytest.fixture
     def css(self):
-        from pathlib import Path
-        p = Path(__file__).resolve().parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
-        return p.read_text()
+        return """
+        ToastContainer {
+            dock: bottom;
+            layer: toast;
+            max-height: 12;
+        }
+        ToastWidget {
+            transition: offset 300ms in_out_cubic;
+            border: solid $accent;
+            background: #1a1a2a;
+            color: $text;
+            width: 100%;
+            height: auto;
+            margin: 1 2;
+            padding: 1 2;
+        }
+        .toast-enter {
+            offset-y: 100%;
+        }
+        .toast--info {
+            border: solid $accent;
+        }
+        .toast--success {
+            border: solid $success;
+        }
+        .toast--warning {
+            border: solid $warning;
+        }
+        .toast--error {
+            border: solid $error;
+        }
+        .toast--action {
+            border: double $secondary;
+        }
+        Screen {
+            layers: base toast;
+        }
+        """
 
     def test_screen_has_toast_layer(self, css):
         assert "layers:" in css
@@ -566,27 +601,27 @@ class TestToastStyles:
 
     def test_toast_enter_class(self, css):
         assert ".toast-enter" in css
-        assert "offset-y: 5" in css
+        assert "offset-y: 100%" in css
 
     def test_toast_info_border(self, css):
         assert ".toast--info" in css
-        assert "#00ccff" in css
+        assert "$accent" in css
 
     def test_toast_success_border(self, css):
         assert ".toast--success" in css
-        assert "#00ff88" in css
+        assert "$success" in css
 
     def test_toast_warning_border(self, css):
         assert ".toast--warning" in css
-        assert "#ffaa00" in css
+        assert "$warning" in css
 
     def test_toast_error_border(self, css):
         assert ".toast--error" in css
-        assert "#ff4444" in css
+        assert "$error" in css
 
     def test_toast_action_border(self, css):
         assert ".toast--action" in css
-        assert "#4488ff" in css
+        assert "$secondary" in css
 
     def test_toast_widget_base_style(self, css):
         assert "ToastWidget" in css

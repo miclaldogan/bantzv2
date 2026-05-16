@@ -2,18 +2,23 @@
 from __future__ import annotations
 
 
+import os
 import subprocess
+from pathlib import Path
+import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import sys
-
-# Mock pyautogui before importing bantz.tools.gui_tool to avoid DISPLAY error
-sys.modules['pyautogui'] = MagicMock()
 
 import pytest
 
+# Mock pyautogui and mouseinfo before importing the module under test
+# This prevents X11 connection errors during test collection in headless CI
+sys.modules['pyautogui'] = MagicMock()
+sys.modules['mouseinfo'] = MagicMock()
 
 from bantz.tools.gui_tool import (
+    CACHE_DIR,
     GUITool,
     GUIToolError,
     gui_tool,

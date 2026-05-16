@@ -1,0 +1,56 @@
+OperationsHeader {
+    dock: top;
+    height: 1;
+    background: $boost;
+    color: $text-muted;
+}
+.mood-chill OperationsHeader {}
+.mood-focused OperationsHeader {}
+.mood-busy OperationsHeader {}
+.mood-stressed OperationsHeader {}
+.mood-sleeping OperationsHeader {}
+
+ToastContainer {
+    dock: bottom;
+    layer: toast;
+    max-height: 12;
+}
+
+ToastWidget {
+    transition: offset 300ms in_out_cubic;
+    border: solid $accent;
+    background: #1a1a2a;
+    color: $text;
+    width: 100%;
+    height: auto;
+    margin: 1 2;
+    padding: 1 2;
+}
+
+.toast-enter {
+    offset-y: 100%;
+}
+
+.toast--info {
+    border: solid $accent;
+}
+
+.toast--success {
+    border: solid $success;
+}
+
+.toast--warning {
+    border: solid $warning;
+}
+
+.toast--error {
+    border: solid $error;
+}
+
+.toast--action {
+    border: double $secondary;
+}
+
+Screen {
+    layers: base toast;
+}
