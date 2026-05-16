@@ -1,11 +1,17 @@
 """Tests for GUITool (#292)."""
 from __future__ import annotations
 
+
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import sys
+
+# Mock pyautogui before importing bantz.tools.gui_tool to avoid DISPLAY error
+sys.modules['pyautogui'] = MagicMock()
 
 import pytest
+
 
 from bantz.tools.gui_tool import (
     GUITool,

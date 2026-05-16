@@ -9,8 +9,7 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+
 ## 2024-05-18 - Avoid N+1 Updates in Loop Check Functions
-
 **Learning:** Database interactions inside a loop such as `conn.execute("UPDATE ...")` within `for row in rows:` in frequently called checking functions (e.g., `check_due` and `check_place_due` in `scheduler.py`) can create massive performance bottlenecks as the number of checks increases (N+1 query problem). This is particularly impactful for recurring tasks and location-based checks which might scan multiple reminders.
-
 **Action:** Accumulate item IDs or parameter tuples within the loop, then use a single `conn.executemany` statement outside the loop to process all updates in bulk. Always look for `execute` inside loops in data-handling code as a prime target for bulk operation optimization.
