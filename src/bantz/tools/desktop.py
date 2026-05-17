@@ -379,7 +379,6 @@ class DesktopTool(BaseTool):
 
         cx, cy = element["center"]
 
-
         # Perform the action
         if interact_action in ("click", "left_click"):
             return await self._do_click(cx, cy, element, "click", app_name, locator_str)
