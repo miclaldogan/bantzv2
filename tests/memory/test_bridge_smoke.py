@@ -9,9 +9,6 @@ Run: pytest tests/memory/test_bridge_smoke.py -v
 from __future__ import annotations
 
 import asyncio
-import os
-import shutil
-import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 

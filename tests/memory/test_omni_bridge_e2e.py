@@ -9,7 +9,6 @@ Run: pytest tests/memory/test_omni_bridge_e2e.py -v
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
