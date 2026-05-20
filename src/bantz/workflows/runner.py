@@ -20,7 +20,6 @@ from typing import Any
 
 from bantz.workflows.errors import (
     StepExecutionError,
-    StepTimeoutError,
     WorkflowError,
 )
 from bantz.workflows.models import (

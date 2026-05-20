@@ -231,3 +231,17 @@ class TestFeedTool:
         result = FeedTool._format_items([])
         assert result.success
         assert "No items" in result.output
+
+def test_xxe_prevention():
+    xxe_payload = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE foo [
+<!ELEMENT foo ANY >
+<!ENTITY xxe SYSTEM "file:///etc/passwd" >]>
+<rss version="2.0">
+  <channel>
+    <title>Test &xxe;</title>
+    <item><title>Title</title></item>
+  </channel>
+</rss>"""
+    with pytest.raises(FeedToolError, match="Security error parsing feed XML"):
+        parse_feed(xxe_payload)

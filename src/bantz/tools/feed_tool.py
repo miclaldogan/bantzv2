@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+import defusedxml.ElementTree as ET
+import defusedxml.common
+from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -245,6 +246,11 @@ def parse_feed(xml_text: str, source_name: str = "") -> list[FeedItem]:
         raise FeedToolError(
             f"Failed to parse feed XML: {exc}. "
             "Expected valid RSS/Atom — got invalid data (captive portal or dead domain?)."
+        ) from exc
+    except defusedxml.common.DefusedXmlException as exc:
+        raise FeedToolError(
+            f"Security error parsing feed XML: {exc}. "
+            "XML contains potential XXE or other dangerous entities."
         ) from exc
 
     # Detect format: RSS has <channel>/<item>, Atom has <entry>
