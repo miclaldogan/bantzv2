@@ -43,3 +43,8 @@ def mock_config():
     cfg.app_detector_enabled = False
     cfg.app_detector_auto_focus = False
     return cfg
+
+# Mock pyautogui to prevent DISPLAY errors in headless environments
+import os
+if "DISPLAY" not in os.environ:
+    sys.modules['pyautogui'] = MagicMock()
