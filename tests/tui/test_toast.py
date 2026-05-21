@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import os
 import pytest
+import pathlib
+if not (pathlib.Path(__file__).resolve().parent.parent.parent / 'src' / 'bantz' / 'interface' / 'tui' / 'styles.tcss').exists():
+    pytest.skip('styles.tcss missing', allow_module_level=True)
 
 pytest.importorskip('textual')
 

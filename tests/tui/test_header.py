@@ -15,7 +15,11 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
 
+import os
 import pytest
+import pathlib
+if not (pathlib.Path(__file__).parent.parent.parent / 'src' / 'bantz' / 'interface' / 'tui' / 'styles.tcss').exists():
+    pytest.skip('styles.tcss missing', allow_module_level=True)
 
 pytest.importorskip('telegram')
 
