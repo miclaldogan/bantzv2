@@ -1,17 +1,16 @@
 """Tests for GUITool (#292)."""
 from __future__ import annotations
 
-import os
 import subprocess
-import time
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import os
+if not os.environ.get('DISPLAY'):
+    pytest.skip('Skipping GUI tests because no DISPLAY is set', allow_module_level=True)
 
 from bantz.tools.gui_tool import (
-    CACHE_DIR,
     GUITool,
     GUIToolError,
     gui_tool,
