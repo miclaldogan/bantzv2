@@ -15,13 +15,12 @@ Covers:
   - Styles: toast CSS rules, Screen layers, slide-in animation
 """
 from __future__ import annotations
+import pytest
+from pathlib import Path
 
 from unittest.mock import MagicMock
 
-import os
-import pytest
-import pathlib
-if not (pathlib.Path(__file__).resolve().parent.parent.parent / 'src' / 'bantz' / 'interface' / 'tui' / 'styles.tcss').exists():
+if not (Path(__file__).resolve().parent.parent.parent / 'src' / 'bantz' / 'interface' / 'tui' / 'styles.tcss').exists():
     pytest.skip('styles.tcss missing', allow_module_level=True)
 
 pytest.importorskip('textual')
@@ -404,7 +403,7 @@ class TestProcessInterventionsToast:
         assert "push_toast" in src
         # Should NOT contain add_bantz as primary path (only fallback)
         # The push_toast line should come before any add_bantz fallback
-        toast_pos = src.index("push_toast")
+        _ = src.index("push_toast")
         # Verify toast container is the primary rendering path
         assert "ToastContainer" in src or "toast-container" in src
 
@@ -546,12 +545,13 @@ class TestBrainToastIntegration:
 # Styles: Toast CSS
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent.parent / 'src' / 'bantz' / 'interface' / 'tui' / 'styles.tcss').exists(), reason='styles.tcss missing')
 class TestToastStyles:
     @pytest.fixture
     def css(self):
         from pathlib import Path
         p = Path(__file__).resolve().parent.parent.parent / "src" / "bantz" / "interface" / "tui" / "styles.tcss"
-        return p.read_text()
+        return p.read_text() if p.exists() else ''
 
     def test_screen_has_toast_layer(self, css):
         assert "layers:" in css
