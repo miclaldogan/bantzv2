@@ -529,7 +529,10 @@ class LiveUI:
     async def _panel_updater(self, layout: Layout) -> None:
         """Re-render all panels at ``REFRESH_FPS``."""
         while self._running:
-            self._update_panels(layout)
+            try:
+                self._update_panels(layout)
+            except Exception:
+                pass  # never let a render error kill the refresh loop
             await asyncio.sleep(1 / self.REFRESH_FPS)
 
     async def _probe_services(self) -> None:
@@ -547,6 +550,12 @@ class LiveUI:
             except Exception:
                 self._services["Ollama"] = ServiceDot.DOWN
                 self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
+                self.add_chat(
+                    "error",
+                    f"Cannot reach Ollama at {config.ollama_base_url}. "
+                    "Start it with: ollama serve  "
+                    f"(model needed: {config.ollama_model})",
+                )
 
         async def check_neo4j() -> None:
             try:
@@ -729,7 +738,12 @@ class LiveUI:
         self._busy = True
 
     def _on_bus_thinking_done(self, event: Event) -> None:
-        self._busy = False
+        # Do NOT clear _busy here. This event fires when cot_route finishes
+        # choosing a tool, but the actual chat-stream generation hasn't started
+        # yet. Clearing _busy would hide the "thinking..." indicator while the
+        # app is still waiting for the first token from Ollama.
+        # _busy is managed exclusively by _process_input and _handle_confirm.
+        pass
 
     def _on_bus_planner_step(self, event: Event) -> None:
         step = event.data.get("step", 0)
@@ -866,7 +880,15 @@ class LiveUI:
 
             self._streaming_text = None
             self._busy = False
-            self.add_chat("bantz", accumulated)
+            if accumulated.strip():
+                self.add_chat("bantz", accumulated)
+            else:
+                self.add_chat(
+                    "error",
+                    "Empty response from model — is Ollama running and "
+                    f"is '{config.ollama_model}' pulled? "
+                    "Try: ollama pull " + config.ollama_model,
+                )
 
             try:
                 from bantz.core.finalizer import strip_markdown
