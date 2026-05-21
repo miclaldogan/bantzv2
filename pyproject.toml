@@ -8,9 +8,8 @@ version = "0.1.0"
 description = "Local-first AI assistant — your terminal, your host."
 requires-python = ">=3.11"
 dependencies = [
-    "textual>=0.59.0",
+    "aioconsole>=0.6.0",
     "httpx>=0.27.0",
-    "aiosqlite>=0.20.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.2.2",
@@ -24,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+extras = [
+    "textual>=0.59.0",
+]
 translation = [
     "transformers>=4.40.0",
     "torch>=2.0.0",
@@ -62,7 +64,6 @@ testpaths = ["tests"]
 source = ["bantz"]
 omit = [
     "src/bantz/__main__.py",
-    "src/bantz/interface/tui/app.py",
     "src/bantz/tools/gmail.py",
     "src/bantz/tools/calendar.py",
     "src/bantz/tools/classroom.py",

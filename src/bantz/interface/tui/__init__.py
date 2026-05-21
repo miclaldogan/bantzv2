@@ -1,1 +1,0 @@
-"""Bantz — Textual TUI package."""

@@ -268,7 +268,7 @@ class DataLayer:
         try:
             from bantz.memory.bridge import palace_bridge
 
-            if palace_bridge.init():
+            if await palace_bridge.init():
                 self.graph = palace_bridge  # type: ignore[assignment]
         except ImportError:
             log.debug("mempalace not installed — memory bridge off")

@@ -28,7 +28,7 @@ class TestCheckLinger:
     """Uses loginctl show-user (official API) not hardcoded /var/lib path."""
 
     def test_linger_enabled(self):
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         mock_result = MagicMock(returncode=0, stdout="Linger=yes\n")
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             assert _check_linger("testuser") is True
@@ -38,23 +38,23 @@ class TestCheckLinger:
             )
 
     def test_linger_disabled(self):
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         mock_result = MagicMock(returncode=0, stdout="Linger=no\n")
         with patch("subprocess.run", return_value=mock_result):
             assert _check_linger("testuser") is False
 
     def test_loginctl_not_found(self):
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         with patch("subprocess.run", side_effect=FileNotFoundError):
             assert _check_linger("testuser") is False
 
     def test_loginctl_timeout(self):
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="loginctl", timeout=5)):
             assert _check_linger("testuser") is False
 
     def test_loginctl_nonzero_exit(self):
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         mock_result = MagicMock(returncode=1, stdout="")
         with patch("subprocess.run", return_value=mock_result):
             assert _check_linger("testuser") is False
@@ -62,7 +62,7 @@ class TestCheckLinger:
     def test_no_hardcoded_var_lib_path(self):
         """Ensure we never check /var/lib/systemd/linger directly."""
         import inspect
-        from bantz.__main__ import _check_linger
+        from bantz.cli.setup import _check_linger
         source = inspect.getsource(_check_linger)
         assert "/var/lib/systemd/linger" not in source
 
@@ -71,8 +71,8 @@ class TestCheckLinger:
 
 class TestEnsureLinger:
     def test_already_enabled_no_prompt(self):
-        from bantz.__main__ import _ensure_linger
-        with patch("bantz.__main__._check_linger", return_value=True):
+        from bantz.cli.setup import _ensure_linger
+        with patch("bantz.cli.setup._check_linger", return_value=True):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 result = _ensure_linger("testuser")
@@ -80,9 +80,9 @@ class TestEnsureLinger:
             assert "already enabled" in buf.getvalue()
 
     def test_enable_success(self):
-        from bantz.__main__ import _ensure_linger
+        from bantz.cli.setup import _ensure_linger
         mock_result = MagicMock(returncode=0)
-        with patch("bantz.__main__._check_linger", side_effect=[False, True]), \
+        with patch("bantz.cli.setup._check_linger", side_effect=[False, True]), \
              patch("subprocess.run", return_value=mock_result) as mock_run, \
              patch("builtins.input", return_value="y"):
             buf = io.StringIO()
@@ -96,9 +96,9 @@ class TestEnsureLinger:
             )
 
     def test_enable_failure_shows_sudo_hint(self):
-        from bantz.__main__ import _ensure_linger
+        from bantz.cli.setup import _ensure_linger
         mock_result = MagicMock(returncode=1)
-        with patch("bantz.__main__._check_linger", return_value=False), \
+        with patch("bantz.cli.setup._check_linger", return_value=False), \
              patch("subprocess.run", return_value=mock_result), \
              patch("builtins.input", return_value="y"):
             buf = io.StringIO()
@@ -108,8 +108,8 @@ class TestEnsureLinger:
             assert "sudo" in buf.getvalue()
 
     def test_user_declines(self):
-        from bantz.__main__ import _ensure_linger
-        with patch("bantz.__main__._check_linger", return_value=False), \
+        from bantz.cli.setup import _ensure_linger
+        with patch("bantz.cli.setup._check_linger", return_value=False), \
              patch("builtins.input", return_value="n"):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -121,7 +121,7 @@ class TestEnsureLinger:
         """Critical: loginctl enable-linger must NOT use capture_output=True
         to avoid freezing when polkit asks for a password."""
         import inspect
-        from bantz.__main__ import _ensure_linger
+        from bantz.cli.setup import _ensure_linger
         source = inspect.getsource(_ensure_linger)
         assert "capture_output=False" in source
 
@@ -130,7 +130,7 @@ class TestEnsureLinger:
 
 class TestSystemctl:
     def test_success(self):
-        from bantz.__main__ import _systemctl
+        from bantz.cli.setup import _systemctl
         mock_result = MagicMock(returncode=0, stdout="", stderr="")
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             assert _systemctl("daemon-reload") is True
@@ -140,7 +140,7 @@ class TestSystemctl:
             )
 
     def test_failure_prints_stderr(self):
-        from bantz.__main__ import _systemctl
+        from bantz.cli.setup import _systemctl
         mock_result = MagicMock(returncode=1, stderr="Failed to reload daemon")
         with patch("subprocess.run", return_value=mock_result):
             buf = io.StringIO()
@@ -149,7 +149,7 @@ class TestSystemctl:
             assert "Failed to reload daemon" in buf.getvalue()
 
     def test_multiple_args(self):
-        from bantz.__main__ import _systemctl
+        from bantz.cli.setup import _systemctl
         mock_result = MagicMock(returncode=0)
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             assert _systemctl("enable", "bantz.service") is True
@@ -161,7 +161,7 @@ class TestSystemctl:
     def test_no_os_system_in_systemd_code(self):
         """Verify os.system() is not used in any systemd-related function."""
         import inspect
-        from bantz import __main__ as mod
+        from bantz.cli import setup as mod
         for name in ("_setup_systemd", "_systemctl", "_verify_service",
                       "_systemd_check", "_ensure_linger"):
             fn = getattr(mod, name)
@@ -173,7 +173,7 @@ class TestSystemctl:
 
 class TestVerifyService:
     def test_active(self):
-        from bantz.__main__ import _verify_service
+        from bantz.cli.setup import _verify_service
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="active\n"),  # is-active
@@ -185,7 +185,7 @@ class TestVerifyService:
             assert "running" in buf.getvalue()
 
     def test_failed(self):
-        from bantz.__main__ import _verify_service
+        from bantz.cli.setup import _verify_service
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=3, stdout="failed\n")
             buf = io.StringIO()
@@ -199,7 +199,7 @@ class TestVerifyService:
 
 class TestFormatUptime:
     def test_parse_with_weekday(self):
-        from bantz.__main__ import _format_uptime
+        from bantz.cli.setup import _format_uptime
         from datetime import datetime, timedelta
         now = datetime.now()
         past = now - timedelta(days=3, hours=6, minutes=15)
@@ -209,7 +209,7 @@ class TestFormatUptime:
         assert "6h" in result
 
     def test_parse_without_weekday(self):
-        from bantz.__main__ import _format_uptime
+        from bantz.cli.setup import _format_uptime
         from datetime import datetime, timedelta
         now = datetime.now()
         past = now - timedelta(hours=2, minutes=30)
@@ -219,12 +219,12 @@ class TestFormatUptime:
         assert "30m" in result
 
     def test_unparseable_returns_raw(self):
-        from bantz.__main__ import _format_uptime
+        from bantz.cli.setup import _format_uptime
         raw = "some-weird-format"
         assert _format_uptime(raw) == raw
 
     def test_zero_days_omitted(self):
-        from bantz.__main__ import _format_uptime
+        from bantz.cli.setup import _format_uptime
         from datetime import datetime, timedelta
         past = datetime.now() - timedelta(hours=1, minutes=5)
         ts = past.strftime("%a %Y-%m-%d %H:%M:%S") + " UTC"
@@ -237,7 +237,7 @@ class TestFormatUptime:
 
 class TestSystemdCheck:
     def test_no_service_file(self, tmp_path):
-        from bantz.__main__ import _systemd_check
+        from bantz.cli.setup import _systemd_check
         with patch("pathlib.Path.home", return_value=tmp_path):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -247,7 +247,7 @@ class TestSystemdCheck:
             assert "bantz --setup systemd" in output
 
     def test_full_check_active(self, tmp_path):
-        from bantz.__main__ import _systemd_check
+        from bantz.cli.setup import _systemd_check
         # Create fake service file
         svc_dir = tmp_path / ".config" / "systemd" / "user"
         svc_dir.mkdir(parents=True)
@@ -269,7 +269,7 @@ class TestSystemdCheck:
         ]
 
         with patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("bantz.__main__._check_linger", return_value=True), \
+             patch("bantz.cli.setup._check_linger", return_value=True), \
              patch("subprocess.run", side_effect=side_effects), \
              patch.dict(os.environ, {"USER": "testuser"}):
             buf = io.StringIO()
@@ -288,12 +288,12 @@ class TestSystemdCheck:
 
 class TestSetupSystemd:
     def test_writes_service_file(self, tmp_path):
-        from bantz.__main__ import _setup_systemd
+        from bantz.cli.setup import _setup_systemd
         systemd_dir = tmp_path / ".config" / "systemd" / "user"
 
         with patch("pathlib.Path.home", return_value=tmp_path), \
              patch.dict(os.environ, {"USER": "testuser"}), \
-             patch("bantz.__main__._ensure_linger", return_value=True), \
+             patch("bantz.cli.setup._ensure_linger", return_value=True), \
              patch("builtins.input", return_value="n"):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -307,14 +307,14 @@ class TestSetupSystemd:
         assert "WantedBy=default.target" in content
 
     def test_enable_and_start_flow(self, tmp_path):
-        from bantz.__main__ import _setup_systemd
+        from bantz.cli.setup import _setup_systemd
         systemd_dir = tmp_path / ".config" / "systemd" / "user"
 
         with patch("pathlib.Path.home", return_value=tmp_path), \
              patch.dict(os.environ, {"USER": "testuser"}), \
-             patch("bantz.__main__._ensure_linger", return_value=True), \
-             patch("bantz.__main__._systemctl", return_value=True) as mock_sctl, \
-             patch("bantz.__main__._verify_service") as mock_verify, \
+             patch("bantz.cli.setup._ensure_linger", return_value=True), \
+             patch("bantz.cli.setup._systemctl", return_value=True) as mock_sctl, \
+             patch("bantz.cli.setup._verify_service") as mock_verify, \
              patch("builtins.input", return_value="y"):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -327,7 +327,7 @@ class TestSetupSystemd:
         mock_verify.assert_called_once()
 
     def test_no_user_env(self):
-        from bantz.__main__ import _setup_systemd
+        from bantz.cli.setup import _setup_systemd
         with patch.dict(os.environ, {}, clear=True):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -339,14 +339,14 @@ class TestSetupSystemd:
 
 class TestArgparseRouting:
     def test_setup_systemd_routes_to_setup(self):
-        from bantz.__main__ import _handle_setup
-        with patch("bantz.__main__._setup_systemd") as mock:
+        from bantz.cli.setup import _handle_setup
+        with patch("bantz.cli.setup._setup_systemd") as mock:
             _handle_setup(["systemd"])
             mock.assert_called_once()
 
     def test_setup_systemd_check_routes_to_check(self):
-        from bantz.__main__ import _handle_setup
-        with patch("bantz.__main__._systemd_check") as mock:
+        from bantz.cli.setup import _handle_setup
+        with patch("bantz.cli.setup._systemd_check") as mock:
             _handle_setup(["systemd", "--check"])
             mock.assert_called_once()
 

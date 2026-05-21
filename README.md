@@ -1,496 +1,367 @@
-<div align="center">
+# Bantz
 
-<pre>
-    ____     _    _   _  ________   ____
-   | __ )   / \  | \ | | |__   __||__  /
-   |  _ \  / _ \ |  \| |    | |     / /
-   | |_) |/ ___ \| |\  |    | |    / /_
-   |____//_/   \_\_| \_|    |_|   /____|
-</pre>
-
-**Local-First AI Agent — Terminal Interface, System Observer, Autonomous Operator**
-
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Tests: 3135](https://img.shields.io/badge/tests-3135-brightgreen.svg)](#test-suite)
-[![Ollama](https://img.shields.io/badge/LLM-Ollama-orange.svg)](https://ollama.ai)
-[![Textual](https://img.shields.io/badge/TUI-Textual-purple.svg)](https://textual.textualize.io)
-
-</div>
-
----
-
-## What is Bantz?
-
-Bantz is a **local-first, autonomous AI agent** that lives in your terminal. It handles tasks through natural language, observes your system in real time, manages your calendar and email, controls your desktop when needed, and operates proactively in the background — all without sending your data to the cloud.
-
-It is not a wrapper around a hosted API. The entire reasoning, memory, and tool execution stack runs on your machine.
-
-**Design principles:**
-
-- **Local-first.** Powered by Ollama (`qwen3:8b` / `llama3`), SQLite, ChromaDB, and on-device graph memory via MemPalace. No data leaves the machine by default.
-- **Chain-of-Thought routing.** Every request goes through a structured CoT classifier that extracts intent, selects a tool, and validates parameters before executing anything.
-- **Autonomous background agent.** Runs as a systemd service. Performs nightly reflection, cache maintenance, wake-word listening, and proactive suggestions — independently.
-- **Butler persona.** Polite, discreet, and adaptive. A reinforcement learning layer adjusts tone and formality based on your implicit feedback over time.
-
----
-
-## Chain-of-Thought Reasoning
-
-Before any tool fires, Bantz reasons through the request in a quarantined scratchpad. The `<thinking>` block is streamed live to the TUI's dedicated thinking panel and stripped before the final JSON output is parsed.
-
-```
-User request: "Check the PDF and email the summary."
-                           │
-                           ▼
-              ┌────────────────────────┐
-              │      <thinking>        │
-              │  1. What file?         │
-              │     What address?      │
-              │  2. Tools needed:      │
-              │     filesystem +       │
-              │     document + gmail   │
-              │  3. Do not invent      │
-              │     content. Read      │
-              │     the file first.    │
-              │  </thinking>           │
-              └────────────────────────┘
-                           │
-                           ▼
-              { "route": "planner",
-                "tool_name": null,
-                "reasoning": "Needs document
-                              read then gmail" }
-```
-
-Routing decisions carry a confidence score. Below the configured threshold (`BANTZ_COT_CONFIDENCE_THRESHOLD`), the agent asks for clarification rather than guessing.
+Bantz is a local-first AI assistant that runs on your Linux machine and acts as a personal butler — it has a voice, remembers things across sessions, runs scheduled jobs overnight, controls your desktop, reads your email, and talks to you like a person who's known you long enough to be useful. The primary interface is a terminal. Everything is local by default. Nothing phones home unless you configure it to.
 
 ---
 
 ## Architecture
 
-Bantz is built in five decoupled layers. Each layer communicates through typed contracts — no layer reaches into another's internals.
+The Brain (`core/brain.py`) sits at the center. Every request — typed, spoken, or sent via Telegram — goes through the same pipeline:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          INTERFACE LAYER                            │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌─────────────────┐    │
-│  │ TUI (Textual)   │  │ Telegram Bot     │  │ CLI             │    │
-│  │ Chat + Thinking │  │ async, progress  │  │ --once          │    │
-│  │ Panel + Mood    │  │ indicators       │  │ --daemon        │    │
-│  │ + System Stats  │  │                  │  │ --doctor        │    │
-│  └────────┬────────┘  └────────┬─────────┘  └────────┬────────┘    │
-├───────────┴─────────────────────┴───────────────────── ┴────────────┤
-│                            CORE LAYER                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ Brain    │  │ Intent   │  │ Planner  │  │ Executor         │   │
-│  │ (orch.)  │  │ (CoT     │  │ (Plan-   │  │ (step runner,    │   │
-│  │          │  │  router) │  │  Solve)  │  │  $REF binding)   │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ Finalizer│  │ Session  │  │ Notif.   │  │ EventBus         │   │
-│  │ (output  │  │ Tracker  │  │ Manager  │  │ (async pub/sub)  │   │
-│  │  format) │  │          │  │          │  │                  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘   │
-├─────────────────────────────────────────────────────────────────────┤
-│                           AGENT LAYER                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Ghost    │  │ RL       │  │ Interventions│  │ Job Scheduler │  │
-│  │ Loop     │  │ Engine   │  │ (priority Q  │  │ (APScheduler) │  │
-│  │ (bg obs.)│  │ (Q-learn)│  │  + rate lim.)│  │               │  │
-│  └──────────┘  └──────────┘  └──────────────┘  └───────────────┘  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Observer │  │ App      │  │ Proactive    │  │ Affinity      │  │
-│  │ (stderr) │  │ Detector │  │ (idle-aware  │  │ Engine (RLHF) │  │
-│  │          │  │          │  │  engagement) │  │               │  │
-│  └──────────┘  └──────────┘  └──────────────┘  └───────────────┘  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ Wake     │  │ STT      │  │ TTS          │  │ Audio Ducker  │  │
-│  │ Word     │  │ (Whisper)│  │ (Piper+aplay)│  │ (vol. ctrl)   │  │
-│  │(Porcupn.)│  │          │  │              │  │               │  │
-│  └──────────┘  └──────────┘  └──────────────┘  └───────────────┘  │
-├─────────────────────────────────────────────────────────────────────┤
-│                            DATA LAYER                               │
-│  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ SQLite + FTS5  │  │ MemPalace      │  │ Knowledge Graph       │ │
-│  │ (conversations,│  │ (ChromaDB vec- │  │ (SQLite temporal KG,  │ │
-│  │  Q-table, mood)│  │  tors, 4-layer │  │  entity registry,     │ │
-│  │                │  │  memory stack) │  │  triples + decay)     │ │
-│  └────────────────┘  └────────────────┘  └───────────────────────┘ │
-│  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ Connection Pool│  │ Bridge Adapter │  │ Spatial Cache         │ │
-│  │ (SQLite WAL,   │  │ (replaces 8 old│  │ (UI element coords,   │ │
-│  │  thread-safe)  │  │  memory modules│  │  24h TTL)             │ │
-│  └────────────────┘  └────────────────┘  └───────────────────────┘ │
-├─────────────────────────────────────────────────────────────────────┤
-│                      TOOLS LAYER  (25 registered tools)             │
-│  shell · gmail · calendar · classroom · filesystem · document       │
-│  weather · news · web_search · web_reader · browser_control         │
-│  visual_click · input_control · accessibility · system · screenshot │
-│  reminder · contacts · gui_action · summarizer · read_url           │
-│  computer_use · browser_tool · system_tool · mail                   │
-├─────────────────────────────────────────────────────────────────────┤
-│                          VISION LAYER                               │
-│  ┌────────────────┐  ┌────────────────┐  ┌───────────────────────┐ │
-│  │ AT-SPI         │  │ Remote VLM     │  │ Navigator             │ │
-│  │ (<10ms,        │  │ (Jetson/Colab  │  │ (unified fallback     │ │
-│  │  no screenshot)│  │  REST client)  │  │  chain)               │ │
-│  └────────────────┘  └────────────────┘  └───────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+Input  (Terminal / Voice / Telegram)
+  │
+  ▼
+Translation Layer       core/translation_layer.py
+  │  MarianMT Turkish↔English bridge; all internal processing in English
+  │
+  ▼
+Memory Injector         core/memory_injector.py
+  │  Injects: recent messages, desktop context, persona state, location
+  │
+  ▼
+OmniMemoryManager       memory/omni_memory.py
+  │  Parallel asyncio recall — Graph (35%) + Vector (40%) + Deep (25%)
+  │  400-token budget, entity-based re-ranking, zero sequential waiting
+  │
+  ▼
+Routing Engine          core/routing_engine.py + core/intent.py
+  │  quick_route(): hardware controls (TTS stop, wake word, ducking)
+  │  cot_route():   Chain-of-Thought LLM routing — tool selection + risk
+  │
+  ▼
+Executor / Planner      agent/executor.py + agent/planner.py
+  │  Plan-and-Solve multi-step execution with $REF variable binding
+  │  Step failure → circuit breaker, optional replan
+  │
+  ▼
+Finalizer               core/finalizer.py
+  │  Butler persona enforcement, hallucination checks, error honesty
+  │
+  ▼
+Memory persistence      MemPalace (ChromaDB + SQLite KG)
+                        core/memory.py (session log, SQLite WAL)
 ```
+
+Supporting systems run alongside the main loop:
+
+- **APScheduler** (`agent/job_scheduler.py`) — persistent SQLAlchemy job store, nightly maintenance/reflection/overnight email poll
+- **Ghost Loop** (`agent/ghost_loop.py`) — wake word → VAD capture → STT → brain dispatch
+- **Affinity Engine** (`agent/affinity_engine.py`) — cumulative score [-100, 100] drives persona tier
+- **Event Bus** (`core/event_bus.py`) — decoupled pub/sub between brain, TUI, voice, notifications
+- **GPS Server** (`core/gps_server.py`) — local HTTP server receiving phone location updates
 
 ---
 
-## Memory Architecture
+## Features
 
-Bantz's memory system was rebuilt around [MemPalace](mempalace/), replacing 8 separate modules (Neo4j graph, vector_store, embeddings, deep_probe, distiller, context_builder, nodes, memory_manager) with a single unified bridge adapter.
+### What's working
 
-```
-                        ┌──────────────────────────┐
-                        │     OmniMemoryManager     │
-                        │   (context bloat control)  │
-                        └────────────┬───────────────┘
-                                     │
-                        ┌────────────▼───────────────┐
-                        │    MemPalace Bridge (866L)  │
-                        │  Same API surface as old    │
-                        │  8 modules — zero caller    │
-                        │  changes required           │
-                        └────────────┬───────────────┘
-                                     │
-              ┌──────────────────────┼──────────────────────┐
-              │                      │                      │
-   ┌──────────▼─────────┐ ┌─────────▼──────────┐ ┌────────▼─────────┐
-   │   ChromaDB Vectors  │ │  SQLite KG (triples│ │ Entity Registry  │
-   │   (embeddings +     │ │  + temporal decay + │ │ (people, places, │
-   │    similarity search│ │  room detection)    │ │  things)         │
-   │    via MemPalace)   │ │                     │ │                  │
-   └─────────────────────┘ └─────────────────────┘ └──────────────────┘
-```
+**Conversation and memory**
+- Persistent memory via MemPalace: ChromaDB vector store + SQLite knowledge graph
+- Hybrid recall: graph entities + semantic search run in parallel, merged by relevance
+- Session distillation: conversations mined into memory palace after each session
+- Onboarding: first-run identity setup, stored in memory wing
+- 400-token memory budget enforced per request (35/40/25 split across layers)
 
-**4-Layer Memory Stack:**
+**Voice pipeline**
+- Wake word detection via Porcupine (runs on dedicated daemon thread, always-on)
+- VAD-based audio capture via WebRTC VAD (auto-stops when you stop talking)
+- STT via faster-whisper (local, GPU-accelerated if available)
+- TTS via Piper + aplay (local, no cloud)
+- Audio ducking: system volume lowers during Bantz speech
+- Ambient sound classification: silence / speech / noisy from mic energy (no FFT)
+- Conversation window: 60s follow-up without re-triggering wake word
 
-| Layer | Name | Purpose |
-|-------|------|---------|
-| **L0** | Identity | User profile, preferences, name — loaded at startup |
-| **L1** | Session | Current conversation context, recent exchanges |
-| **L2** | Vector | Semantic similarity search across all stored memories |
-| **L3** | Deep Probe | Spontaneous associative recall with rate limiting |
+**Scheduling and automation**
+- APScheduler with SQLAlchemy persistent job store (survives restarts)
+- Nightly maintenance workflow (3am): database compaction, memory distillation, digest prep
+- Nightly reflection (11pm): daily summary written to reflection journal
+- Overnight email/calendar poll (every 2h, 00-07): urgent keyword detection
+- Morning briefing prep (6am): pre-generates briefing for fast delivery at wake-up time
+- Reminder system with repeat support (30s check interval)
 
-**What changed:**
-- **Removed:** Neo4j, Docker graph DB dependency, custom embedding pipeline, 8 separate Python modules
-- **Added:** `bridge.py` (866 lines, drop-in adapter), `onboarding.py` (first-run knowledge seeding)
-- **Kept:** `omni_memory.py` (context orchestration), `session_store.py` (SQLite sessions)
+**Desktop and computer control**
+- Desktop screenshot + optional VLM analysis (self-hosted endpoint)
+- Visual element detection and click via coordinate mapping
+- pyautogui-based GUI automation (mouse, keyboard, window focus)
+- Accessibility tree reading
+- App detector: tracks active application context (optional, polling-based)
+- Browser control via subprocess + xdotool
 
----
+**External integrations**
+- Gmail: read, search, compose, reply (Google OAuth2 PKCE flow)
+- Google Calendar: read events, create, check conflicts
+- Google Classroom: assignments, deadlines, announcements
+- Telegram bot: full two-way remote access, screenshot-on-request, whitelist by user ID
+- GPS location from phone via MQTT relay or direct HTTP push
 
-## Directory Structure
+**Personality and adaptation**
+- 1920s English butler persona enforced at the Finalizer layer
+- Affinity Engine: score persists in SQLite, drives 5-tier formality ladder
+  - -100 → clipped and resentful
+  - 0 → neutral and professional
+  - +100 → deeply bonded, proactive, affectionate
+- Highwater protection: score can't drop from a tier you've reached
+- Bonding Meter: sigmoid-gated interaction scoring, configurable rate/midpoint
 
-128 modules, ~42,000 lines of Python.
+**Security and permissions**
+- Risk level propagated through `BantzContext`: `safe` / `moderate` / `destructive`
+- Two-pass confirm flow: destructive operations require explicit `y` before execution
+- `DESTRUCTIVE_COMMANDS` frozenset in `tools/shell.py` — rm -rf, mkfs, dd, etc.
+- Shell timeout configurable, stderr captured separately
 
-```
-src/bantz/
-├── __main__.py                   # CLI entry point (--once, --daemon, --doctor, --setup)
-├── config.py                     # ~70 settings via .env (Pydantic Settings)
-│
-├── core/                         # Orchestration & Routing
-│   ├── brain.py                  # Main request orchestrator
-│   ├── intent.py                 # CoT routing — streaming <thinking> + JSON output
-│   ├── planner.py                # Plan-and-Solve for multi-tool sequences
-│   ├── executor.py               # Sequential plan runner with $REF variable binding
-│   ├── finalizer.py              # Output formatting + hallucination guard
-│   ├── event_bus.py              # Async pub/sub (thinking events, TUI bridge)
-│   ├── notification_manager.py   # Cross-surface notification dispatch
-│   └── session.py                # Conversation session tracking
-│
-├── data/                         # Unified Data Access Layer
-│   ├── store.py                  # Abstract base classes (7 store contracts)
-│   ├── layer.py                  # Singleton DataLayer — composes all stores
-│   ├── connection_pool.py        # Thread-safe SQLite WAL connection pool
-│   └── migration.py              # Versioned schema migration utility
-│
-├── memory/                       # Multi-tier Memory (MemPalace)
-│   ├── bridge.py                 # MemPalace adapter — replaces 8 old modules
-│   │                             #   (graph, nodes, vector_store, embeddings,
-│   │                             #    deep_probe, distiller, context_builder,
-│   │                             #    memory_manager) with unified ChromaDB +
-│   │                             #    SQLite KG + 4-layer memory stack
-│   ├── omni_memory.py            # OmniMemoryManager — context bloat control
-│   ├── onboarding.py             # First-run LLM-powered user knowledge seeding
-│   └── session_store.py          # Conversation session persistence
-│
-├── agent/                        # Autonomous Background Subsystems
-│   ├── ghost_loop.py             # Background observer loop
-│   ├── observer.py               # Stderr monitoring + error classification
-│   ├── planner.py                # Planning agent (tools: SummarizerTool, $REF)
-│   ├── executor.py               # Plan step executor
-│   ├── interventions.py          # Priority queue + rate limiting + focus mode
-│   ├── rl_engine.py              # Q-learning (1,680 states, SQLite Q-table)
-│   ├── affinity_engine.py        # RLHF — sentiment-driven reward shaping
-│   ├── proactive.py              # Idle detection → proactive suggestions
-│   ├── job_scheduler.py          # APScheduler integration
-│   ├── notifier.py               # Desktop notification dispatch
-│   ├── app_detector.py           # Active window / activity category detection
-│   ├── health.py                 # System health monitor
-│   ├── stt.py                    # Whisper STT (faster-whisper, VAD-gated)
-│   ├── tts.py                    # Piper TTS + aplay streaming
-│   ├── wake_word.py              # Porcupine offline wake-word detection
-│   ├── voice_capture.py          # Microphone capture pipeline
-│   ├── audio_ducker.py           # Volume control during TTS playback
-│   └── workflows/
-│       ├── maintenance.py        # Nightly cache + DB maintenance (03:00)
-│       ├── reflection.py         # Evening self-reflection summary (23:00)
-│       └── overnight_poll.py     # Background task polling
-│
-├── personality/
-│   ├── system_prompt.py          # Dynamic system prompt construction
-│   ├── persona.py                # Mood-scaled persona adaptation
-│   └── bonding.py                # RL bonding meter — formality progression
-│
-├── vision/                       # Desktop Perception
-│   ├── navigator.py              # AT-SPI → screenshot → VLM fallback chain
-│   ├── browser_vision.py         # Browser-specific visual interaction
-│   └── remote_vlm.py             # REST client for remote VLM (Jetson/Colab)
-│
-├── tools/                        # Tool Implementations
-│   ├── shell.py                  # Bash with risk classification + audit log
-│   ├── gmail.py                  # Full Gmail CRUD + auto-chain compose/send
-│   ├── calendar.py               # Google Calendar CRUD
-│   ├── filesystem.py             # File ops + LLM auto-chain create-on-miss
-│   ├── browser_control.py        # Firefox/browser subprocess automation
-│   ├── visual_click.py           # AT-SPI + screenshot-based UI element clicks
-│   ├── input_control.py          # Keyboard/mouse input via xdotool
-│   ├── accessibility.py          # AT-SPI tree traversal + app inspection
-│   ├── gui_action.py             # High-level GUI action sequencer
-│   ├── web_search.py             # DuckDuckGo search (no API key)
-│   ├── web_reader.py             # URL fetch → clean text extraction
-│   ├── document.py               # PDF/TXT/MD/DOCX summarize + Q&A
-│   ├── summarizer.py             # General-purpose text summarizer tool
-│   ├── system.py                 # CPU/RAM/disk/uptime metrics via psutil
-│   ├── weather.py                # Weather lookup
-│   ├── news.py                   # News + HackerNews headlines
-│   ├── reminder.py               # Reminder CRUD (SQLite-backed)
-│   ├── classroom.py              # Google Classroom assignments
-│   └── contacts.py               # Contact resolution + lookup
-│
-├── interface/
-│   ├── telegram_bot.py           # Telegram integration ("Hold the Line" UX)
-│   └── tui/
-│       ├── app.py                # Textual App — main TUI entry point
-│       ├── styles.tcss           # TUI stylesheet
-│       ├── mood.py               # MoodStateMachine + SQLite mood history
-│       └── panels/
-│           ├── chat.py           # Chat log + thinking panel
-│           ├── header.py         # Operations header + service health indicators
-│           └── system.py         # Live system telemetry panel
-│
-└── llm/
-    ├── ollama.py                 # Ollama streaming client (primary)
-    └── gemini.py                 # Gemini REST client (fallback)
-```
+**Infrastructure**
+- SQLite WAL mode throughout, thread-safe connection pool
+- Auto-migration: JSON data files → SQLite on first run (profile, places, schedule, session)
+- DataLayer singleton: unified init for all stores, called once at startup
+- pydantic-settings config: ~70 env vars via `.env`, all aliased
 
----
+**Interfaces**
+- Rich Live TUI: 4fps refresh, CPU/RAM/VRAM/DISK stats every 2s, scrollable log panel, Markdown rendering for code responses
+- `bantz --once "query"` for scripted single-shot queries
+- Headless daemon mode (`bantz --daemon`) for systemd operation
 
-## Tool Inventory
+**Multi-step workflows**
+- Chain-of-Thought routing selects tools and builds multi-step plans
+- Plan-and-Solve executor: `$REF_STEP_N` variable binding between steps
+- YAML-based workflow engine for deterministic step sequences
+- Inline workflow detection: "send email, add to calendar, remind me tomorrow" → 3 tool calls
+- Delegate-to-subagent tool: spawns sub-agents for parallel or specialized tasks
 
-| Tool | Capability | Risk Level |
-|------|-----------|-----------|
-| `shell` | Execute arbitrary bash commands with denylist enforcement | destructive |
-| `gmail` | Read, compose, send, search, filter email | moderate |
-| `calendar` | Create, read, update, delete calendar events | moderate |
-| `filesystem` | Read, write, create files and directories | moderate |
-| `document` | Summarize or query PDF, TXT, MD, DOCX files | safe |
-| `web_search` | DuckDuckGo search — no API key required | safe |
-| `web_reader` | Fetch and extract clean text from any URL | safe |
-| `browser_control` | Subprocess-based browser automation (Firefox) | moderate |
-| `visual_click` | Click any visible UI element via AT-SPI or screenshot | moderate |
-| `input_control` | Keyboard and mouse control via xdotool | moderate |
-| `accessibility` | AT-SPI tree traversal, window inspection, focus | safe |
-| `system` | CPU, RAM, disk, uptime via psutil | safe |
-| `weather` | Current weather and forecast | safe |
-| `news` | Headlines from multiple sources, HackerNews | safe |
-| `reminder` | SQLite-backed reminder CRUD | safe |
-| `classroom` | Google Classroom assignment listing | safe |
-| `contacts` | Contact lookup and resolution | safe |
-| `summarizer` | LLM-powered text summarization | safe |
-| `screenshot` | Capture and deliver a screenshot image | safe |
-| `computer_use` | Autonomous multi-step desktop automation using screen vision | destructive |
-| `browser_tool` | Advanced web page parsing: HTML, CSS selectors, readability | safe |
-| `system_tool` | System operations with safe-mode denylist | moderate |
-| `mail` | Unified mail send/compose interface | moderate |
+**i18n**
+- MarianMT offline translation (Turkish↔English) — no API key, runs locally
+- Configurable primary language; English used internally, translated for display
 
-The intent router (`cot_route`) classifies every request into one of: `tool`, `planner`, `chat`. The planner activates when a request requires two or more tools in sequence and coordinates the full execution chain via `$REF` variable binding between steps.
+### What's missing or incomplete
 
----
+**Wake word**: requires a Porcupine access key from Picovoice. Without it the voice pipeline silently disables itself. There's no fallback wake word engine.
 
-## Voice Pipeline
+**VLM / vision analysis**: screenshot capture works, but VLM analysis requires a self-hosted endpoint (`BANTZ_VLM_ENDPOINT`). No built-in vision model — you bring your own.
 
-Bantz supports fully offline, hands-free voice interaction. All components run locally — no cloud STT or TTS services.
+**Mood history display**: `bantz --mood-history` prints a stub message. Mood data is recorded in SQLite but there's no display command since the Textual TUI was removed.
 
-Enable with a single flag:
+**Observer**: background log analysis via a small Ollama model (default `qwen2.5:0.5b`) — implemented but disabled by default (`BANTZ_OBSERVER_ENABLED=false`). Adds latency on low-end hardware.
 
-```bash
-# .env
-BANTZ_VOICE_ENABLED=true
-```
+**RL engine**: the old Q-learning engine was replaced by the Affinity Engine. The `BANTZ_RL_ENABLED` flag exists and gates the intervention/proactive systems, but the underlying RL training loop is no longer active.
 
-**Pipeline:**
+**Proactive interventions**: implemented in `agent/interventions.py`, gated behind `BANTZ_RL_ENABLED`. Off by default. Not well-tested in the current build.
 
-```
-Microphone → VAD (WebRTC) → Wake Word (Porcupine) → STT (Whisper tiny)
-                                                           │
-                                                           ▼
-                                                     Brain → Tool
-                                                           │
-                                                           ▼
-                                              TTS (Piper) → aplay
-                                         (audio ducked during playback)
-```
-
-**Prerequisites (Linux):**
-
-```bash
-sudo apt install portaudio19-dev
-pip install pyaudio faster-whisper webrtcvad pvporcupine piper-tts
-```
-
-**Configuration:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BANTZ_VOICE_ENABLED` | `false` | Master switch for all voice features |
-| `BANTZ_WAKE_WORD_SENSITIVITY` | `0.5` | Porcupine detection sensitivity (0.0–1.0) |
-| `BANTZ_STT_MODEL` | `tiny` | Whisper model size (`tiny`, `base`, `small`) |
-| `BANTZ_TTS_VOICE` | `en_US-lessac-medium` | Piper voice model |
-
-Run `bantz --doctor` to verify all voice dependencies are satisfied before first use.
-
----
-
-## Configuration
-
-All settings are loaded from `.env` in the project root via Pydantic Settings. Every variable is prefixed with `BANTZ_`.
-
-```bash
-# Core LLM
-BANTZ_OLLAMA_MODEL=qwen3:8b
-BANTZ_OLLAMA_BASE_URL=http://localhost:11434
-BANTZ_GEMINI_API_KEY=          # optional cloud fallback
-
-# Memory
-BANTZ_MEMPALACE_ENABLED=true
-BANTZ_PALACE_PATH=                # leave blank for default
-BANTZ_MEMPALACE_WING=bantz
-
-# Voice (all disabled by default)
-BANTZ_VOICE_ENABLED=false
-BANTZ_WAKE_WORD_SENSITIVITY=0.5
-
-# Notifications
-BANTZ_DESKTOP_NOTIFICATIONS=true
-BANTZ_NOTIFICATION_SOUND=false
-
-# Agent behavior
-BANTZ_COT_CONFIDENCE_THRESHOLD=0.4
-BANTZ_PERSONA_ENABLED=true
-BANTZ_DEEP_MEMORY_ENABLED=true
-```
+**ollama.py stale import**: `llm/ollama.py` still imports from `bantz.interface.tui.panels.header` in a try/except block (leftover from before the Textual TUI was removed). The except swallows the ImportError so it doesn't break anything, but it's dead code.
 
 ---
 
 ## Installation
 
+**Requirements**: Python 3.11+, Ollama running locally
+
 ```bash
-git clone https://github.com/miclaldogan/bantzv2
+git clone <repo>
 cd bantzv2
-python -m venv .venv
-source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # fill in credentials
-bantz --doctor         # verify environment
-bantz                  # launch TUI
 ```
 
-**Requirements:** Python 3.11+, Ollama running locally, SQLite (stdlib).
+**Voice pipeline** (all optional — install only what you need):
+```bash
+pip install pvporcupine pyaudio webrtcvad  # wake word + capture
+pip install faster-whisper                  # STT
+# Piper TTS: install binary from https://github.com/rhasspy/piper/releases
+#            put 'piper' in PATH, download a voice model .onnx file
+```
 
-**Optional:** ChromaDB (MemPalace memory), Redis (session store), PortAudio (voice), `xdotool` (desktop automation), `chafa` (image rendering).
+**MemPalace memory**:
+```bash
+pip install mempalace
+```
+
+**Google integrations**:
+```bash
+# Create an OAuth 2.0 client in Google Cloud Console (Desktop app type)
+# Download credentials.json to ~/.local/share/bantz/
+bantz --setup google gmail
+bantz --setup google classroom
+```
+
+**Telegram**:
+```bash
+bantz --setup telegram
+```
 
 ---
 
-## Running Modes
+## Configuration
+
+Create a `.env` file in your working directory (or `~/.local/share/bantz/.env`). Minimum working config:
+
+```env
+BANTZ_OLLAMA_MODEL=llama3.1:8b
+BANTZ_OLLAMA_BASE_URL=http://localhost:11434
+
+# Optional: faster routing via a smaller model
+BANTZ_OLLAMA_ROUTING_MODEL=qwen2.5:3b
+
+# Optional: Gemini fallback when Ollama is unreachable
+BANTZ_GEMINI_ENABLED=true
+BANTZ_GEMINI_API_KEY=your_key_here
+
+# Voice (wake word)
+BANTZ_PORCUPINE_ACCESS_KEY=your_picovoice_key
+
+# Primary language (default Turkish)
+BANTZ_LANGUAGE=tr
+
+# Memory
+BANTZ_MEMPALACE_ENABLED=true
+```
+
+Full reference in `src/bantz/config.py` — every field has a comment.
+
+---
+
+## Setup wizards
 
 ```bash
-bantz                        # Launch interactive TUI
-bantz --once "ls -la"        # Single query, print response, exit
-bantz --daemon               # Background service mode (no TUI)
-bantz --doctor               # Verify all dependencies
-bantz --mood-history         # Print last 24h mood transitions
+bantz --setup profile          # name, timezone, city — stored in SQLite
+bantz --setup places           # named GPS locations (home, office, etc.)
+bantz --setup schedule         # weekly timetable
+bantz --setup google gmail     # Google OAuth for Gmail
+bantz --setup google classroom # Google OAuth for Classroom
+bantz --setup telegram         # Telegram bot token
+bantz --setup systemd          # install + enable systemd user service
+bantz --setup systemd --check  # show service status, PID, memory, uptime
 ```
-
-For persistent background operation, a systemd unit is provided at `deploy/bantz.service`.
 
 ---
 
-## Test Suite
+## Running
 
 ```bash
-pytest                        # Run full suite
-pytest tests/core/            # Core routing and brain tests
-pytest tests/tools/           # Tool-level integration tests
-pytest -q                     # Compact output
+# Interactive TUI (default)
+bantz
+
+# Headless daemon — APScheduler drives all background jobs
+bantz --daemon
+
+# Single query, no TUI
+bantz --once "what's on my calendar today?"
+
+# System health check
+bantz --doctor
+
+# Show running config (secrets masked)
+bantz --config
 ```
 
-3135 tests, 0 failures. Coverage spans intent routing, tool execution, agent loop, memory (MemPalace bridge + onboarding), TUI event bridge, and voice pipeline components.
+**Scheduled job management**:
+```bash
+bantz --jobs                          # list all APScheduler jobs
+bantz --run-job nightly_maintenance   # trigger any job immediately
+bantz --maintenance                   # run maintenance workflow now
+bantz --reflect                       # run reflection now
+bantz --reflections                   # view last 10 reflections
+bantz --overnight-poll                # run one overnight poll cycle
+```
+
+**Systemd service** (recommended for daemon mode):
+```bash
+bantz --setup systemd
+# writes ~/.config/systemd/user/bantz.service
+# enables linger, enables and starts the service
+
+systemctl --user status bantz
+journalctl --user -u bantz -f
+```
 
 ---
 
-## Roadmap
+## Project layout
 
-Active development priorities for v3:
-
-| # | Feature | Layer | Status |
-|---|---------|-------|--------|
-| **#1** | `BrowserTool` — curl + pup + readability pipeline (zero API dependency) | web | In progress |
-| **#2** | `FeedTool` — RSS/Atom feed parser via xmllint, YAML feed registry | web | Planned |
-| **#3** | `ImageTool` — terminal image rendering via chafa, 24h cache | web | Planned |
-| **#4** | `SystemTool` — unified subprocess interface, audit log, safe-mode denylist | system | In progress |
-| **#5** | `GUITool` — pyautogui + xdotool bridge, DRY_RUN mode | system | In progress |
-| **#6** | MemPalace memory — entity graph, temporal KG, ChromaDB vector search, bridge adapter, onboarding | memory | ✅ Done |
-| **#7** | Redis session store — in-flight state, task queue, TUI↔Telegram pub/sub | memory | Planned |
-| **#8** | APScheduler — cron + one-shot tasks, Redis job store, natural language scheduling | scheduler | In progress |
-| **#9** | TUI migration: Textual → Rich Live (diff rendering, native asyncio, mouse scroll) | interface | Planned |
-
-**Build order:** `#4 → #1 → #7 → #6 → #2 → #3 → #5 → #8 → #9`
-
-Issues #1–#8 are tracked with full acceptance criteria, implementation notes, and dependency graphs in `bantz_v3_issues.md`. Issue #9 (TUI migration) is detailed with a complete migration checklist in `bantz_v3_issue_tui_migration.md`.
+```
+src/bantz/
+├── __main__.py          entry point, CLI argument routing
+├── config.py            pydantic-settings, ~70 env vars
+├── cli/
+│   └── setup.py         all setup wizards and --doctor diagnostics
+├── core/
+│   ├── brain.py         central orchestrator
+│   ├── routing_engine.py quick_route + plan-and-solve dispatch
+│   ├── intent.py        CoT LLM routing (cot_route)
+│   ├── finalizer.py     butler persona + hallucination check
+│   ├── memory_injector.py context assembly before LLM call
+│   ├── prompt_builder.py system prompt composition
+│   └── workflow.py      inline multi-tool workflow detection
+├── memory/
+│   ├── bridge.py        MemPalace adapter (replaces 8 old modules)
+│   └── omni_memory.py   parallel hybrid recall orchestrator
+├── agent/
+│   ├── executor.py      plan-and-solve step runner
+│   ├── planner.py       LLM plan generator
+│   ├── job_scheduler.py APScheduler wrapper
+│   ├── affinity_engine.py bonding score + persona tier
+│   ├── ghost_loop.py    wake→capture→STT→dispatch cycle
+│   ├── wake_word.py     Porcupine always-on listener
+│   ├── voice_capture.py WebRTC VAD recording
+│   ├── stt.py           faster-whisper transcription
+│   ├── tts.py           Piper + aplay synthesis
+│   ├── audio_ducker.py  system volume control during speech
+│   ├── ambient.py       environment sound classifier
+│   ├── observer.py      background log analysis
+│   ├── notifier.py      desktop notifications
+│   ├── interventions.py proactive suggestion queue
+│   └── workflows/       nightly maintenance, reflection, overnight poll
+├── data/
+│   ├── layer.py         DataLayer singleton, unified store init
+│   ├── sqlite_store.py  profile, places, schedule, session, KV stores
+│   └── connection_pool.py WAL-mode thread-safe SQLite pool
+├── interface/
+│   └── live_ui.py       Rich Live TUI (4fps, stats + chat)
+├── integrations/
+│   └── telegram_bot.py  Telegram remote access bot
+├── tools/               31 registered tools (shell, gmail, calendar, ...)
+├── llm/
+│   ├── ollama.py        local Ollama client
+│   └── gemini.py        Gemini fallback client
+├── personality/
+│   ├── persona.py       system prompt persona layer
+│   ├── bonding.py       interaction scoring
+│   └── greeting.py      morning briefing generation
+├── auth/                Google OAuth2 PKCE flow
+└── i18n/
+    └── bridge.py        MarianMT translation bridge
+```
 
 ---
 
-## Recent Completed Work
+## Tests
 
-| # | Feature |
-|---|---------|
-| **#354** | MemPalace migration — replaced 8 memory modules (Neo4j graph, vector_store, embeddings, deep_probe, distiller, context_builder, nodes, memory_manager) with unified bridge.py + onboarding.py, removed Docker Neo4j dependency |
-| **#340** | CoT routing rewrite — compact routing hints, planner example contamination fix, turbo/quant model support |
-| **#287** | Voice feedback loop fix + full TUI integration audit |
-| **#286** | Planner: `$REF` variable binding, `SummarizerTool`, Butler lore toasts |
-| **#285** | `OmniMemoryManager` — context bloat control + GraphRAG integration |
-| **#284** | `BANTZ_VOICE_ENABLED` master switch |
-| **#282** | `_is_refusal` thinking-aware detection — prevents false refusals on `<thinking>` content |
-| **#277** | Voice pipeline: Porcupine wake word + Whisper STT + Piper TTS |
-| **#273** | Streaming `<thinking>` events to TUI ThinkingPanel in real time |
-| **#253** | People-Pleaser guard — malformed JSON returns error, no silent chat fallback |
-| **#220** | EventBus → Textual thread bridge (no more `call_from_thread` footguns) |
-| **#183** | Telegram async progress indicators ("Hold the Line" UX) |
+```bash
+pytest                   # full suite
+pytest tests/core/       # core modules only
+pytest --cov=bantz       # coverage report (target: 65%)
+```
+
+48 pre-existing failures in prompt content and routing regex tests — these test specific LLM output strings that drift with model changes. Everything structural (core, data, agent, cli) passes.
 
 ---
 
-## License
+## Dependencies
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Core (always installed):
+- `ollama` — local LLM server (separate binary install, not pip)
+- `httpx` — async HTTP for Ollama and Gemini
+- `pydantic-settings` — config from env
+- `rich` — terminal UI
+- `aioconsole` — async terminal input
+- `apscheduler` + `sqlalchemy` — persistent job scheduling
+- `psutil` — system stats (CPU/RAM/VRAM/DISK)
+- `python-telegram-bot` — Telegram integration
+- `mempalace` — ChromaDB + KG memory stack
 
-<div align="center">
-
-Built by [@miclaldogan](https://github.com/miclaldogan)
-
-</div>
+Optional (install as needed):
+- `pvporcupine`, `pyaudio` — wake word detection
+- `webrtcvad` — voice activity detection
+- `faster-whisper` — local STT
+- `piper` (binary) — local TTS
+- `transformers`, `torch`, `sentencepiece` — MarianMT translation (`pip install -e ".[translation]"`)
+- `pymupdf`, `python-docx` — document reading (`pip install -e ".[docs]"`)
+- `pyautogui`, `pynput` — desktop automation (`pip install -e ".[automation]"`)

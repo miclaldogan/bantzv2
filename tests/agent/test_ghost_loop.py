@@ -598,7 +598,7 @@ class TestDoctorGhostLoop:
 
     def test_doctor_has_ghost_loop_check(self):
         import inspect
-        from bantz.__main__ import _doctor
+        from bantz.cli.setup import _doctor
         src = inspect.getsource(_doctor)
         assert "Ghost Loop" in src
         assert "ghost_loop_enabled" in src

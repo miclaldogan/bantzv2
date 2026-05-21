@@ -120,13 +120,13 @@ class TestWhisperModelCached:
 
     def test_no_cache_dir(self, tmp_path):
         """Returns False when HuggingFace cache doesn't exist."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         with patch("pathlib.Path.home", return_value=tmp_path):
             assert _check_whisper_model_cached("tiny") is False
 
     def test_model_found_in_hf_cache(self, tmp_path):
         """Returns True when matching model dir exists in HF cache."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         hf_dir = tmp_path / ".cache" / "huggingface" / "hub"
         model_dir = hf_dir / "models--Systran--faster-whisper-tiny"
         model_dir.mkdir(parents=True)
@@ -135,7 +135,7 @@ class TestWhisperModelCached:
 
     def test_model_found_in_faster_whisper_cache(self, tmp_path):
         """Returns True when matching dir exists in faster_whisper cache."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         fw_dir = tmp_path / ".cache" / "faster_whisper"
         model_dir = fw_dir / "tiny"
         model_dir.mkdir(parents=True)
@@ -144,7 +144,7 @@ class TestWhisperModelCached:
 
     def test_wrong_model_not_found(self, tmp_path):
         """Returns False when cached model is different size."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         hf_dir = tmp_path / ".cache" / "huggingface" / "hub"
         model_dir = hf_dir / "models--Systran--faster-whisper-base"
         model_dir.mkdir(parents=True)
@@ -153,7 +153,7 @@ class TestWhisperModelCached:
 
     def test_exception_returns_false(self):
         """Returns False on any exception (graceful degradation)."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         with patch("pathlib.Path.home", side_effect=RuntimeError("boom")):
             assert _check_whisper_model_cached("tiny") is False
 
@@ -214,12 +214,12 @@ class TestDoctorVoiceSection:
 
     def test_section_for_voice(self):
         """voice_enabled should map to 'Voice' or 'TTS / Audio' section."""
-        from bantz.__main__ import _section_for
+        from bantz.cli.setup import _section_for
         # voice_enabled is new — it should map to TTS / Audio or Voice
         result = _section_for("voice_enabled")
         assert isinstance(result, str)
 
     def test_check_whisper_model_cached_importable(self):
         """_check_whisper_model_cached should be importable from __main__."""
-        from bantz.__main__ import _check_whisper_model_cached
+        from bantz.cli.setup import _check_whisper_model_cached
         assert callable(_check_whisper_model_cached)

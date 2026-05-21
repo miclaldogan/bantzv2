@@ -416,7 +416,7 @@ class TestEnvExample:
 
 class TestDoctorSection:
     def test_section_for_wake_word(self):
-        from bantz.__main__ import _section_for
+        from bantz.cli.setup import _section_for
         assert _section_for("wake_word_enabled") == "Wake Word"
         assert _section_for("wake_word_sensitivity") == "Wake Word"
         assert _section_for("picovoice_access_key") == "Wake Word"

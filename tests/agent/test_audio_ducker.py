@@ -483,7 +483,7 @@ class TestEnvExample:
 
 class TestDoctorSection:
     def test_section_for_audio_duck(self):
-        from bantz.__main__ import _section_for
+        from bantz.cli.setup import _section_for
         assert _section_for("audio_duck_enabled") == "Audio Ducking"
         assert _section_for("audio_duck_pct") == "Audio Ducking"
 
