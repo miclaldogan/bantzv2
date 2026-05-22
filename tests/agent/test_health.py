@@ -732,7 +732,8 @@ class TestHealthEventBus:
 
     def test_no_tui_telemetry_import(self):
         """health.py must NOT import from bantz.interface.tui."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import health
         tree = ast.parse(inspect.getsource(health))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
@@ -743,7 +744,8 @@ class TestHealthEventBus:
 
     def test_no_brain_import(self):
         """health.py must NOT import from bantz.core.brain."""
-        import ast, inspect
+        import ast
+        import inspect
         from bantz.agent import health
         tree = ast.parse(inspect.getsource(health))
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
