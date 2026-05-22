@@ -53,7 +53,6 @@ class WorkflowRunner:
         t0 = time.monotonic()
         ctx = self._build_context(workflow, inputs or {})
         results: list[StepResult] = []
-        step_map = {s.name: s for s in workflow.steps}
         completed: set[str] = set()
         jump_target: str | None = None
 

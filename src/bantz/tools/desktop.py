@@ -378,7 +378,6 @@ class DesktopTool(BaseTool):
             )
 
         cx, cy = element["center"]
-        score = element.get("score", 0.0)
 
         # Perform the action
         if interact_action in ("click", "left_click"):
