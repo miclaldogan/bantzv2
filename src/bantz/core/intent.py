@@ -423,7 +423,7 @@ async def cot_route(
         log.info("CoT parsed: route=%s tool=%s conf=%.2f",
                  plan.get("route"), plan.get("tool_name"), plan.get("confidence", 0))
 
-        if plan.get("confidence", 0.8) < confidence_threshold:
+        if plan.get("confidence", 0.5) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])
             return None, None
 
@@ -451,7 +451,7 @@ async def cot_route(
                     log.info("CoT fallback parsed: route=%s tool=%s conf=%.2f",
                              plan.get("route"), plan.get("tool_name"),
                              plan.get("confidence", 0))
-                    if plan.get("confidence", 0.8) >= confidence_threshold:
+                    if plan.get("confidence", 0.5) >= confidence_threshold:
                         # Fix routing_model for subsequent calls this session
                         ollama.routing_model = ollama.model
                         return plan, None
