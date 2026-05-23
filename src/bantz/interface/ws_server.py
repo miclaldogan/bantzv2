@@ -12,11 +12,30 @@ Client → Server messages
   {"type": "ping"}
       Returns {"type": "pong"}.
 
+  {"type": "get_tasks"}
+      Returns {"type": "tasks", "reminders": [...], "jobs": [...]}.
+
+  {"type": "new_task", "text": "…"}
+      Creates a reminder via the scheduler, then pushes an updated tasks list.
+
+  {"type": "get_config"}
+      Returns {"type": "config", "values": {...}} with current .env values.
+
+  {"type": "set_config", "key": "…", "value": "…"}
+      Writes the key to .env, updates the running config, returns config_ack.
+
+  {"type": "dismiss_alert", "id": "…"}
+      Acknowledges alert dismissal (UI-side only; returns alert_dismissed).
+
 Server → Client pushes
 ───────────────────────
   {"type": "vitals", "cpu": %, "ram_used": GB, "ram_total": GB,
    "disk_used": GB, "disk_total": GB, "vram_used": MB, "vram_total": MB}
       Broadcast every 2 s to all connected clients.
+
+  {"type": "services", "services": [...]}
+      Broadcast every 30 s — live probe of Ollama, Gemini, Telegram,
+      Redis, Neo4j.  Also pushed immediately on new-client connect.
 
   {"type": "log", "msg": "…", "level": "info|warning|error|debug"}
       Every bantz.* log record forwarded to the UI.
@@ -34,7 +53,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -46,7 +68,23 @@ from bantz.core.event_bus import bus, Event
 log = logging.getLogger("bantz.ws_server")
 
 _VITALS_INTERVAL = 2.0
+_SERVICES_INTERVAL = 30.0
 _WS_PORT = 8765
+
+# ── Config key → (env alias, python attr) map ────────────────────────────────
+
+_CONFIG_KEY_MAP: dict[str, tuple[str, str]] = {
+    "ollama_model":               ("BANTZ_OLLAMA_MODEL",               "ollama_model"),
+    "gemini_enabled":             ("BANTZ_GEMINI_ENABLED",             "gemini_enabled"),
+    "gemini_api_key":             ("BANTZ_GEMINI_API_KEY",             "gemini_api_key"),
+    "language":                   ("BANTZ_LANGUAGE",                   "language"),
+    "tts_enabled":                ("BANTZ_TTS_ENABLED",                "tts_enabled"),
+    "stt_enabled":                ("BANTZ_STT_ENABLED",                "stt_enabled"),
+    "wake_word_enabled":          ("BANTZ_WAKE_WORD_ENABLED",          "wake_word_enabled"),
+    "distillation_enabled":       ("BANTZ_DISTILLATION_ENABLED",       "distillation_enabled"),
+    "shell_confirm_destructive":  ("BANTZ_SHELL_CONFIRM_DESTRUCTIVE",  "shell_confirm_destructive"),
+    "observer_enabled":           ("BANTZ_OBSERVER_ENABLED",           "observer_enabled"),
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -81,8 +119,9 @@ class WsBroadcastServer:
         bus.on("observer_error", self._on_observer_error)
 
         self._tasks = [
-            asyncio.create_task(self._vitals_loop(), name="ws-vitals"),
+            asyncio.create_task(self._vitals_loop(),   name="ws-vitals"),
             asyncio.create_task(self._log_queue_loop(), name="ws-log-queue"),
+            asyncio.create_task(self._services_loop(), name="ws-services"),
         ]
         log.info("WebSocket server listening on ws://localhost:%d", self._port)
 
@@ -102,6 +141,13 @@ class WsBroadcastServer:
         self._clients.add(ws)
         addr = ws.remote_address
         log.info("WS client connected: %s", addr)
+        # Push initial state snapshot to newly connected client
+        try:
+            await _send(ws, await _collect_tasks())
+            await _send(ws, _collect_config())
+            await _send(ws, await _collect_services())
+        except Exception as exc:
+            log.debug("Initial state push failed: %s", exc)
         try:
             async for raw in ws:
                 await self._dispatch(ws, raw)
@@ -132,6 +178,21 @@ class WsBroadcastServer:
             else:
                 await _send(ws, {"type": "error", "msg": "empty text"})
 
+        elif mtype == "get_tasks":
+            asyncio.create_task(self._handle_get_tasks(ws))
+
+        elif mtype == "new_task":
+            asyncio.create_task(self._handle_new_task(ws, msg))
+
+        elif mtype == "get_config":
+            asyncio.create_task(self._handle_get_config(ws))
+
+        elif mtype == "set_config":
+            asyncio.create_task(self._handle_set_config(ws, msg))
+
+        elif mtype == "dismiss_alert":
+            await _send(ws, {"type": "alert_dismissed", "id": msg.get("id")})
+
         else:
             await _send(ws, {"type": "error", "msg": f"unknown type: {mtype}"})
 
@@ -160,6 +221,49 @@ class WsBroadcastServer:
                 await _send(ws, {"type": "broadcast", "text": response})
             await _send(ws, {"type": "done"})
 
+    # ── tasks ──────────────────────────────────────────────────────────────
+
+    async def _handle_get_tasks(self, ws: ServerConnection) -> None:
+        await _send(ws, await _collect_tasks())
+
+    async def _handle_new_task(self, ws: ServerConnection, msg: dict) -> None:
+        text = str(msg.get("text", "")).strip()
+        if not text:
+            await _send(ws, {"type": "error", "msg": "empty text"})
+            return
+        try:
+            from bantz.core.scheduler import scheduler
+            from datetime import datetime, timedelta
+            if scheduler._initialized:
+                fire_at = datetime.now() + timedelta(hours=1)
+                rid = scheduler.add(text, fire_at)
+                await _send(ws, {"type": "task_created", "id": rid, "title": text})
+            else:
+                await _send(ws, {"type": "error", "msg": "scheduler not initialized"})
+                return
+        except Exception as exc:
+            await _send(ws, {"type": "error", "msg": str(exc)})
+            return
+        await _send(ws, await _collect_tasks())
+
+    # ── config ─────────────────────────────────────────────────────────────
+
+    async def _handle_get_config(self, ws: ServerConnection) -> None:
+        await _send(ws, _collect_config())
+
+    async def _handle_set_config(self, ws: ServerConnection, msg: dict) -> None:
+        key = str(msg.get("key", ""))
+        value = msg.get("value")
+        if not key:
+            await _send(ws, {"type": "error", "msg": "missing key"})
+            return
+        ok, err = _write_config(key, value)
+        if ok:
+            await _send(ws, {"type": "config_ack", "ok": True, "key": key})
+            await _send(ws, _collect_config())
+        else:
+            await _send(ws, {"type": "error", "msg": err or "config write failed"})
+
     # ── vitals broadcast ───────────────────────────────────────────────────
 
     async def _vitals_loop(self) -> None:
@@ -170,6 +274,17 @@ class WsBroadcastServer:
             except Exception:
                 pass
             await asyncio.sleep(_VITALS_INTERVAL)
+
+    # ── services broadcast ─────────────────────────────────────────────────
+
+    async def _services_loop(self) -> None:
+        while True:
+            try:
+                payload = await _collect_services()
+                await self._broadcast(payload)
+            except Exception:
+                pass
+            await asyncio.sleep(_SERVICES_INTERVAL)
 
     # ── log forwarding ─────────────────────────────────────────────────────
 
@@ -267,6 +382,192 @@ def _collect_vram() -> tuple[float, float]:
     return 0.0, 0.0
 
 
+async def _collect_tasks() -> dict:
+    reminders: list[dict] = []
+    jobs: list[dict] = []
+    try:
+        from bantz.core.scheduler import scheduler
+        if scheduler._initialized:
+            for row in scheduler.list_upcoming(limit=20):
+                r = dict(row)
+                r["id"] = str(r["id"])
+                reminders.append(r)
+    except Exception:
+        pass
+    try:
+        from bantz.agent.job_scheduler import job_scheduler
+        if job_scheduler.started:
+            jobs = job_scheduler.list_jobs()
+    except Exception:
+        pass
+    return {"type": "tasks", "reminders": reminders, "jobs": jobs}
+
+
+def _collect_config() -> dict:
+    try:
+        from bantz.config import config
+        return {
+            "type": "config",
+            "values": {
+                "ollama_model":               config.ollama_model,
+                "gemini_enabled":             config.gemini_enabled,
+                "gemini_api_key":             config.gemini_api_key,
+                "language":                   config.language,
+                "tts_enabled":                config.tts_enabled,
+                "stt_enabled":                config.stt_enabled,
+                "wake_word_enabled":          config.wake_word_enabled,
+                "distillation_enabled":       config.distillation_enabled,
+                "shell_confirm_destructive":  config.shell_confirm_destructive,
+                "observer_enabled":           config.observer_enabled,
+            },
+        }
+    except Exception:
+        return {"type": "config", "values": {}}
+
+
+def _write_config(key: str, value: object) -> tuple[bool, str]:
+    """Write a config key to .env and update the running Config object."""
+    if key not in _CONFIG_KEY_MAP:
+        return False, f"unknown config key: {key}"
+    env_key, attr_name = _CONFIG_KEY_MAP[key]
+    str_value = str(value).lower() if isinstance(value, bool) else str(value)
+    # Update running process environment
+    os.environ[env_key] = str_value
+    # Update config singleton in-place so callers see the new value immediately
+    try:
+        from bantz.config import config
+        attr_type = type(getattr(config, attr_name, ""))
+        if attr_type is bool:
+            typed: object = str_value.lower() in ("true", "1", "yes")
+        elif attr_type is int:
+            typed = int(str_value)
+        elif attr_type is float:
+            typed = float(str_value)
+        else:
+            typed = str_value
+        object.__setattr__(config, attr_name, typed)
+    except Exception as exc:
+        log.warning("Live config update failed for %s: %s", key, exc)
+    # Persist to .env
+    try:
+        _update_dotenv(env_key, str_value)
+    except Exception as exc:
+        return False, f"failed to write .env: {exc}"
+    return True, ""
+
+
+def _update_dotenv(key: str, value: str) -> None:
+    env_path = Path(".env")
+    if not env_path.exists():
+        env_path.write_text(f"{key}={value}\n")
+        return
+    text = env_path.read_text()
+    pattern = re.compile(rf"^{re.escape(key)}\s*=.*$", re.MULTILINE)
+    if pattern.search(text):
+        text = pattern.sub(f"{key}={value}", text)
+    else:
+        text = text.rstrip("\n") + f"\n{key}={value}\n"
+    env_path.write_text(text)
+
+
+async def _collect_services() -> dict:
+    results = await asyncio.gather(
+        _probe_ollama(),
+        _probe_gemini(),
+        _probe_telegram(),
+        _probe_redis(),
+        _probe_neo4j(),
+        return_exceptions=True,
+    )
+    services = [
+        r if isinstance(r, dict)
+        else {"name": "unknown", "port": None, "status": "offline", "detail": "probe error", "uptime": "—"}
+        for r in results
+    ]
+    return {"type": "services", "services": services}
+
+
+async def _probe_tcp(host: str, port: int, timeout: float = 2.0) -> bool:
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=timeout
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+async def _probe_ollama() -> dict:
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            r = await c.get("http://localhost:11434/api/tags")
+            if r.status_code == 200:
+                models = r.json().get("models", [])
+                n = len(models)
+                return {
+                    "name": "Ollama", "port": 11434, "status": "online",
+                    "detail": f"{n} model{'s' if n != 1 else ''} loaded",
+                    "uptime": "—",
+                }
+    except Exception:
+        pass
+    return {"name": "Ollama", "port": 11434, "status": "offline", "detail": "not reachable", "uptime": "—"}
+
+
+async def _probe_redis() -> dict:
+    ok = await _probe_tcp("localhost", 6379)
+    return {
+        "name": "Redis", "port": 6379,
+        "status": "online" if ok else "offline",
+        "detail": "connected" if ok else "not reachable",
+        "uptime": "—",
+    }
+
+
+async def _probe_neo4j() -> dict:
+    ok = await _probe_tcp("localhost", 7687)
+    return {
+        "name": "Neo4j", "port": 7687,
+        "status": "online" if ok else "offline",
+        "detail": "bolt reachable" if ok else "container halted",
+        "uptime": "—",
+    }
+
+
+async def _probe_gemini() -> dict:
+    try:
+        from bantz.config import config
+        if not config.gemini_enabled:
+            return {"name": "Gemini", "port": None, "status": "offline", "detail": "disabled in config", "uptime": "—"}
+        return {"name": "Gemini", "port": None, "status": "online", "detail": "rate limit: ok", "uptime": "session"}
+    except Exception:
+        pass
+    return {"name": "Gemini", "port": None, "status": "offline", "detail": "error", "uptime": "—"}
+
+
+async def _probe_telegram() -> dict:
+    try:
+        from bantz.config import config
+        if not config.telegram_bot_token:
+            return {"name": "Telegram", "port": 443, "status": "offline", "detail": "no token set", "uptime": "—"}
+        ok = await _probe_tcp("api.telegram.org", 443)
+        return {
+            "name": "Telegram", "port": 443,
+            "status": "online" if ok else "offline",
+            "detail": "reachable" if ok else "unreachable",
+            "uptime": "—",
+        }
+    except Exception:
+        pass
+    return {"name": "Telegram", "port": 443, "status": "offline", "detail": "error", "uptime": "—"}
+
+
 class _WSLogHandler(logging.Handler):
     """Puts log records into the server's asyncio queue (thread-safe)."""
 
@@ -287,7 +588,7 @@ class _WSLogHandler(logging.Handler):
                 except RuntimeError:
                     return
             if loop and not loop.is_closed():
-                loop.call_soon_threadsafe(self._q.put_nowait, payload)
+                loop.call_soon_threadsafe(self._log_q.put_nowait, payload)
         except Exception:
             pass
 

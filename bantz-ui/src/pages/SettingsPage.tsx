@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
-import { Eye, EyeOff, Check } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Eye, EyeOff, Check, Save } from "lucide-react";
 import { PageTitle, PanelHeader } from "../components/primitives";
+import { useAppStore } from "../store/useAppStore";
 
 const OLLAMA_MODELS = [
   "llama3.1:70b",
@@ -22,46 +23,94 @@ const ACCENTS = [
 interface SettingsState {
   ollamaModel: string;
   geminiKey: string;
+  geminiEnabled: boolean;
   ctx: string;
   wakeWord: boolean;
   stt: boolean;
   tts: boolean;
-  voice: string;
   lang: "TR" | "EN";
-  dateFmt: "DDMM" | "MMDD" | "ISO";
-  bonding: number;
+  distillation: boolean;
+  shellConfirm: boolean;
+  observerEnabled: boolean;
   accent: string;
   nightShift: boolean;
   crt: boolean;
   verbosity: "silent" | "standard" | "insufferable";
   autonomy: "low" | "med" | "high" | "abs";
   mood: "tolerant" | "impatient" | "resigned";
+  bonding: number;
 }
 
 const DEFAULTS: SettingsState = {
   ollamaModel: "llama3.1:70b",
-  geminiKey: "AIzaSy_BantzExampleKey_42",
+  geminiKey: "",
+  geminiEnabled: false,
   ctx: "32k",
-  wakeWord: true,
-  stt: true,
-  tts: true,
-  voice: "Aristocratic",
+  wakeWord: false,
+  stt: false,
+  tts: false,
   lang: "EN",
-  dateFmt: "DDMM",
-  bonding: 42,
+  distillation: true,
+  shellConfirm: true,
+  observerEnabled: false,
   accent: "ember",
   nightShift: false,
   crt: true,
   verbosity: "standard",
   autonomy: "high",
   mood: "tolerant",
+  bonding: 42,
 };
 
 export function SettingsPage() {
-  const [s, setS] = useState<SettingsState>(DEFAULTS);
+  const configValues = useAppStore((s) => s.configValues);
+  const wsSend       = useAppStore((s) => s.wsSend);
+
+  const [s, setS]         = useState<SettingsState>(DEFAULTS);
   const [showKey, setShowKey] = useState(false);
+  const [saved, setSaved] = useState(false);
+
   const set = <K extends keyof SettingsState>(k: K, v: SettingsState[K]) =>
     setS((prev) => ({ ...prev, [k]: v }));
+
+  // Populate from backend config when it arrives
+  useEffect(() => {
+    if (!configValues) return;
+    setS((prev) => ({
+      ...prev,
+      ollamaModel:    configValues.ollama_model     || prev.ollamaModel,
+      geminiKey:      configValues.gemini_api_key   || prev.geminiKey,
+      geminiEnabled:  configValues.gemini_enabled   ?? prev.geminiEnabled,
+      wakeWord:       configValues.wake_word_enabled ?? prev.wakeWord,
+      stt:            configValues.stt_enabled       ?? prev.stt,
+      tts:            configValues.tts_enabled       ?? prev.tts,
+      lang:           configValues.language?.toUpperCase() === "TR" ? "TR" : "EN",
+      distillation:   configValues.distillation_enabled  ?? prev.distillation,
+      shellConfirm:   configValues.shell_confirm_destructive ?? prev.shellConfirm,
+      observerEnabled: configValues.observer_enabled ?? prev.observerEnabled,
+    }));
+  }, [configValues]);
+
+  function applyChanges() {
+    if (!wsSend) return;
+    const changes: [string, unknown][] = [
+      ["ollama_model",               s.ollamaModel],
+      ["gemini_enabled",             s.geminiEnabled],
+      ["gemini_api_key",             s.geminiKey],
+      ["language",                   s.lang.toLowerCase()],
+      ["tts_enabled",                s.tts],
+      ["stt_enabled",                s.stt],
+      ["wake_word_enabled",          s.wakeWord],
+      ["distillation_enabled",       s.distillation],
+      ["shell_confirm_destructive",  s.shellConfirm],
+      ["observer_enabled",           s.observerEnabled],
+    ];
+    for (const [key, value] of changes) {
+      wsSend({ type: "set_config", key, value });
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -73,16 +122,25 @@ export function SettingsPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setS(DEFAULTS)}
+              onClick={() => { setS(DEFAULTS); }}
               className="border border-obsidian-500 bg-obsidian-800 px-3 py-2 font-ui text-[10px] font-bold uppercase tracking-widest text-obsidian-200 transition-colors hover:border-obsidian-300 hover:text-fg-primary"
             >
               Reset
             </button>
             <button
               type="button"
-              className="border border-ember-500 bg-ember-500/10 px-4 py-2 font-ui text-[10px] font-bold uppercase tracking-widest text-ember-500 transition-all hover:bg-ember-500 hover:text-obsidian-900"
+              onClick={applyChanges}
+              disabled={!wsSend}
+              className={`flex items-center gap-2 border px-4 py-2 font-ui text-[10px] font-bold uppercase tracking-widest transition-all ${
+                saved
+                  ? "border-[#2E7D32] bg-[#2E7D32]/10 text-[#2E7D32]"
+                  : wsSend
+                    ? "border-ember-500 bg-ember-500/10 text-ember-500 hover:bg-ember-500 hover:text-obsidian-900"
+                    : "cursor-not-allowed border-obsidian-500 text-obsidian-400"
+              }`}
             >
-              Apply Changes
+              <Save size={11} strokeWidth={1.5} />
+              {saved ? "Saved" : wsSend ? "Apply Changes" : "Backend Offline"}
             </button>
           </div>
         }
@@ -118,6 +176,9 @@ export function SettingsPage() {
               </button>
             </div>
           </Row>
+          <Row label="Gemini Enabled" hint="Enable remote fallback">
+            <Switch on={s.geminiEnabled} onChange={(v) => set("geminiEnabled", v)} />
+          </Row>
           <Row label="Context Window" hint="Tokens">
             <select
               value={s.ctx}
@@ -140,17 +201,6 @@ export function SettingsPage() {
           <Row label="Text-to-Speech" hint="Piper · British male">
             <Switch on={s.tts} onChange={(v) => set("tts", v)} />
           </Row>
-          <Row label="Voice" hint="TTS persona">
-            <select
-              value={s.voice}
-              onChange={(e) => set("voice", e.target.value)}
-              className="w-56 border border-obsidian-500 bg-obsidian-850 px-3 py-2 font-terminal text-[12px] text-ember-300 focus:border-ember-500 focus:outline-none"
-            >
-              {["Aristocratic", "Resigned", "Crisp", "Warmly Disdainful"].map((v) => (
-                <option key={v}>{v}</option>
-              ))}
-            </select>
-          </Row>
         </Section>
 
         {/* LOCALIZATION */}
@@ -162,17 +212,6 @@ export function SettingsPage() {
               options={[
                 { k: "TR", label: "Türkçe" },
                 { k: "EN", label: "English" },
-              ]}
-            />
-          </Row>
-          <Row label="Date Format" hint="Display">
-            <Segmented
-              value={s.dateFmt}
-              onChange={(v) => set("dateFmt", v as SettingsState["dateFmt"])}
-              options={[
-                { k: "DDMM", label: "DD/MM" },
-                { k: "MMDD", label: "MM/DD" },
-                { k: "ISO", label: "ISO" },
               ]}
             />
           </Row>
@@ -199,9 +238,7 @@ export function SettingsPage() {
                     key={i}
                     className={`h-3 flex-1 ${
                       filled
-                        ? intense
-                          ? "bg-gold-300 shadow-gold"
-                          : "bg-gold-500"
+                        ? intense ? "bg-gold-300 shadow-gold" : "bg-gold-500"
                         : "bg-obsidian-700"
                     }`}
                   />
@@ -213,11 +250,6 @@ export function SettingsPage() {
               <span>TRUSTED</span>
               <span>FAMILIAR</span>
             </div>
-            <p className="mt-3 border-l-2 border-gold-500/60 pl-3 font-terminal text-[12px] italic leading-relaxed text-obsidian-200">
-              "I have tolerated your presence for 14 days, 6 hours. You are progressing from{" "}
-              <span className="text-fg-primary">stranger</span> to{" "}
-              <span className="text-gold-400">acceptable acquaintance</span>. Do not rush it."
-            </p>
           </div>
         </Section>
 
@@ -257,9 +289,9 @@ export function SettingsPage() {
               value={s.verbosity}
               onChange={(v) => set("verbosity", v as SettingsState["verbosity"])}
               options={[
-                { k: "silent", label: "Silent" },
-                { k: "standard", label: "Standard" },
-                { k: "insufferable", label: "Insufferable" },
+                { k: "silent",        label: "Silent" },
+                { k: "standard",      label: "Standard" },
+                { k: "insufferable",  label: "Insufferable" },
               ]}
             />
           </Row>
@@ -268,10 +300,10 @@ export function SettingsPage() {
               value={s.autonomy}
               onChange={(v) => set("autonomy", v as SettingsState["autonomy"])}
               options={[
-                { k: "low", label: "Low" },
-                { k: "med", label: "Medium" },
+                { k: "low",  label: "Low" },
+                { k: "med",  label: "Medium" },
                 { k: "high", label: "High" },
-                { k: "abs", label: "Absolute" },
+                { k: "abs",  label: "Absolute" },
               ]}
             />
           </Row>
@@ -280,11 +312,20 @@ export function SettingsPage() {
               value={s.mood}
               onChange={(v) => set("mood", v as SettingsState["mood"])}
               options={[
-                { k: "tolerant", label: "Tolerant" },
+                { k: "tolerant",  label: "Tolerant" },
                 { k: "impatient", label: "Impatient" },
-                { k: "resigned", label: "Resigned" },
+                { k: "resigned",  label: "Resigned" },
               ]}
             />
+          </Row>
+          <Row label="Session Distillation" hint="Summarise conversations">
+            <Switch on={s.distillation} onChange={(v) => set("distillation", v)} />
+          </Row>
+          <Row label="Shell Confirmation" hint="Confirm destructive commands">
+            <Switch on={s.shellConfirm} onChange={(v) => set("shellConfirm", v)} />
+          </Row>
+          <Row label="Background Observer" hint="Monitor screen activity">
+            <Switch on={s.observerEnabled} onChange={(v) => set("observerEnabled", v)} />
           </Row>
         </Section>
       </div>

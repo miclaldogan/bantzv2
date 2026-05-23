@@ -21,12 +21,17 @@ export interface VitalSample {
   vram_total: number; // MB
 }
 
+export type TaskPriority = "critical" | "high" | "medium" | "low";
+export type TaskStatus   = "active" | "queued" | "done";
+
 export interface Task {
   id: string;
-  label: string;
+  title: string;
   detail: string;
-  status: "active" | "queued" | "done";
-  since: string;
+  status: TaskStatus;
+  eta: string;
+  priority: TaskPriority;
+  progress: number;
 }
 
 export type LogSeverity = "INFO" | "WARN" | "ERROR" | "CRITICAL";
@@ -54,6 +59,29 @@ export interface AlertItem {
   source: string;
 }
 
+export type ServiceStatus = "online" | "degraded" | "offline";
+
+export interface ServiceItem {
+  name: string;
+  port: number | null;
+  status: ServiceStatus;
+  uptime: string;
+  detail: string;
+}
+
+export interface ConfigValues {
+  ollama_model: string;
+  gemini_enabled: boolean;
+  gemini_api_key: string;
+  language: string;
+  tts_enabled: boolean;
+  stt_enabled: boolean;
+  wake_word_enabled: boolean;
+  distillation_enabled: boolean;
+  shell_confirm_destructive: boolean;
+  observer_enabled: boolean;
+}
+
 interface AppState {
   chat: ChatTurn[];
   vitals: VitalSample[];
@@ -61,6 +89,9 @@ interface AppState {
   streamingText: string | null;
   logs: LogEntry[];
   alerts: AlertItem[];
+  services: ServiceItem[];
+  configValues: ConfigValues | null;
+  wsSend: ((msg: Record<string, unknown>) => boolean) | null;
 
   pushChat: (turn: Omit<ChatTurn, "id" | "ts"> & Partial<Pick<ChatTurn, "ts">>) => void;
   pushVital: (sample: VitalSample) => void;
@@ -70,6 +101,9 @@ interface AppState {
   pushAlert: (alert: Omit<AlertItem, "id">) => void;
   dismissAlert: (id: string) => void;
   dismissAllAlerts: () => void;
+  setServices: (services: ServiceItem[]) => void;
+  setConfigValues: (cv: ConfigValues) => void;
+  setWsSend: (fn: ((msg: Record<string, unknown>) => boolean) | null) => void;
 }
 
 let _id = 0;
@@ -88,16 +122,22 @@ function seedVitals(): VitalSample[] {
       mem: 38 + Math.round(Math.random() * 4),
       disk: 91,
       net: 120 + Math.round(Math.random() * 240),
-      ram_used: 0,
-      ram_total: 0,
-      disk_used: 0,
-      disk_total: 0,
-      vram_used: 0,
-      vram_total: 0,
+      ram_used: 0, ram_total: 0,
+      disk_used: 0, disk_total: 0,
+      vram_used: 0, vram_total: 0,
     });
   }
   return out;
 }
+
+const SEED_TASKS: Task[] = [
+  { id: "monitor-disk",  title: "Monitor disk usage",         detail: "91% → alerting at 95%",       status: "active", eta: "watching",    priority: "high",   progress: 62 },
+  { id: "email-triage",  title: "Email triage",               detail: "3 flagged for your attention", status: "active", eta: "continuous",  priority: "medium", progress: 28 },
+  { id: "package-watch", title: "Package watch",              detail: "Tracking 2 deliveries",        status: "active", eta: "Thu delivery",priority: "low",    progress: 45 },
+  { id: "weekly-report", title: "Weekly report compilation",  detail: "Scheduled · 18:00",            status: "queued", eta: "18:00",       priority: "high",   progress: 0  },
+  { id: "cron-audit",    title: "Audit recurring cron jobs",  detail: "backup.sh — 14 misses",        status: "queued", eta: "this evening",priority: "critical", progress: 0 },
+  { id: "schedule-reorg",title: "Schedule reorganisation",    detail: "3 conflicts resolved",         status: "done",   eta: "completed 1d",priority: "medium", progress: 100 },
+];
 
 const SEED_LOGS: Omit<LogEntry, "id">[] = (
   [
@@ -153,6 +193,14 @@ const SEED_ALERTS: AlertItem[] = [
   },
 ];
 
+const SEED_SERVICES: ServiceItem[] = [
+  { name: "Ollama",   port: 11434, status: "offline", uptime: "—", detail: "awaiting probe" },
+  { name: "Gemini",   port: null,  status: "offline", uptime: "—", detail: "awaiting probe" },
+  { name: "Telegram", port: 443,   status: "offline", uptime: "—", detail: "awaiting probe" },
+  { name: "Redis",    port: 6379,  status: "offline", uptime: "—", detail: "awaiting probe" },
+  { name: "Neo4j",    port: 7687,  status: "offline", uptime: "—", detail: "awaiting probe" },
+];
+
 export const useAppStore = create<AppState>((set) => ({
   chat: [
     {
@@ -168,17 +216,14 @@ export const useAppStore = create<AppState>((set) => ({
       ts: Date.now() - 2000,
     },
   ],
-  vitals: seedVitals(),
-  tasks: [
-    { id: "monitor-disk",  label: "Monitor disk usage",          detail: "91% → alerting at 95%",         status: "active", since: "2h 14m" },
-    { id: "email-triage",  label: "Email triage",                detail: "3 flagged for your attention",   status: "active", since: "44m" },
-    { id: "package-watch", label: "Package watch",               detail: "Tracking 2 deliveries",          status: "active", since: "6h 02m" },
-    { id: "weekly-report", label: "Weekly report compilation",   detail: "Scheduled · 18:00",              status: "queued", since: "—" },
-    { id: "schedule-reorg",label: "Schedule reorganisation",     detail: "3 conflicts resolved",           status: "done",   since: "1d 4h" },
-  ],
+  vitals:       seedVitals(),
+  tasks:        SEED_TASKS,
   streamingText: null,
-  logs: SEED_LOGS.map((l) => ({ ...l, id: nid() })),
-  alerts: SEED_ALERTS,
+  logs:         SEED_LOGS.map((l) => ({ ...l, id: nid() })),
+  alerts:       SEED_ALERTS,
+  services:     SEED_SERVICES,
+  configValues: null,
+  wsSend:       null,
 
   pushChat: (turn) =>
     set((s) => ({
@@ -206,4 +251,10 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({ alerts: s.alerts.filter((a) => a.id !== id) })),
 
   dismissAllAlerts: () => set({ alerts: [] }),
+
+  setServices: (services) => set({ services }),
+
+  setConfigValues: (cv) => set({ configValues: cv }),
+
+  setWsSend: (fn) => set({ wsSend: fn }),
 }));

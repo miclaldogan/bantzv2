@@ -9,7 +9,7 @@ import { LogsPage } from "./pages/LogsPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useWebSocket } from "./hooks/useWebSocket";
-import { useAppStore } from "./store/useAppStore";
+import { useAppStore, type ConfigValues, type ServiceItem, type Task } from "./store/useAppStore";
 
 async function getWindow() {
   try {
@@ -27,15 +27,117 @@ const LEVEL_MAP: Record<string, "INFO" | "WARN" | "ERROR" | "CRITICAL"> = {
   debug: "INFO", info: "INFO", warning: "WARN", error: "ERROR", critical: "CRITICAL",
 };
 
+// ── Backend data mappers ──────────────────────────────────────────────────
+
+interface BackendReminder {
+  id: string;
+  title: string;
+  fire_at: string;
+  repeat: string;
+  fired: number;
+  snoozed_until: string | null;
+  trigger_place: string | null;
+}
+
+interface BackendJob {
+  id: string;
+  name: string;
+  next_run: string;
+  trigger: string;
+}
+
+function mapBackendTasks(reminders: BackendReminder[], jobs: BackendJob[]): Task[] {
+  const now = Date.now();
+  const result: Task[] = [];
+
+  // System jobs from APScheduler
+  for (const job of jobs) {
+    const nextTs = job.next_run === "paused" ? null : new Date(job.next_run).getTime();
+    let eta = "paused";
+    if (nextTs) {
+      const diff = nextTs - now;
+      if (diff > 0) {
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        eta = h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+      } else {
+        eta = "overdue";
+      }
+    }
+    result.push({
+      id: `job-${job.id}`,
+      title: job.name,
+      detail: job.trigger,
+      status: "active",
+      eta,
+      priority: "low",
+      progress: 0,
+    });
+  }
+
+  // User reminders
+  for (const r of reminders) {
+    const fireTs = r.fire_at ? new Date(r.fire_at).getTime() : null;
+    const isRecurring = r.repeat && r.repeat !== "none";
+
+    let status: Task["status"];
+    if (r.fired) {
+      status = "done";
+    } else if (isRecurring) {
+      status = "active";
+    } else {
+      status = "queued";
+    }
+
+    let eta = "—";
+    if (fireTs && !r.fired) {
+      const diff = fireTs - now;
+      if (diff > 0) {
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        eta = h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+      } else {
+        eta = isRecurring ? r.repeat : "overdue";
+      }
+    } else if (isRecurring) {
+      eta = r.repeat;
+    }
+
+    let detail = "";
+    if (r.trigger_place) detail = `location: ${r.trigger_place}`;
+    else if (r.repeat !== "none") detail = `repeats: ${r.repeat}`;
+    else detail = "one-time reminder";
+
+    result.push({
+      id: `rem-${r.id}`,
+      title: r.title,
+      detail,
+      status,
+      eta,
+      priority: "medium",
+      progress: 0,
+    });
+  }
+
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function App() {
   const [active, setActive] = useState<string>("chat");
   const [clock, setClock] = useState(() => fmtClock(new Date()));
 
-  const pushChat        = useAppStore((s) => s.pushChat);
-  const pushVital       = useAppStore((s) => s.pushVital);
+  const pushChat         = useAppStore((s) => s.pushChat);
+  const pushVital        = useAppStore((s) => s.pushVital);
   const setStreamingText = useAppStore((s) => s.setStreamingText);
-  const pushLog         = useAppStore((s) => s.pushLog);
-  const pushAlert       = useAppStore((s) => s.pushAlert);
+  const pushLog          = useAppStore((s) => s.pushLog);
+  const pushAlert        = useAppStore((s) => s.pushAlert);
+  const setTasks         = useAppStore((s) => s.setTasks);
+  const setServices      = useAppStore((s) => s.setServices);
+  const setConfigValues  = useAppStore((s) => s.setConfigValues);
+  const setWsSend        = useAppStore((s) => s.setWsSend);
+  const alertCount       = useAppStore((s) => s.alerts.length);
 
   // Accumulates streaming tokens between "token" and "done" messages.
   const streamAccumRef = useRef<string>("");
@@ -44,6 +146,12 @@ export default function App() {
     url: WS_URL,
     reconnectDelay: 2000,
   });
+
+  // Register send in store so any page can send WS messages.
+  useEffect(() => {
+    setWsSend(send as (msg: Record<string, unknown>) => boolean);
+    return () => setWsSend(null);
+  }, [send, setWsSend]);
 
   // Wall clock
   useEffect(() => {
@@ -152,11 +260,34 @@ export default function App() {
         break;
       }
 
-      // "pong" — intentionally ignored
+      case "tasks": {
+        const td = d as { reminders?: BackendReminder[]; jobs?: BackendJob[] };
+        setTasks(mapBackendTasks(td.reminders ?? [], td.jobs ?? []));
+        break;
+      }
+
+      case "config": {
+        const cd = d as { values?: Partial<ConfigValues> };
+        if (cd.values && Object.keys(cd.values).length > 0) {
+          setConfigValues(cd.values as ConfigValues);
+        }
+        break;
+      }
+
+      case "services": {
+        const sd = d as { services?: ServiceItem[] };
+        if (sd.services && Array.isArray(sd.services)) {
+          setServices(sd.services);
+        }
+        break;
+      }
+
+      // "pong", "config_ack", "task_created", "alert_dismissed" — intentionally ignored
       default:
         break;
     }
-  }, [lastMessage, pushChat, pushVital, setStreamingText, pushLog, pushAlert]);
+  }, [lastMessage, pushChat, pushVital, setStreamingText, pushLog, pushAlert,
+      setTasks, setServices, setConfigValues]);
 
   // Connection status announcements
   useEffect(() => {
@@ -164,6 +295,9 @@ export default function App() {
       streamAccumRef.current = "";
       setStreamingText(null);
       pushChat({ role: "system", text: `link established · ${WS_URL}` });
+      // Request initial data — backend also pushes on connect, this is a safety
+      send({ type: "get_tasks" });
+      send({ type: "get_config" });
     } else if (status === "closed" && attempts > 0) {
       pushChat({
         role: "system",
@@ -218,7 +352,7 @@ export default function App() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar active={active} onSelect={setActive} alertCount={2} />
+        <Sidebar active={active} onSelect={setActive} alertCount={alertCount} />
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden p-6">
           <PageHost active={active} pages={pages} />
         </main>

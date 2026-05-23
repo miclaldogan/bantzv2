@@ -10,6 +10,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { ArcGauge } from "../components/ArcGauge";
 import { PageTitle, PanelHeader } from "../components/primitives";
+import type { ServiceItem } from "../store/useAppStore";
 
 interface NetSample {
   t: number;
@@ -38,24 +39,10 @@ const PROCESSES = [
   { pid: 2256, name: "redis-server", cpu: 2.7, mem: 0.9, user: "bantz" },
 ];
 
-type ServiceStatus = "online" | "degraded" | "offline";
-
-const SERVICES: {
-  name: string;
-  port: number | null;
-  status: ServiceStatus;
-  uptime: string;
-  detail: string;
-}[] = [
-  { name: "Ollama",   port: 11434, status: "online",   uptime: "6d 14h",  detail: "3 models loaded" },
-  { name: "Gemini",   port: null,  status: "online",   uptime: "session", detail: "rate limit: ok" },
-  { name: "Telegram", port: 443,   status: "online",   uptime: "14d 6h",  detail: "2 chats observed" },
-  { name: "Redis",    port: 6379,  status: "degraded", uptime: "2d 11h",  detail: "high evict rate" },
-  { name: "Neo4j",    port: 7687,  status: "offline",  uptime: "—",       detail: "container halted" },
-];
 
 export function VitalsPage() {
-  const vitals = useAppStore((s) => s.vitals);
+  const vitals   = useAppStore((s) => s.vitals);
+  const services = useAppStore((s) => s.services);
   const [net, setNet] = useState<NetSample[]>(seedNet);
   const [gpuTemp, setGpuTemp] = useState(68);
 
@@ -254,40 +241,40 @@ export function VitalsPage() {
         <section className="flex flex-col border border-obsidian-700 bg-obsidian-850/70">
           <PanelHeader
             title="Service Status"
-            subtitle="systemd · 5 services"
+            subtitle={`${services.length} services`}
             right={
               <span className="font-terminal text-[10px]">
-                <span className="text-[#2E7D32]">3 OK</span> ·{" "}
-                <span className="text-gold-400">1 DEGRADED</span> ·{" "}
-                <span className="text-rose-300">1 OFFLINE</span>
+                <span className="text-ember-500">{services.filter((s) => s.status === "online").length} OK</span>{" "}·{" "}
+                <span className="text-gold-400">{services.filter((s) => s.status === "degraded").length} DEGRADED</span>{" "}·{" "}
+                <span className="text-rose-300">{services.filter((s) => s.status === "offline").length} OFFLINE</span>
               </span>
             }
           />
           <div className="grid flex-1 grid-cols-1 gap-2 overflow-y-auto p-3">
-            {SERVICES.map((s) => {
+            {services.map((svc: ServiceItem) => {
               const sc =
-                s.status === "online"
+                svc.status === "online"
                   ? { dot: "bg-ember-500 shadow-ember", text: "text-ember-500", border: "border-ember-500/40" }
-                  : s.status === "degraded"
+                  : svc.status === "degraded"
                     ? { dot: "bg-gold-400 shadow-gold", text: "text-gold-400", border: "border-gold-500/40" }
                     : { dot: "bg-rose-500", text: "text-rose-300", border: "border-rose-500/40" };
               return (
-                <div key={s.name} className={`flex items-center gap-4 border ${sc.border} bg-obsidian-800/60 px-4 py-3`}>
+                <div key={svc.name} className={`flex items-center gap-4 border ${sc.border} bg-obsidian-800/60 px-4 py-3`}>
                   <span className={`block h-2.5 w-2.5 rounded-full ${sc.dot}`} />
                   <div className="min-w-0 flex-1">
                     <div className="font-ui text-[12px] font-bold uppercase tracking-wider text-fg-primary">
-                      {s.name}
-                      {s.port && (
-                        <span className="ml-2 font-terminal text-[10px] text-obsidian-300">:{s.port}</span>
+                      {svc.name}
+                      {svc.port && (
+                        <span className="ml-2 font-terminal text-[10px] text-obsidian-300">:{svc.port}</span>
                       )}
                     </div>
-                    <div className="font-terminal text-[10px] text-obsidian-200">{s.detail}</div>
+                    <div className="font-terminal text-[10px] text-obsidian-200">{svc.detail}</div>
                   </div>
                   <div className="text-right">
                     <div className={`font-ui text-[9px] font-bold uppercase tracking-widest ${sc.text}`}>
-                      {s.status}
+                      {svc.status}
                     </div>
-                    <div className="mt-0.5 font-terminal text-[10px] text-obsidian-300">{s.uptime}</div>
+                    <div className="mt-0.5 font-terminal text-[10px] text-obsidian-300">{svc.uptime}</div>
                   </div>
                 </div>
               );
