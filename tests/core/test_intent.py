@@ -26,7 +26,7 @@ async def _aiter_tokens(text: str):
 
 def _mock_stream(text: str):
     """Return a callable that produces an async iterator of tokens."""
-    async def _stream(messages):
+    async def _stream(messages, **kwargs):
         async for tok in _aiter_tokens(text):
             yield tok
     return _stream
@@ -166,7 +166,7 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_stream(messages):
+        async def capture_stream(messages, **kwargs):
             captured_messages.extend(messages)
             response = json.dumps({
                 "route": "tool",
@@ -208,7 +208,7 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_stream(messages):
+        async def capture_stream(messages, **kwargs):
             captured_messages.extend(messages)
             response = json.dumps({
                 "route": "chat",
@@ -238,7 +238,7 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_stream(messages):
+        async def capture_stream(messages, **kwargs):
             captured_messages.extend(messages)
             response = json.dumps({
                 "route": "chat",
@@ -266,7 +266,7 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_stream(messages):
+        async def capture_stream(messages, **kwargs):
             captured_messages.extend(messages)
             response = json.dumps({
                 "route": "tool",
@@ -300,7 +300,7 @@ class TestCotRouteWithHistory:
 
         captured_messages: list = []
 
-        async def capture_stream(messages):
+        async def capture_stream(messages, **kwargs):
             captured_messages.extend(messages)
             response = json.dumps({
                 "route": "chat", "tool_name": None, "tool_args": {},
@@ -461,7 +461,7 @@ class TestPeoplePleaser:
 
         call_count = 0
 
-        async def flaky_stream(messages):
+        async def flaky_stream(messages, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -494,7 +494,7 @@ class TestPeoplePleaser:
         """Non-JSON exceptions (e.g. network) return error string."""
         from bantz.core.intent import cot_route
 
-        async def error_stream(messages):
+        async def error_stream(messages, **kwargs):
             raise ConnectionError("Ollama is down")
             yield  # make it an async generator  # noqa: unreachable
 

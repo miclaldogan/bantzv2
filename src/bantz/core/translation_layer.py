@@ -53,6 +53,8 @@ async def to_en(text: str) -> str:
     if b and b.is_enabled():
         try:
             return await asyncio.wait_for(b.to_english(text), timeout=10)
+        except asyncio.CancelledError:
+            raise  # propagate cancellation — don't silently swallow it
         except (asyncio.TimeoutError, Exception):
             pass
     return text

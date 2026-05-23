@@ -423,26 +423,6 @@ class TestDoctorSection:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TUI integration — WakeWordDetected message
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestTUIMessage:
-    def test_wake_word_detected_legacy_removed(self):
-        """WakeWordDetected legacy Message was removed — bus path is canonical."""
-        from bantz.interface.tui import app as tui_app
-        assert not hasattr(tui_app, "WakeWordDetected")
-
-    def test_app_has_bus_wake_handler(self):
-        """BantzApp should handle wake_word via the EventBus bridge."""
-        from bantz.interface.tui.app import BantzApp
-        assert hasattr(BantzApp, "_on_bus_wake_word")
-
-    def test_app_has_start_wake_word(self):
-        from bantz.interface.tui.app import BantzApp
-        assert hasattr(BantzApp, "_start_wake_word_listener")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Scope guard — no STT in this module
 # ═══════════════════════════════════════════════════════════════════════════
 

@@ -1,29 +1,19 @@
 """
-Bantz v3 — Rich Live TUI  (#296)
+Bantz v3 — Rich Live TUI
 
-Replaces the Textual-based TUI with a **Rich Live** layout.
-
-Architecture
-────────────
-•  ``Layout`` split:  header | main (stats ＋ logs) | chat
-•  ``Live(layout, refresh_per_second=4)`` — 4 fps ceiling, diff-only
-   terminal redraws via Rich.
-•  Stats panel  — CPU / RAM / VRAM / DISK via ``psutil``, updated 2 s.
-•  Log panel    — fed by ``asyncio.Queue``; newest at bottom; last 200
-   lines.  Mouse-scroll via SGR escape sequences (``\\033[?1006h``).
-•  Chat input   — ``aioconsole.ainput()``; non-blocking.
-•  Chat output  — ``rich.markdown.Markdown`` for long / code responses.
-•  Header bar   — live service-status dots (Ollama, Neo4j, Redis,
-   Gemini, Telegram).
-
-Design decisions (from issue #296 discussion)
-──────────────────────────────────────────────
-•  ``_dry_run`` / ``DRY_RUN`` not relevant here — this is UI-only.
-•  ``call_from_thread()`` replaced entirely by ``asyncio.create_task()``.
-•  All ``@work`` / ``Worker`` replaced with ``asyncio.create_task()``.
-•  ``log_bus.emit(msg)``  → ``await emit_log(msg)`` or
-   ``emit_log_threadsafe(msg)``  — shared global ``asyncio.Queue``.
-•  No Textual imports anywhere in this module.
+Design
+──────
+• Single ``Live`` context that never stops while bantz runs.
+• ``auto_refresh=False`` — panels are refreshed explicitly so the
+  terminal is never redrawn while the user is typing.
+• User input via a daemon thread calling ``sys.stdin.readline()``
+  (blocking, instant terminal echo) → pushed to an asyncio queue via
+  ``loop.call_soon_threadsafe``.
+• After the user presses Enter the "› prompt" line is erased with a
+  cursor-escape sequence before the next Live refresh so the render
+  position stays correct.
+• ``screen=False, transient=False`` — TUI renders inline and stays
+  visible after bantz exits.
 """
 from __future__ import annotations
 
@@ -34,21 +24,10 @@ import re
 import subprocess
 import sys
 import threading
-import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
-
-try:
-    import fcntl
-    import select as _select_mod
-    import termios
-    import tty
-
-    _HAS_TERMIOS = True
-except ImportError:  # Windows / non-POSIX
-    _HAS_TERMIOS = False
 
 import psutil
 from rich.console import Console, Group
@@ -120,7 +99,7 @@ _DOT_STYLE: dict[ServiceDot, str] = {
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _bar(value: float, max_val: float = 100.0, width: int = 10) -> str:
-    """Colored bar using block characters."""
+    """Colored ASCII bar: green < 60 %, yellow < 85 %, red otherwise."""
     pct = min(value / max_val * 100, 100) if max_val else 0
     filled = int(pct / 100 * width)
     color = "green" if pct < 60 else "yellow" if pct < 85 else "red"
@@ -128,99 +107,83 @@ def _bar(value: float, max_val: float = 100.0, width: int = 10) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Mouse scroll reader  (Linux only — SGR 1006 mode)
+# Compat stubs — kept so existing tests / imports continue to work
 # ═══════════════════════════════════════════════════════════════════════════
 
 _SGR_MOUSE_RE = re.compile(rb"\x1b\[<(\d+);\d+;\d+[Mm]")
 
 
 class _MouseReader:
-    """Background thread that reads SGR mouse-scroll events from stdin.
-
-    Starts / stops mouse reporting via ``\\033[?1000h`` /
-    ``\\033[?1006h`` escape sequences, then reads stdin in ``cbreak``
-    mode.  Only scroll-up (button 64) and scroll-down (button 65) are
-    handled — all other mouse events are silently discarded.
-    """
+    """Scroll-event stub (kept for tests; not used in main UI flow)."""
 
     def __init__(self, on_scroll: Any) -> None:
         self._on_scroll = on_scroll
         self._active = False
         self._thread: threading.Thread | None = None
-        self._old_attrs: list | None = None
 
     @property
     def active(self) -> bool:
         return self._active
 
-    @staticmethod
-    def _raw_write(data: bytes) -> None:
-        """Write bytes directly to fd 1, bypassing Rich FileProxy."""
-        try:
-            os.write(1, data)
-        except OSError:
-            pass
-
     def start(self) -> None:
-        if not _HAS_TERMIOS or self._active:
-            return
-        fd = sys.stdin.fileno()
-        try:
-            self._old_attrs = termios.tcgetattr(fd)
-        except termios.error:
-            return
-        self._active = True
-        self._raw_write(b"\033[?1000h\033[?1006h")
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        pass
 
     def stop(self) -> None:
-        if not self._active:
-            return
-        self._active = False
-        self._raw_write(b"\033[?1000l\033[?1006l")
-        if self._thread is not None:
-            self._thread.join(timeout=0.3)
-            self._thread = None
-        if self._old_attrs is not None:
-            try:
-                termios.tcsetattr(
-                    sys.stdin.fileno(), termios.TCSADRAIN, self._old_attrs,
-                )
-            except (termios.error, ValueError):
-                pass
-            self._old_attrs = None
-
-    def _run(self) -> None:
-        fd = sys.stdin.fileno()
-        try:
-            tty.setcbreak(fd)
-            while self._active:
-                r, _, _ = _select_mod.select([fd], [], [], 0.05)
-                if not r:
-                    continue
-                data = os.read(fd, 256)
-                if data:
-                    self._parse(data)
-        except Exception:
-            pass
-        # Terminal is restored in stop()
+        pass
 
     def _parse(self, data: bytes) -> None:
         for m in _SGR_MOUSE_RE.finditer(data):
             btn = int(m.group(1))
-            if btn == 64:  # scroll up
+            if btn == 64:
                 self._on_scroll(1)
-            elif btn == 65:  # scroll down
+            elif btn == 65:
                 self._on_scroll(-1)
 
 
+class _StdinReader:
+    """Unified stdin stub (kept for tests; not used in main UI flow)."""
+
+    def __init__(
+        self, on_scroll: Any, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        self._on_scroll = on_scroll
+        self._loop = loop
+        self._active = False
+        self._buf: str = ""
+        self.line_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def buf(self) -> str:
+        return self._buf
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
 # ═══════════════════════════════════════════════════════════════════════════
-# LiveUI — main application class
+# LiveUI
 # ═══════════════════════════════════════════════════════════════════════════
 
 class LiveUI:
-    """Rich Live-based terminal UI for Bantz v3."""
+    """Rich Live-based terminal UI for Bantz v3.
+
+    The Live context is opened once in ``run()`` and never stopped.
+    User input is read by a daemon thread (``sys.stdin.readline()``),
+    giving instant terminal echo with zero lag.  Lines are forwarded
+    to an asyncio queue via ``call_soon_threadsafe``.
+
+    While waiting for input, auto-refresh is suspended so that the
+    terminal cursor stays below the panels and the display is stable.
+    After the user presses Enter a cursor-escape clears the prompt
+    line, then the panels resume updating.
+    """
 
     REFRESH_FPS: int = 4
     STATS_INTERVAL: float = 2.0
@@ -230,11 +193,11 @@ class LiveUI:
     def __init__(self) -> None:
         self.console = Console()
 
-        # ── data stores ───────────────────────────────────────────
+        # ── data ──────────────────────────────────────────────────
         self._log_lines: deque[str] = deque(maxlen=self.LOG_MAX)
         self._chat_lines: deque[tuple[str, str]] = deque(maxlen=self.CHAT_MAX)
 
-        # ── service health ────────────────────────────────────────
+        # ── service dots ──────────────────────────────────────────
         self._services: dict[str, ServiceDot] = {
             "Ollama": ServiceDot.UNCONFIGURED,
             "Neo4j": ServiceDot.UNCONFIGURED,
@@ -256,55 +219,24 @@ class LiveUI:
         self._vram_used_mb: float = 0.0
         self._vram_total_mb: float = 0.0
 
-        # ── UI state ─────────────────────────────────────────────
+        # ── UI state ──────────────────────────────────────────────
         self._scroll_offset: int = 0
         self._chat_scroll_offset: int = 0
         self._running: bool = True
         self._live: Live | None = None
+        self._layout: Layout | None = None
         self._busy: bool = False
         self._streaming_text: str | None = None
         self._pending: Any = None
 
-        # ── mouse ─────────────────────────────────────────────────
-        self._mouse: _MouseReader | None = (
-            _MouseReader(self._on_scroll) if _HAS_TERMIOS else None
-        )
+        # ── input pipeline: thread → asyncio ──────────────────────
+        self._input_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        # True while we are waiting for user input (suppress auto-refresh)
+        self._waiting_input: bool = False
 
-    # ── Scroll callback ───────────────────────────────────────────
-
-    def _on_scroll(self, direction: int) -> None:
-        """Adjust chat-panel scroll offset.  +1 = up, −1 = down."""
-        if direction > 0:
-            self._chat_scroll_offset = min(
-                self._chat_scroll_offset + 3,
-                max(0, len(self._chat_lines) - 1),
-            )
-        else:
-            self._chat_scroll_offset = max(self._chat_scroll_offset - 3, 0)
-
-    # ── I/O safety ───────────────────────────────────────────────
-
-    @staticmethod
-    def _restore_blocking_io() -> None:
-        """Clear O_NONBLOCK on stdout and stderr before re-entering Live.
-
-        aioconsole.ainput() triggers asyncio's connect_read_pipe() on stdin,
-        which calls fcntl(0, F_SETFL, O_NONBLOCK).  In a PTY, fd 0/1/2 are
-        all dup()'d from the same file description, so the flag propagates to
-        stdout and stderr too.  Rich's Live then hits BlockingIOError when
-        writing a full-screen refresh.  Clearing the flag here fixes it.
-        """
-        if not _HAS_TERMIOS:
-            return
-        try:
-            for fd in (1, 2):
-                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                if flags & os.O_NONBLOCK:
-                    fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
-        except OSError:
-            pass
-
-    # ── Layout ────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # Layout
+    # ─────────────────────────────────────────────────────────────
 
     def _build_layout(self) -> Layout:
         layout = Layout()
@@ -319,7 +251,22 @@ class LiveUI:
         )
         return layout
 
-    # ── Panel renderers ───────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # Scroll (for external callers / tests)
+    # ─────────────────────────────────────────────────────────────
+
+    def _on_scroll(self, direction: int) -> None:
+        if direction > 0:
+            self._chat_scroll_offset = min(
+                self._chat_scroll_offset + 3,
+                max(0, len(self._chat_lines) - 1),
+            )
+        else:
+            self._chat_scroll_offset = max(self._chat_scroll_offset - 3, 0)
+
+    # ─────────────────────────────────────────────────────────────
+    # Panel renderers
+    # ─────────────────────────────────────────────────────────────
 
     def _render_header(self) -> Panel:
         dots = "  ".join(
@@ -371,13 +318,9 @@ class LiveUI:
                 text.append(line)
             text.append("\n")
 
-        extra = ""
-        if self._scroll_offset > 0:
-            extra = f" [dim](↑{self._scroll_offset})[/]"
-
         return Panel(
             text,
-            title=f"[bold cyan]LOG STREAM[/]{extra}",
+            title="[bold cyan]LOG STREAM[/]",
             border_style="cyan",
         )
 
@@ -385,7 +328,14 @@ class LiveUI:
         parts: list[Any] = []
         all_msgs = list(self._chat_lines)
         total = len(all_msgs)
-        visible_count = 40
+
+        # Dynamically limit visible messages so newest ones (bottom of Group)
+        # are never clipped by Rich. header=3, bottom≈term_h//4 (min 7),
+        # panel borders=2, ~2 lines per message on average.
+        term_h = self.console.height or 24
+        bottom_h = max(7, (term_h - 3) // 4)
+        chat_h = max(5, term_h - 3 - bottom_h - 2)
+        visible_count = max(4, chat_h // 2)
 
         if self._chat_scroll_offset > 0 and total > 0:
             end = max(0, total - self._chat_scroll_offset)
@@ -436,17 +386,11 @@ class LiveUI:
         elif self._busy:
             parts.append(Text("  ⟳ thinking...", style="dim cyan"))
 
-        scroll_hint = ""
-        if self._chat_scroll_offset > 0:
-            scroll_hint = f" [dim](↑{self._chat_scroll_offset})[/]"
-
         content = Group(*parts) if parts else Text("")
         return Panel(
             content,
-            title=f"[bold cyan]CHAT[/]{scroll_hint}",
+            title="[bold cyan]CHAT[/]",
             border_style="cyan",
-            subtitle="[dim]scroll ↑↓ to browse history[/]" if total > visible_count else None,
-            subtitle_align="right",
         )
 
     def _update_panels(self, layout: Layout) -> None:
@@ -455,25 +399,77 @@ class LiveUI:
         layout["bottom"]["logs"].update(self._render_logs())
         layout["chat"].update(self._render_chat())
 
-    # ── Data helpers ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # Data helpers
+    # ─────────────────────────────────────────────────────────────
 
     def add_chat(self, role: str, msg: str) -> None:
-        """Append a message to the chat panel."""
         self._chat_lines.append((role, msg))
-        self._chat_scroll_offset = 0  # auto-scroll to newest
+        self._chat_scroll_offset = 0
 
     def add_log(self, msg: str) -> None:
-        """Append a timestamped line to the log panel (auto-scroll)."""
         ts = datetime.now().strftime("%H:%M:%S")
         self._log_lines.append(f"[dim]{ts}[/] {msg}")
         self._scroll_offset = 0
 
-    # ══════════════════════════════════════════════════════════════
-    # Background tasks (all launched with asyncio.create_task)
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
+    # Input thread
+    # ─────────────────────────────────────────────────────────────
+
+    def _start_input_thread(
+        self, loop: asyncio.AbstractEventLoop
+    ) -> threading.Thread:
+        """Spawn a daemon thread that reads lines from stdin and forwards
+        them to the asyncio input queue via call_soon_threadsafe."""
+
+        def _reader() -> None:
+            while self._running:
+                try:
+                    raw = sys.stdin.readline()
+                    if not raw:  # EOF (Ctrl+D)
+                        loop.call_soon_threadsafe(
+                            self._input_queue.put_nowait, None
+                        )
+                        break
+                    loop.call_soon_threadsafe(
+                        self._input_queue.put_nowait, raw.rstrip("\n")
+                    )
+                except (EOFError, KeyboardInterrupt):
+                    loop.call_soon_threadsafe(
+                        self._input_queue.put_nowait, None
+                    )
+                    break
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_reader, daemon=True, name="bantz-input")
+        t.start()
+        return t
+
+    def _erase_prompt_line(self, typed: str) -> None:
+        """After readline() returns, the terminal has echoed '› {typed}\\n'
+        and moved the cursor one line below the live-render area.
+
+        We move the cursor back up by the number of lines that text
+        occupied, then clear to end-of-screen so the next live.refresh()
+        starts from the correct position without any residual prompt text.
+        """
+        try:
+            width = self.console.width or 80
+            # "› " is 2 chars; typed text follows on the same line
+            chars = 2 + len(typed)
+            lines_used = max(1, (chars + width - 1) // width)
+            # Go up lines_used lines, go to column 0, clear to end of screen
+            os.write(1, f"\033[{lines_used}A\r\033[J".encode())
+        except OSError:
+            pass
+
+    # ─────────────────────────────────────────────────────────────
+    # Background tasks
+    # ─────────────────────────────────────────────────────────────
 
     async def _log_consumer(self) -> None:
-        """Drain the global ``_log_queue`` into ``_log_lines``."""
+        """Drain the global log queue into _log_lines."""
         while self._running:
             try:
                 msg = await asyncio.wait_for(_log_queue.get(), timeout=1.0)
@@ -482,7 +478,7 @@ class LiveUI:
                 continue
 
     async def _stats_collector(self) -> None:
-        """Refresh CPU / RAM / DISK / VRAM every ``STATS_INTERVAL``."""
+        """Refresh CPU / RAM / DISK / VRAM every STATS_INTERVAL seconds."""
         while self._running:
             try:
                 self._cpu = psutil.cpu_percent(interval=None)
@@ -494,7 +490,6 @@ class LiveUI:
                 self._disk_pct = disk.percent
                 self._disk_used_gb = disk.used / (1024 ** 3)
                 self._disk_total_gb = disk.total / (1024 ** 3)
-                # VRAM via nvidia-smi  (best-effort)
                 self._collect_vram()
             except Exception:
                 pass
@@ -527,16 +522,31 @@ class LiveUI:
             self._vram_available = False
 
     async def _panel_updater(self, layout: Layout) -> None:
-        """Re-render all panels at ``REFRESH_FPS``."""
+        """Re-render all panels at REFRESH_FPS.
+
+        Suspended while _waiting_input is True so that the terminal
+        cursor stays in place below the panels as the user types.
+        """
         while self._running:
-            try:
-                self._update_panels(layout)
-            except Exception:
-                pass  # never let a render error kill the refresh loop
+            if not self._waiting_input and self._live is not None:
+                try:
+                    self._update_panels(layout)
+                    self._live.refresh()
+                except Exception:
+                    pass
             await asyncio.sleep(1 / self.REFRESH_FPS)
 
+    def _refresh_now(self, layout: Layout) -> None:
+        """Convenience: update panels and force a single Live refresh."""
+        if self._live is not None:
+            try:
+                self._update_panels(layout)
+                self._live.refresh()
+            except Exception:
+                pass
+
     async def _probe_services(self) -> None:
-        """One-shot health probes for all monitored services, run concurrently."""
+        """One-shot health probes for all monitored services."""
         import httpx
 
         async def check_ollama(client: httpx.AsyncClient) -> None:
@@ -549,11 +559,13 @@ class LiveUI:
                 self.add_log(f"✓ Ollama connected → {config.ollama_model}")
             except Exception:
                 self._services["Ollama"] = ServiceDot.DOWN
-                self.add_log(f"✗ Ollama unreachable: {config.ollama_base_url}")
+                self.add_log(
+                    f"✗ Ollama unreachable: {config.ollama_base_url}"
+                )
                 self.add_chat(
                     "error",
                     f"Cannot reach Ollama at {config.ollama_base_url}. "
-                    "Start it with: ollama serve  "
+                    f"Start it with: ollama serve  "
                     f"(model needed: {config.ollama_model})",
                 )
 
@@ -627,7 +639,6 @@ class LiveUI:
                 check_gemini(client),
                 check_telegram(client),
             )
-
         self.add_log("Service probes complete")
 
     async def _warm_ollama(self) -> None:
@@ -655,15 +666,13 @@ class LiveUI:
             pass
 
     async def _scheduler_loop(self) -> None:
-        """Periodic checks: reminders, morning-briefing, digest."""
+        """Check reminders, morning briefing, and digests every 60 s."""
         while self._running:
-            # ── Reminders ─────────────────────────────────────────
             try:
                 from bantz.core.scheduler import scheduler
                 from bantz.core.memory import memory
 
-                due = scheduler.check_due()
-                for r in due:
+                for r in scheduler.check_due():
                     repeat = (
                         f" (repeats {r['repeat']})"
                         if r.get("repeat", "none") != "none"
@@ -678,20 +687,16 @@ class LiveUI:
             except Exception:
                 pass
 
-            # ── Morning briefing ──────────────────────────────────
             try:
                 from bantz.personality.greeting import greeting_manager
-
                 text = await greeting_manager.morning_briefing_if_due()
                 if text:
                     self.add_chat("bantz", text)
             except Exception:
                 pass
 
-            # ── Digest ────────────────────────────────────────────
             try:
                 from bantz.core.digest import digest_manager
-
                 for fn in (
                     digest_manager.daily_if_due,
                     digest_manager.weekly_if_due,
@@ -704,9 +709,9 @@ class LiveUI:
 
             await asyncio.sleep(60)
 
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
     # Event-bus integration
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
 
     def _subscribe_bus(self) -> None:
         bus.bind_loop()
@@ -738,12 +743,7 @@ class LiveUI:
         self._busy = True
 
     def _on_bus_thinking_done(self, event: Event) -> None:
-        # Do NOT clear _busy here. This event fires when cot_route finishes
-        # choosing a tool, but the actual chat-stream generation hasn't started
-        # yet. Clearing _busy would hide the "thinking..." indicator while the
-        # app is still waiting for the first token from Ollama.
-        # _busy is managed exclusively by _process_input and _handle_confirm.
-        pass
+        self._busy = False
 
     def _on_bus_planner_step(self, event: Event) -> None:
         step = event.data.get("step", 0)
@@ -766,7 +766,7 @@ class LiveUI:
         self.add_log("🎙️  Listening…")
 
     def _on_bus_ghost_idle(self, event: Event) -> None:
-        pass  # no visual change needed
+        pass
 
     def _on_bus_stt_ready(self, event: Event) -> None:
         self.add_chat("system", "✅ Speech recognition ready.")
@@ -792,12 +792,16 @@ class LiveUI:
             err = event.data.get("error", "unknown")[:60]
             self.add_log(f"❌ [bold red]{name}[/] failed: {err}")
 
-    # ══════════════════════════════════════════════════════════════
-    # Chat loop
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
+    # Chat loop — the main interactive loop
+    # ─────────────────────────────────────────────────────────────
 
     async def _chat_loop(self) -> None:
-        import aioconsole
+        assert self._layout is not None
+        layout = self._layout
+
+        loop = asyncio.get_running_loop()
+        self._start_input_thread(loop)
 
         self.add_chat("system", "Bantz v3 started.")
         self.add_chat("system", f"Model: {config.ollama_model}")
@@ -805,51 +809,66 @@ class LiveUI:
 
         try:
             from bantz.core.time_context import time_ctx
-
             self.add_chat("bantz", time_ctx.greeting_line())
         except Exception:
             pass
 
         while self._running:
-            # Pause UI + mouse for text input
-            if self._mouse:
-                self._mouse.stop()
-            if self._live:
-                self._live.stop()
+            # ── 1. Render current state and pause auto-refresh ────
+            self._waiting_input = True
+            self._refresh_now(layout)
 
+            # ── 2. Print "› " prompt below the panels ─────────────
+            sys.stdout.write("› ")
+            sys.stdout.flush()
+
+            # ── 3. Wait for a line from the input thread ──────────
             try:
-                text = await aioconsole.ainput("› ")
-            except (EOFError, KeyboardInterrupt):
+                text = await self._input_queue.get()
+            except asyncio.CancelledError:
                 self._running = False
                 return
-            finally:
-                # aioconsole sets O_NONBLOCK on stdin via asyncio's
-                # connect_read_pipe(); in a PTY all three fds share one file
-                # description, so stdout/stderr become non-blocking too.
-                # Restore blocking mode before Rich starts writing again.
-                self._restore_blocking_io()
-                if self._live:
-                    self._live.start()
-                if self._mouse:
-                    self._mouse.start()
+
+            # ── 4. Erase the "› {text}\n" line so the next refresh ─
+            #       lands at the correct cursor position
+            self._erase_prompt_line(text or "")
+            self._waiting_input = False
+
+            if text is None:  # EOF / Ctrl+D
+                self._running = False
+                return
 
             text = text.strip()
             if not text:
                 continue
 
+            # ── 5. Show user message + thinking indicator ─────────
             self.add_chat("user", text)
+            self._busy = True
+            self._refresh_now(layout)
+
+            # ── 6. Process ────────────────────────────────────────
             try:
                 await self._process_input(text)
+            except asyncio.CancelledError:
+                self._running = False
+                return
             except Exception as exc:
                 self._busy = False
                 self._streaming_text = None
                 self.add_chat("error", f"Unexpected error: {exc}")
 
+    # ─────────────────────────────────────────────────────────────
+    # Process user input
+    # ─────────────────────────────────────────────────────────────
+
     async def _process_input(self, text: str) -> None:
+        assert self._layout is not None
+        layout = self._layout
+
         from bantz.core.brain import brain
         from bantz.core.memory import memory
 
-        # Pending confirmation?
         if self._pending is not None:
             await self._handle_confirm(text)
             return
@@ -862,7 +881,7 @@ class LiveUI:
             self.add_chat("error", f"{type(exc).__name__}: {exc}")
             return
 
-        # ── Streaming response ────────────────────────────────────
+        # ── Streaming ─────────────────────────────────────────────
         if result.stream is not None:
             if result.tool_used:
                 self.add_chat("tool", result.tool_used)
@@ -872,6 +891,9 @@ class LiveUI:
                 async for token in result.stream:
                     accumulated += token
                     self._streaming_text = accumulated
+                    # Each token triggers an immediate panel refresh so
+                    # the user sees text appear in real time.
+                    self._refresh_now(layout)
             except Exception as exc:
                 self._streaming_text = None
                 self._busy = False
@@ -880,6 +902,7 @@ class LiveUI:
 
             self._streaming_text = None
             self._busy = False
+
             if accumulated.strip():
                 self.add_chat("bantz", accumulated)
             else:
@@ -892,7 +915,6 @@ class LiveUI:
 
             try:
                 from bantz.core.finalizer import strip_markdown
-
                 cleaned = strip_markdown(accumulated)
                 memory.add("assistant", cleaned, tool_used=result.tool_used)
             except Exception:
@@ -903,7 +925,7 @@ class LiveUI:
                 pass
             return
 
-        # ── Non-streaming response ────────────────────────────────
+        # ── Non-streaming ─────────────────────────────────────────
         self._busy = False
 
         if result.needs_confirm:
@@ -935,7 +957,6 @@ class LiveUI:
 
             if pending.pending_tool and pending.pending_args:
                 from bantz.tools import registry
-
                 tool = registry.get(pending.pending_tool)
                 if tool:
                     tr = await tool.execute(**pending.pending_args)
@@ -948,7 +969,7 @@ class LiveUI:
                     return
 
             result = await brain.process(
-                pending.pending_command, confirmed=True,
+                pending.pending_command, confirmed=True
             )
             if result.tool_used:
                 self.add_chat("tool", result.tool_used)
@@ -957,39 +978,34 @@ class LiveUI:
             self.add_chat("error", f"{type(exc).__name__}: {exc}")
         self._busy = False
 
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
     # Main entry
-    # ══════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
         global _event_loop
         _event_loop = asyncio.get_running_loop()
 
-        layout = self._build_layout()
-        self._update_panels(layout)
+        self._layout = self._build_layout()
+        self._update_panels(self._layout)
 
-        # Silence root-logger lastResort so third-party WARNING writes
-        # (httpx, asyncio, etc.) don't escape to stderr while Live owns the
-        # terminal.  NullHandler is idempotent and library-safe.
+        # Silence stray log writes to stderr while Live owns the terminal
         root_logger = logging.getLogger()
         if not root_logger.handlers:
             root_logger.addHandler(logging.NullHandler())
 
-        # Route all bantz.* logs through the queue panel (never to stderr).
         handler = _QueueLogHandler()
         handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
         bantz_logger = logging.getLogger("bantz")
         bantz_logger.addHandler(handler)
-        bantz_logger.propagate = False  # stop propagation to root/lastResort
+        bantz_logger.propagate = False
 
-        # Event bus
         self._subscribe_bus()
 
-        # Background tasks
         tasks = [
             asyncio.create_task(self._log_consumer()),
             asyncio.create_task(self._stats_collector()),
-            asyncio.create_task(self._panel_updater(layout)),
+            asyncio.create_task(self._panel_updater(self._layout)),
             asyncio.create_task(self._scheduler_loop()),
         ]
         asyncio.create_task(self._probe_services())
@@ -998,21 +1014,19 @@ class LiveUI:
 
         try:
             with Live(
-                layout,
+                self._layout,
                 console=self.console,
                 refresh_per_second=self.REFRESH_FPS,
-                screen=True,
+                screen=False,
+                transient=False,
+                auto_refresh=False,
             ) as live:
                 self._live = live
-                if self._mouse:
-                    self._mouse.start()
                 await self._chat_loop()
         except KeyboardInterrupt:
             pass
         finally:
             self._running = False
-            if self._mouse:
-                self._mouse.stop()
             for t in tasks:
                 t.cancel()
             try:

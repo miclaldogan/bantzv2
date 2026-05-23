@@ -76,7 +76,10 @@ class Brain:
         import bantz.tools.system       # noqa: F401
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
-        import bantz.tools.news         # noqa: F401
+        try:
+            import bantz.tools.news         # noqa: F401
+        except (ImportError, ModuleNotFoundError):
+            pass  # defusedxml may not be installed
         import bantz.tools.web_search   # noqa: F401
         import bantz.tools.web_reader   # noqa: F401
         import bantz.tools.gmail        # noqa: F401

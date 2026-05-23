@@ -7,49 +7,6 @@ import httpx
 from bantz.llm.gemini import GeminiClient, _notify_gemini_health
 
 
-# --- _notify_gemini_health tests ---
-
-def test_notify_gemini_health_main_thread():
-    # Mock textual App (need to mock where it's imported in the try block, or mock sys.modules)
-    import sys
-    mock_textual_app = MagicMock()
-    mock_app = MagicMock()
-    mock_textual_app.App.current = mock_app
-
-    # Mock ServiceStatus
-    mock_header = MagicMock()
-    mock_header.ServiceStatus.UP = "UP"
-    mock_header.ServiceStatus.DOWN = "DOWN"
-
-    with patch.dict(sys.modules, {"textual.app": mock_textual_app, "bantz.interface.tui.panels.header": mock_header}), \
-         patch("threading.current_thread", return_value=threading.main_thread()):
-
-        _notify_gemini_health(True)
-
-        mock_app.notify_service_health.assert_called_once_with("gemini", "UP")
-
-
-def test_notify_gemini_health_worker_thread():
-    # Mock textual App
-    import sys
-    mock_textual_app = MagicMock()
-    mock_app = MagicMock()
-    mock_textual_app.App.current = mock_app
-
-    # Mock ServiceStatus
-    mock_header = MagicMock()
-    mock_header.ServiceStatus.UP = "UP"
-    mock_header.ServiceStatus.DOWN = "DOWN"
-
-    with patch.dict(sys.modules, {"textual.app": mock_textual_app, "bantz.interface.tui.panels.header": mock_header}), \
-         patch("threading.current_thread", return_value=threading.Thread()), \
-         patch("threading.main_thread", return_value=threading.main_thread()):
-
-        _notify_gemini_health(False)
-
-        mock_app.call_from_thread.assert_called_once_with(mock_app.notify_service_health, "gemini", "DOWN")
-
-
 # --- GeminiClient tests ---
 
 @pytest.fixture

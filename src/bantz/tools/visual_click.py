@@ -37,7 +37,8 @@ class VisualClickTool(BaseTool):
         "Supports: click, double_click, right_click, hover. "
         "The tool finds the element automatically via accessibility tree + screen vision. "
         "Use for: 'click X', 'press the Y button', 'open the Z menu', 'click terminal'. "
-        "Do NOT use shell or bash for GUI clicking."
+        "Do NOT use shell or bash for GUI clicking. "
+        "Example: 'click the terminal' → visual_click(target='Terminal', action='click')."
     )
     risk_level = "moderate"
 

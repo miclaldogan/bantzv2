@@ -55,7 +55,8 @@ class TestScreenshotTool:
         fake_shot.width = 1920
         fake_shot.height = 1080
 
-        with patch("bantz.vision.screenshot.capture", AsyncMock(return_value=fake_shot)), \
+        with patch("bantz.config.config.telegram_screenshot_enabled", True), \
+             patch("bantz.vision.screenshot.capture", AsyncMock(return_value=fake_shot)), \
              patch("bantz.tools.screenshot_tool._reencode_jpeg", side_effect=lambda d, q: d):
             result = await ScreenshotTool().execute()
 
@@ -83,7 +84,8 @@ class TestScreenshotTool:
         fake_shot.width = 800
         fake_shot.height = 600
 
-        with patch("bantz.vision.screenshot.capture_window", AsyncMock(return_value=fake_shot)) as mock_cw, \
+        with patch("bantz.config.config.telegram_screenshot_enabled", True), \
+             patch("bantz.vision.screenshot.capture_window", AsyncMock(return_value=fake_shot)) as mock_cw, \
              patch("bantz.tools.screenshot_tool._reencode_jpeg", side_effect=lambda d, q: d):
             result = await ScreenshotTool().execute(app="vscode")
 
@@ -104,7 +106,8 @@ class TestScreenshotTool:
     async def test_exception_handled_gracefully(self):
         from bantz.tools.screenshot_tool import ScreenshotTool
 
-        with patch("bantz.vision.screenshot.capture", AsyncMock(side_effect=RuntimeError("display error"))):
+        with patch("bantz.config.config.telegram_screenshot_enabled", True), \
+             patch("bantz.vision.screenshot.capture", AsyncMock(side_effect=RuntimeError("display error"))):
             result = await ScreenshotTool().execute()
 
         assert not result.success
@@ -130,7 +133,8 @@ class TestScreenshotTool:
         fake_shot.height = 1080
 
         async def _run():
-            with patch("bantz.vision.screenshot.capture", AsyncMock(return_value=fake_shot)), \
+            with patch("bantz.config.config.telegram_screenshot_enabled", True), \
+                 patch("bantz.vision.screenshot.capture", AsyncMock(return_value=fake_shot)), \
                  patch("bantz.tools.screenshot_tool._reencode_jpeg", side_effect=lambda d, q: d):
                 return await ScreenshotTool().execute()
 

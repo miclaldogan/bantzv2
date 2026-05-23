@@ -150,7 +150,6 @@ async def _setup_places() -> None:
     First place (or explicit choice) becomes default location in .env.
     """
     import json
-    import urllib.request
     from bantz.core.places import places
     from bantz.core.location import location_service
 

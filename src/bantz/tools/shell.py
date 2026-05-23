@@ -61,7 +61,8 @@ class ShellTool(BaseTool):
         f"Use for: running commands, listing files, managing processes, package management. "
         f"The user's home directory is {_HOME}. Always use absolute paths. "
         "If the user types a literal command (ls, df -h, top, etc.), this is the right tool. "
-        "NOT for GUI interaction (clicking, hovering) — use visual_click for that."
+        "Do not use this tool for GUI interaction (clicking, hovering) — use visual_click for that. "
+        "WRONG: shell(command='click the OK button'). RIGHT: visual_click(target='OK button')."
     )
     risk_level = "moderate"
 
