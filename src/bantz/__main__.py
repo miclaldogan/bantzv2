@@ -108,6 +108,16 @@ def main() -> None:
     run()
 
 
+async def _start_ws_server() -> None:
+    """Start the WebSocket broadcast server (non-blocking background task)."""
+    try:
+        from bantz.interface.ws_server import ws_server
+        await ws_server.start()
+    except Exception as exc:
+        import logging
+        logging.getLogger("bantz.main").warning("WS server failed to start: %s", exc)
+
+
 async def _list_jobs() -> None:
     """List all scheduled APScheduler jobs (bantz --jobs)."""
     from bantz.config import config
@@ -314,6 +324,9 @@ async def _daemon() -> None:
             log.info("GPS server: %s (relay: %s)", gps_server.url, gps_server.relay_topic)
     except Exception as exc:
         log.warning("GPS server failed to start: %s", exc)
+
+    # Start WebSocket server for Tauri UI
+    await _start_ws_server()
 
     # Graceful shutdown
     stop_event = asyncio.Event()

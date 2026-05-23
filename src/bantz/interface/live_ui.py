@@ -1011,6 +1011,7 @@ class LiveUI:
         asyncio.create_task(self._probe_services())
         asyncio.create_task(self._warm_ollama())
         asyncio.create_task(self._enrich_greeting())
+        asyncio.create_task(self._start_ws())
 
         try:
             with Live(
@@ -1038,6 +1039,13 @@ class LiveUI:
                 bantz_logger.propagate = True
             except Exception:
                 pass
+
+    async def _start_ws(self) -> None:
+        try:
+            from bantz.interface.ws_server import ws_server
+            await ws_server.start()
+        except Exception as exc:
+            logger.warning("WS server failed to start: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
