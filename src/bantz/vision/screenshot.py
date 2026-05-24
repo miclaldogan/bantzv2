@@ -197,8 +197,7 @@ async def _capture_import() -> Optional[bytes]:
     return None
 
 
-async def _capture_pillow() -> Optional[bytes]:
-    """Pillow ImageGrab fallback (X11 only)."""
+def _sync_capture_pillow() -> Optional[bytes]:
     try:
         from PIL import ImageGrab
         img = ImageGrab.grab()
@@ -207,6 +206,12 @@ async def _capture_pillow() -> Optional[bytes]:
         return buf.getvalue()
     except Exception:
         return None
+
+
+async def _capture_pillow() -> Optional[bytes]:
+    """Pillow ImageGrab fallback (X11 only)."""
+    # ⚡ Bolt: Offload CPU-bound PIL operation to thread to unblock event loop
+    return await asyncio.to_thread(_sync_capture_pillow)
 
 
 async def _capture_window_xdotool(app_name: str) -> Optional[bytes]:
@@ -283,10 +288,12 @@ async def capture(roi: Optional[ROI] = None) -> Optional[Screenshot]:
         return None
 
     if roi:
-        data, w, h = _crop_image(raw, roi, quality=quality)
+        # ⚡ Bolt: Offload CPU-bound PIL operation to thread to unblock event loop
+        data, w, h = await asyncio.to_thread(_crop_image, raw, roi, quality)
         return Screenshot(data=data, width=w, height=h, source="roi")
 
-    data, w, h = _raw_to_jpeg(raw, quality=quality)
+    # ⚡ Bolt: Offload CPU-bound PIL operation to thread to unblock event loop
+    data, w, h = await asyncio.to_thread(_raw_to_jpeg, raw, quality)
     return Screenshot(data=data, width=w, height=h, source="full")
 
 
@@ -303,7 +310,8 @@ async def capture_window(app_name: str) -> Optional[Screenshot]:
     if display == "x11":
         raw = await _capture_window_xdotool(app_name)
         if raw:
-            data, w, h = _raw_to_jpeg(raw, quality=quality)
+            # ⚡ Bolt: Offload CPU-bound PIL operation to thread to unblock event loop
+            data, w, h = await asyncio.to_thread(_raw_to_jpeg, raw, quality)
             return Screenshot(data=data, width=w, height=h, source="window")
 
     # Fallback to full-screen

@@ -9,3 +9,6 @@
 ## 2024-05-18 - [SQLite Table Existence Check Optimization]
 **Learning:** To check if a table is empty or has data in SQLite, `SELECT COUNT(*) FROM table` performs an O(N) full table/index scan. This becomes a performance bottleneck as the table grows.
 **Action:** Use `SELECT 1 FROM table LIMIT 1` combined with `fetchone() is not None` instead. This is an O(1) operation that returns immediately after finding the first row, avoiding full scans.
+## 2024-05-24 - [Offload CPU-bound Pillow operations to threads]
+**Learning:** CPU-bound image operations like Pillow encoding, cropping, and screen grabbing block the asynchronous event loop, significantly degrading overall application responsiveness during vision tasks.
+**Action:** Always wrap heavy synchronous PIL operations in `asyncio.to_thread()` when executing them within async functions to keep the main event loop free for I/O and other tasks.
