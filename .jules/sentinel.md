@@ -14,3 +14,7 @@
 **Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found where `path.chmod(0o600)` was used immediately after writing content to sensitive files.
 **Learning:** This leaves a race condition window between file creation and permission changes. A malicious symlink attack could change the target of `path.chmod`, or simply read the sensitive content before permissions are restricted.
 **Prevention:** Using `os.fchmod(fd, 0o600)` right after `os.open` tightly binds the permission changes to the file descriptor, rather than relying on a subsequent path-based `chmod` that is vulnerable to symlink race conditions.
+## 2025-05-24 - [TOCTOU Vulnerability in .env Creation]
+**Vulnerability:** A TOCTOU (Time-of-Check to Time-of-Use) vulnerability was found in `_update_dotenv` (`ws_server.py`) where `env_path.write_text(...)` was used to create or update the `.env` file containing sensitive API keys and configuration.
+**Learning:** `Path.write_text()` creates files with default system permissions (like 0o644), leaving a window where secrets can be read by other users on the system before being locked down.
+**Prevention:** Use `os.open(..., os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)` and explicitly call `os.fchmod(fd, 0o600)` to bind the strict permissions to the file descriptor immediately upon creation.
