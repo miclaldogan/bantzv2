@@ -227,6 +227,9 @@ export default function App() {
       }
 
       case "broadcast": {
+        // Fallback for proactive server-push messages (health alerts,
+        // observer notifications) that are not part of a chat request/
+        // response cycle and therefore never go through token+done.
         const b = d as { text?: string };
         pushChat({ role: "bantz", text: String(b.text ?? "") });
         break;

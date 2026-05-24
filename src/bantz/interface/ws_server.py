@@ -216,9 +216,13 @@ class WsBroadcastServer:
                 return
             await _send(ws, {"type": "done"})
         else:
+            # Non-streaming path (tool results, planner output, etc.).
+            # Send as a single token so the frontend accumulator and "done"
+            # handler commit it to chat exactly like a streamed response —
+            # consistent UX, one code path on the client side.
             response = result.response or ""
             if response.strip():
-                await _send(ws, {"type": "broadcast", "text": response})
+                await _send(ws, {"type": "token", "text": response})
             await _send(ws, {"type": "done"})
 
     # ── tasks ──────────────────────────────────────────────────────────────
