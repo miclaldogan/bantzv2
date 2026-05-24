@@ -52,7 +52,9 @@ async def to_en(text: str) -> str:
     b = get_bridge()
     if b and b.is_enabled():
         try:
-            return await asyncio.wait_for(b.to_english(text), timeout=10)
+            result = await asyncio.wait_for(b.to_english(text), timeout=10)
+            log.debug("TR→EN | raw=%r | en=%r", text, result)
+            return result
         except asyncio.CancelledError:
             raise  # propagate cancellation — don't silently swallow it
         except (asyncio.TimeoutError, Exception):

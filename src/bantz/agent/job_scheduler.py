@@ -556,7 +556,7 @@ class JobScheduler:
 
         self._scheduler.add_job(
             _job_briefing_watcher,
-            IntervalTrigger(seconds=10),
+            IntervalTrigger(seconds=60),
             id="briefing_watcher",
             name="Watch for IDLE→active to speak briefing",
             replace_existing=True,

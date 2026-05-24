@@ -119,9 +119,10 @@ class WsBroadcastServer:
         bus.on("observer_error", self._on_observer_error)
 
         self._tasks = [
-            asyncio.create_task(self._vitals_loop(),   name="ws-vitals"),
-            asyncio.create_task(self._log_queue_loop(), name="ws-log-queue"),
-            asyncio.create_task(self._services_loop(), name="ws-services"),
+            asyncio.create_task(self._vitals_loop(),        name="ws-vitals"),
+            asyncio.create_task(self._log_queue_loop(),      name="ws-log-queue"),
+            asyncio.create_task(self._services_loop(),       name="ws-services"),
+            asyncio.create_task(self._preload_translation(), name="ws-translation-preload"),
         ]
         log.info("WebSocket server listening on ws://localhost:%d", self._port)
 
@@ -199,6 +200,7 @@ class WsBroadcastServer:
     # ── chat processing ────────────────────────────────────────────────────
 
     async def _handle_chat(self, ws: ServerConnection, text: str) -> None:
+        log.debug("chat received | raw=%r", text)
         from bantz.core.brain import brain
         from bantz.core.event_bus import bus as _event_bus, Event as _Event
 
@@ -207,15 +209,15 @@ class WsBroadcastServer:
 
         async def _on_planning_start(event: _Event) -> None:
             tier = _butler_tier()
-            phrase = _PLANNING_START[tier]
+            phrase = await _to_tr(_PLANNING_START[tier])
             await _send(ws, {"type": "token", "text": phrase + "\n"})
 
         async def _on_planner_step(event: _Event) -> None:
             if event.data.get("status") != "start":
                 return
-            tier  = _butler_tier()
-            tool  = event.data.get("tool", "")
-            phrase = _STEP_PHRASES.get(tool, _STEP_FALLBACK)[tier]
+            tier   = _butler_tier()
+            tool   = event.data.get("tool", "")
+            phrase = await _to_tr(_STEP_PHRASES.get(tool, _STEP_FALLBACK)[tier])
             await _send(ws, {"type": "token", "text": phrase + "\n"})
 
         _event_bus.on("planning_start", _on_planning_start)
@@ -231,18 +233,23 @@ class WsBroadcastServer:
             _event_bus.off("planner_step",   _on_planner_step)
 
         if result.stream is not None:
+            # Accumulate all English tokens, then translate the full text
+            # at once.  Sending partial tokens to a Turkish user would be
+            # confusing; the butler narration above already gives live feedback.
+            parts: list[str] = []
             try:
                 async for token in result.stream:
-                    await _send(ws, {"type": "token", "text": token})
+                    parts.append(token)
             except Exception as exc:
                 await _send(ws, {"type": "error", "msg": f"stream error: {exc}"})
                 return
+            response = await _to_tr("".join(parts))
+            if response.strip():
+                await _send(ws, {"type": "token", "text": response})
             await _send(ws, {"type": "done"})
         else:
             # Non-streaming path (tool results, planner output, etc.).
-            # Send as a single token so the frontend accumulator and "done"
-            # handler commit it to chat exactly like a streamed response.
-            response = result.response or ""
+            response = await _to_tr(result.response or "")
             if response.strip():
                 await _send(ws, {"type": "token", "text": response})
             await _send(ws, {"type": "done"})
@@ -289,6 +296,21 @@ class WsBroadcastServer:
             await _send(ws, _collect_config())
         else:
             await _send(ws, {"type": "error", "msg": err or "config write failed"})
+
+    # ── translation model preload ──────────────────────────────────────────
+
+    async def _preload_translation(self) -> None:
+        """Load MarianMT models into memory at startup so the first user
+        message doesn't pay the 20-30s disk-load cost."""
+        try:
+            from bantz.i18n.bridge import bridge
+            if not bridge.is_enabled():
+                return
+            log.info("Preloading translation models in background…")
+            await asyncio.get_running_loop().run_in_executor(None, bridge.preload)
+            log.info("Translation models ready.")
+        except Exception as exc:
+            log.warning("Translation model preload failed: %s", exc)
 
     # ── vitals broadcast ───────────────────────────────────────────────────
 
@@ -416,6 +438,26 @@ def _butler_tier() -> str:
     except Exception:
         pass
     return "formal"
+
+
+async def _to_tr(text: str) -> str:
+    """Translate EN → TR if the language bridge is enabled; no-op otherwise.
+
+    This is the single point where the output side of the translation
+    pipeline runs.  Brain and all internal modules stay in English —
+    only the final user-facing text is translated here before sending.
+    """
+    if not text.strip():
+        return text
+    try:
+        from bantz.i18n.bridge import bridge
+        if bridge.is_enabled():
+            return await asyncio.wait_for(bridge.to_turkish(text), timeout=60)
+    except asyncio.TimeoutError:
+        log.warning("EN→TR translation timed out — returning English text")
+    except Exception as exc:
+        log.debug("EN→TR translation failed: %s", exc)
+    return text
 
 
 async def _send(ws: ServerConnection, payload: dict) -> None:
