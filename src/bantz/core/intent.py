@@ -36,7 +36,7 @@ _ROUTING_HINTS: dict[str, str] = {
     "web_search": "Search the internet for ANY factual/knowledge question or lookup",
     "calendar": "Google Calendar: view, create, update, delete events and meetings. action=create for 'add/schedule/create event/dinner/meeting'. action=today for 'what's on my calendar'. action=delete for 'remove/cancel event'.",
     "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails. Use for ANY mention of email/mail/inbox/mails. action=summary for 'check my mail'. NEVER answer email questions from memory.",
-    "weather": "Current weather and forecast for a city or user's location",
+    "weather": "Current weather AND forecast — handles 'tomorrow', 'this week', 'will it rain', forecast queries. Single tool call, no planning needed. city param optional (auto-detects location).",
     "reminder": "Create, list, cancel, snooze reminders and timers. action=add for new reminders. action=cancel with id=N for 'delete/cancel/remove reminder #N'. action=list for 'show my reminders'.",
     "shell": "Run a bash command (ls, df, top, apt, etc.)",
     "system": "Live system metrics: CPU, RAM, disk usage, uptime",
@@ -94,6 +94,7 @@ RULES:
 - "add/create/schedule event/dinner/meeting at TIME" → calendar action=create with title and time. NOT action=today.
 - "delete/cancel/remove reminder #N" or "delete the no N reminder" → reminder action=cancel id=N. The tool name is "reminder" NOT "cancel_reminder".
 - "remind me in X minutes/a minute" → reminder action=add. Parse time carefully: "a minute" = 1 minute, NOT 1 hour.
+- "weather in X tomorrow/forecast/this week/will it rain" → weather tool directly. The weather tool already returns a 3-day forecast — NEVER route weather queries to planner.
 - "just open YouTube/Spotify/Netflix" (no specific content) → browser_control action=open app=firefox url=https://youtube.com
 - "open Gemini/ChatGPT/Claude" or any WEB APP → browser_control action=navigate url=<correct URL>. Known web apps: gemini=https://gemini.google.com, chatgpt=https://chatgpt.com, claude=https://claude.ai, perplexity=https://perplexity.ai, github=https://github.com, reddit=https://reddit.com
 - "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).

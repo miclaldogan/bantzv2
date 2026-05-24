@@ -22,6 +22,13 @@ interface UseWebSocketOpts {
   maxAttempts?: number;
   /** Auto-connect on mount. Default true. */
   autoConnect?: boolean;
+  /**
+   * Called synchronously inside `ws.onmessage` for every incoming frame.
+   * Use this instead of watching `lastMessage` state when ordering matters
+   * (e.g. token → done sequences) because React 18 batching can coalesce
+   * rapid `setLastMessage` calls into one render, dropping intermediate frames.
+   */
+  onMessage?: (msg: WsMessage) => void;
 }
 
 /**
@@ -37,6 +44,7 @@ export function useWebSocket({
   reconnectDelay = 2000,
   maxAttempts = 30,
   autoConnect = true,
+  onMessage,
 }: UseWebSocketOpts) {
   const [status, setStatus] = useState<WsStatus>("idle");
   const [lastMessage, setLastMessage] = useState<WsMessage | null>(null);
@@ -46,6 +54,10 @@ export function useWebSocket({
   const timerRef = useRef<number | null>(null);
   const attemptsRef = useRef(0);
   const manuallyClosedRef = useRef(false);
+  // Stable ref so the ws.onmessage closure always calls the latest callback
+  // without needing to recreate the WebSocket connection.
+  const onMessageRef = useRef(onMessage);
+  useEffect(() => { onMessageRef.current = onMessage; });
 
   const connect = useCallback(() => {
     if (
@@ -83,7 +95,11 @@ export function useWebSocket({
       } catch {
         /* leave as raw */
       }
-      setLastMessage({ ts: Date.now(), raw: String(ev.data), data: parsed });
+      const msg: WsMessage = { ts: Date.now(), raw: String(ev.data), data: parsed };
+      // Call the direct callback synchronously so token→done sequences are
+      // never coalesced by React 18 automatic batching.
+      onMessageRef.current?.(msg);
+      setLastMessage(msg);
     };
 
     ws.onerror = () => {

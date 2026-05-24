@@ -29,6 +29,7 @@ Extracted from ``brain.py`` in Part 5 of epic #218.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
 
@@ -337,8 +338,18 @@ async def execute_plan(
     """
     from bantz.agent.planner import planner_agent
     from bantz.agent.executor import plan_executor
+    from bantz.core.event_bus import bus as _bus
 
     tool_names = registry.names() + ["process_text", "summarizer"]
+
+    # Signal that planning is about to start — ws_server forwards this as a
+    # token so the user sees feedback before the slow decompose LLM call.
+    try:
+        await _bus.emit("planning_start", message="Drafting an itinerary…")
+        await asyncio.sleep(0)  # flush dispatcher so ws_server sees the event
+    except Exception:
+        pass
+
     steps = await planner_agent.decompose(
         en_input, tool_names, recent_history=recent_history,
     )
@@ -380,7 +391,10 @@ async def execute_plan(
     except Exception:
         pass
 
-    resp = itinerary + "\n\n" + exec_result.summary()
+    log.debug("Plan raw summary:\n%s", exec_result.summary())
+
+    from bantz.core.finalizer import finalize_plan
+    resp = await finalize_plan(en_input, exec_result, tc)
 
     data_layer.conversations.add("assistant", resp, tool_used="planner")
 

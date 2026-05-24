@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { Sidebar, PAGE_LABEL } from "./components/Sidebar";
 import { PageHost } from "./components/PageHost";
@@ -142,9 +142,125 @@ export default function App() {
   // Accumulates streaming tokens between "token" and "done" messages.
   const streamAccumRef = useRef<string>("");
 
-  const { status, lastMessage, attempts, send } = useWebSocket({
+  // Process each WS frame synchronously (called from ws.onmessage directly).
+  // This avoids React 18 automatic batching coalescing rapid token→done pairs
+  // into a single render where the token effect never runs.
+  const handleWsMessage = useCallback(
+    (msg: { data?: unknown }) => {
+      const d = msg.data as { type?: string; [k: string]: unknown } | undefined;
+      if (!d || typeof d !== "object" || !d.type) return;
+
+      switch (d.type) {
+
+        case "vitals": {
+          const v = d as {
+            cpu: number; ram_used: number; ram_total: number;
+            disk_used: number; disk_total: number;
+            vram_used: number; vram_total: number;
+          };
+          const ramPct  = v.ram_total  > 0 ? (v.ram_used  / v.ram_total)  * 100 : 0;
+          const diskPct = v.disk_total > 0 ? (v.disk_used / v.disk_total) * 100 : 0;
+          pushVital({
+            t:          Date.now(),
+            cpu:        v.cpu,
+            mem:        ramPct,
+            disk:       diskPct,
+            net:        0,
+            ram_used:   v.ram_used,
+            ram_total:  v.ram_total,
+            disk_used:  v.disk_used,
+            disk_total: v.disk_total,
+            vram_used:  v.vram_used,
+            vram_total: v.vram_total,
+          });
+          break;
+        }
+
+        case "token": {
+          const tok = d as { text?: string };
+          streamAccumRef.current += tok.text ?? "";
+          setStreamingText(streamAccumRef.current);
+          break;
+        }
+
+        case "done": {
+          const final = streamAccumRef.current;
+          streamAccumRef.current = "";
+          setStreamingText(null);
+          if (final.trim()) {
+            pushChat({ role: "bantz", text: final });
+          }
+          break;
+        }
+
+        case "broadcast": {
+          const b = d as { text?: string };
+          pushChat({ role: "bantz", text: String(b.text ?? "") });
+          break;
+        }
+
+        case "log": {
+          const l = d as { msg: string; level: string };
+          const colonIdx = l.msg.indexOf(": ");
+          const src = colonIdx > 0 ? l.msg.slice(0, colonIdx) : "bantz";
+          const msg2 = colonIdx > 0 ? l.msg.slice(colonIdx + 2) : l.msg;
+          pushLog({
+            t: Date.now(),
+            sev: LEVEL_MAP[l.level] ?? "INFO",
+            src,
+            msg: msg2,
+          });
+          break;
+        }
+
+        case "alert": {
+          const a = d as { title?: string; reason?: string; source?: string };
+          const source = String(a.source ?? "bantz");
+          pushAlert({
+            severity: source === "observer" ? "critical" : "warning",
+            category: "service",
+            title:  String(a.title  ?? "Backend alert"),
+            detail: String(a.reason ?? ""),
+            ts:     Date.now(),
+            source,
+          });
+          break;
+        }
+
+        case "tasks": {
+          const td = d as { reminders?: BackendReminder[]; jobs?: BackendJob[] };
+          setTasks(mapBackendTasks(td.reminders ?? [], td.jobs ?? []));
+          break;
+        }
+
+        case "config": {
+          const cd = d as { values?: Partial<ConfigValues> };
+          if (cd.values && Object.keys(cd.values).length > 0) {
+            setConfigValues(cd.values as ConfigValues);
+          }
+          break;
+        }
+
+        case "services": {
+          const sd = d as { services?: ServiceItem[] };
+          if (sd.services && Array.isArray(sd.services)) {
+            setServices(sd.services);
+          }
+          break;
+        }
+
+        default:
+          break;
+      }
+    },
+    [pushChat, pushVital, setStreamingText, pushLog, pushAlert,
+     setTasks, setServices, setConfigValues],
+  );
+
+  const { status, attempts, send } = useWebSocket({
     url: WS_URL,
     reconnectDelay: 2000,
+    onMessage: handleWsMessage,
   });
 
   // Register send in store so any page can send WS messages.
@@ -177,120 +293,6 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [pushVital, status]);
 
-  // Route incoming WS messages into the store.
-  useEffect(() => {
-    if (!lastMessage) return;
-    const d = lastMessage.data as { type?: string; [k: string]: unknown } | undefined;
-    if (!d || typeof d !== "object" || !d.type) return;
-
-    switch (d.type) {
-
-      case "vitals": {
-        const v = d as {
-          cpu: number; ram_used: number; ram_total: number;
-          disk_used: number; disk_total: number;
-          vram_used: number; vram_total: number;
-        };
-        const ramPct  = v.ram_total  > 0 ? (v.ram_used  / v.ram_total)  * 100 : 0;
-        const diskPct = v.disk_total > 0 ? (v.disk_used / v.disk_total) * 100 : 0;
-        pushVital({
-          t:          Date.now(),
-          cpu:        v.cpu,
-          mem:        ramPct,
-          disk:       diskPct,
-          net:        0,
-          ram_used:   v.ram_used,
-          ram_total:  v.ram_total,
-          disk_used:  v.disk_used,
-          disk_total: v.disk_total,
-          vram_used:  v.vram_used,
-          vram_total: v.vram_total,
-        });
-        break;
-      }
-
-      case "token": {
-        const tok = d as { text?: string };
-        streamAccumRef.current += tok.text ?? "";
-        setStreamingText(streamAccumRef.current);
-        break;
-      }
-
-      case "done": {
-        const final = streamAccumRef.current;
-        streamAccumRef.current = "";
-        setStreamingText(null);
-        if (final.trim()) {
-          pushChat({ role: "bantz", text: final });
-        }
-        break;
-      }
-
-      case "broadcast": {
-        // Fallback for proactive server-push messages (health alerts,
-        // observer notifications) that are not part of a chat request/
-        // response cycle and therefore never go through token+done.
-        const b = d as { text?: string };
-        pushChat({ role: "bantz", text: String(b.text ?? "") });
-        break;
-      }
-
-      case "log": {
-        const l = d as { msg: string; level: string };
-        const colonIdx = l.msg.indexOf(": ");
-        const src = colonIdx > 0 ? l.msg.slice(0, colonIdx) : "bantz";
-        const msg = colonIdx > 0 ? l.msg.slice(colonIdx + 2) : l.msg;
-        pushLog({
-          t: Date.now(),
-          sev: LEVEL_MAP[l.level] ?? "INFO",
-          src,
-          msg,
-        });
-        break;
-      }
-
-      case "alert": {
-        const a = d as { title?: string; reason?: string; source?: string };
-        const source = String(a.source ?? "bantz");
-        pushAlert({
-          severity: source === "observer" ? "critical" : "warning",
-          category: "service",
-          title:  String(a.title  ?? "Backend alert"),
-          detail: String(a.reason ?? ""),
-          ts:     Date.now(),
-          source,
-        });
-        break;
-      }
-
-      case "tasks": {
-        const td = d as { reminders?: BackendReminder[]; jobs?: BackendJob[] };
-        setTasks(mapBackendTasks(td.reminders ?? [], td.jobs ?? []));
-        break;
-      }
-
-      case "config": {
-        const cd = d as { values?: Partial<ConfigValues> };
-        if (cd.values && Object.keys(cd.values).length > 0) {
-          setConfigValues(cd.values as ConfigValues);
-        }
-        break;
-      }
-
-      case "services": {
-        const sd = d as { services?: ServiceItem[] };
-        if (sd.services && Array.isArray(sd.services)) {
-          setServices(sd.services);
-        }
-        break;
-      }
-
-      // "pong", "config_ack", "task_created", "alert_dismissed" — intentionally ignored
-      default:
-        break;
-    }
-  }, [lastMessage, pushChat, pushVital, setStreamingText, pushLog, pushAlert,
-      setTasks, setServices, setConfigValues]);
 
   // Connection status announcements
   useEffect(() => {

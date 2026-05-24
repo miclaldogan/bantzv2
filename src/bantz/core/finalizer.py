@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from bantz.tools import ToolResult
 
@@ -192,6 +192,119 @@ async def finalize_stream(
             yield output[:1500]
 
     return _stream()
+
+
+# ── Plan finalizer ────────────────────────────────────────────────────────
+
+PLAN_FINALIZER_SYSTEM = """\
+You are Bantz, a 1920s English butler reporting back to your employer after \
+completing a multi-step task. Synthesize the results below into a single, \
+natural response — as if you are speaking directly to the person who asked.
+
+RULES:
+- Never mention step numbers, tool names, or technical pipeline details.
+- Never use "→", "✓", "✗", or bullet characters from the raw step log.
+- If the final step produced a summary or analysis, lead with that content.
+- If steps gathered and then synthesized information, present the synthesis — \
+  skip re-listing raw search snippets.
+- Mention failures honestly but briefly, without technical jargon.
+- Plain text only. No markdown. Address the user as 'ma\'am'.
+- Be as concise as the content allows. Avoid padding or filler phrases.{persona_state}
+"""
+
+# Tools whose output is already clean LLM-generated prose; prefer their
+# output over raw data from earlier steps when building the context block.
+_SYNTHESIS_TOOLS = frozenset({
+    "summarizer", "process_text", "delegate_task",
+})
+
+# Tools that produce operational status messages rather than content.
+_SILENT_TOOLS = frozenset({
+    "filesystem", "shell", "browser_control", "run_workflow",
+})
+
+
+async def finalize_plan(
+    user_input: str,
+    exec_result: Any,   # PlanExecutionResult — avoid circular import
+    tc: dict,
+) -> str:
+    """Synthesize a PlanExecutionResult into clean butler prose.
+
+    Unlike ``finalize()``, this always calls the LLM — the step-by-step
+    dump is never appropriate as raw user-facing output.
+    """
+    step_results = exec_result.step_results  # list[StepResult]
+
+    if not step_results:
+        return "I'm afraid the task produced no results, ma'am."
+
+    # Build context: prefer synthesis tool outputs; always include failures.
+    # We give the LLM the last synthesis step's output prominently, then
+    # append other successful step outputs as supporting context.
+    synthesis_output = ""
+    supporting_lines: list[str] = []
+    failure_lines: list[str] = []
+
+    for sr in step_results:
+        if not sr.success:
+            failure_lines.append(
+                f"[{sr.tool}] failed: {sr.error[:200]}"
+            )
+            continue
+
+        if not sr.output:
+            continue
+
+        if sr.tool in _SYNTHESIS_TOOLS:
+            synthesis_output = sr.output  # last one wins
+        elif sr.tool not in _SILENT_TOOLS:
+            supporting_lines.append(
+                f"[{sr.tool}]: {sr.output[:600]}"
+            )
+
+    # Build the context block the LLM will see.
+    context_parts: list[str] = []
+    if synthesis_output:
+        context_parts.append(f"Final synthesis:\n{synthesis_output[:3000]}")
+    if supporting_lines:
+        context_parts.append("Supporting results:\n" + "\n".join(supporting_lines[:2000]))
+    if failure_lines:
+        context_parts.append("Failures:\n" + "\n".join(failure_lines))
+
+    # Fallback: nothing useful extracted — use the last successful output.
+    if not context_parts:
+        for sr in reversed(step_results):
+            if sr.success and sr.output:
+                context_parts.append(sr.output[:2000])
+                break
+
+    if not context_parts:
+        return "I'm afraid I was unable to produce a useful result, ma'am."
+
+    context_block = "\n\n".join(context_parts)
+
+    messages = [
+        {"role": "system", "content": PLAN_FINALIZER_SYSTEM.format(
+            persona_state=_persona_hint(),
+        )},
+        {"role": "user", "content": (
+            f"The employer asked: {user_input}\n\n"
+            f"Task results:\n{context_block}"
+        )},
+    ]
+
+    try:
+        from bantz.llm.ollama import ollama
+        raw = await ollama.chat(messages)
+        cleaned = strip_markdown(raw)
+        # Strip outer quotation marks some models wrap their response in.
+        if len(cleaned) > 2 and cleaned[0] in ('"', '“') and cleaned[-1] in ('"', '”'):
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+    except Exception:
+        # Graceful fallback: return synthesis or first available output.
+        return synthesis_output or (supporting_lines[0] if supporting_lines else "Task complete.")
 
 
 # ── Hallucination detection ───────────────────────────────────────────────

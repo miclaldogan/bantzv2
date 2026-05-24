@@ -200,12 +200,35 @@ class WsBroadcastServer:
 
     async def _handle_chat(self, ws: ServerConnection, text: str) -> None:
         from bantz.core.brain import brain
+        from bantz.core.event_bus import bus as _event_bus, Event as _Event
 
+        # Forward planning-phase events as butler-voice narration tokens so the
+        # UI shows live progress instead of dead silence during LLM calls.
+
+        async def _on_planning_start(event: _Event) -> None:
+            tier = _butler_tier()
+            phrase = _PLANNING_START[tier]
+            await _send(ws, {"type": "token", "text": phrase + "\n"})
+
+        async def _on_planner_step(event: _Event) -> None:
+            if event.data.get("status") != "start":
+                return
+            tier  = _butler_tier()
+            tool  = event.data.get("tool", "")
+            phrase = _STEP_PHRASES.get(tool, _STEP_FALLBACK)[tier]
+            await _send(ws, {"type": "token", "text": phrase + "\n"})
+
+        _event_bus.on("planning_start", _on_planning_start)
+        _event_bus.on("planner_step",   _on_planner_step)
         try:
             result = await brain.process(text)
         except Exception as exc:
             await _send(ws, {"type": "error", "msg": str(exc)})
+            await _send(ws, {"type": "done"})
             return
+        finally:
+            _event_bus.off("planning_start", _on_planning_start)
+            _event_bus.off("planner_step",   _on_planner_step)
 
         if result.stream is not None:
             try:
@@ -218,8 +241,7 @@ class WsBroadcastServer:
         else:
             # Non-streaming path (tool results, planner output, etc.).
             # Send as a single token so the frontend accumulator and "done"
-            # handler commit it to chat exactly like a streamed response —
-            # consistent UX, one code path on the client side.
+            # handler commit it to chat exactly like a streamed response.
             response = result.response or ""
             if response.strip():
                 await _send(ws, {"type": "token", "text": response})
@@ -345,6 +367,56 @@ class WsBroadcastServer:
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
+# ── Butler-voice planning narration ───────────────────────────────────────────
+# Phrases are keyed by affinity tier: "formal" | "warm" | "wry".
+# Formal = new/neutral relationship; warm = established; wry = close.
+
+_PLANNING_START: dict[str, str] = {
+    "formal": "Very well. One moment.",
+    "warm":   "Of course — allow me a moment.",
+    "wry":    "Right away. Leave it with me.",
+}
+
+_STEP_PHRASES: dict[str, dict[str, str]] = {
+    "web_search":     {"formal": "Searching, as requested.",          "warm": "Searching for what you've asked about.",       "wry": "Let me see what I can turn up."},
+    "read_url":       {"formal": "Reading the article.",              "warm": "Reading the full article now.",                "wry": "Having a thorough read through this one."},
+    "summarizer":     {"formal": "Preparing a summary.",              "warm": "Pulling together the key points.",             "wry": "Distilling this into something useful."},
+    "process_text":   {"formal": "Preparing a summary.",              "warm": "Pulling together the key points.",             "wry": "Distilling this into something useful."},
+    "filesystem":     {"formal": "Saving to file.",                   "warm": "Saving the results now.",                      "wry": "Filing that away for you."},
+    "shell":          {"formal": "Running the command.",              "warm": "Running that through the terminal.",           "wry": "Firing up the terminal — back in a moment."},
+    "browser_control":{"formal": "Opening the browser.",             "warm": "Navigating the browser now.",                  "wry": "Taking the wheel, so to speak."},
+    "gmail":          {"formal": "Checking your correspondence.",     "warm": "Checking your messages now.",                  "wry": "Having a look at the post."},
+    "calendar":       {"formal": "Consulting the calendar.",          "warm": "Checking your schedule.",                      "wry": "Having a look at the diary."},
+    "weather":        {"formal": "Checking the weather.",             "warm": "Checking conditions outside.",                 "wry": "Consulting the forecast."},
+    "news":           {"formal": "Checking the headlines.",           "warm": "Scanning the latest news.",                   "wry": "Having a look at what's in the papers."},
+    "delegate_task":  {"formal": "Delegating the task.",              "warm": "Handing this off to a specialist.",            "wry": "Putting the right person on this."},
+    "run_workflow":   {"formal": "Running the workflow.",             "warm": "Running the appropriate workflow.",            "wry": "Setting the machinery in motion."},
+    "system":         {"formal": "Checking system status.",           "warm": "Checking the system's vitals.",                "wry": "Having a look under the bonnet."},
+    "document":       {"formal": "Reading the document.",             "warm": "Going through the document.",                  "wry": "Having a thorough look at this one."},
+}
+
+_STEP_FALLBACK: dict[str, str] = {
+    "formal": "Working on it.",
+    "warm":   "Working on the next part now.",
+    "wry":    "Right, on to the next bit.",
+}
+
+
+def _butler_tier() -> str:
+    """Return 'formal', 'warm', or 'wry' based on current affinity score."""
+    try:
+        from bantz.agent.affinity_engine import affinity_engine
+        if affinity_engine.initialized:
+            score = affinity_engine.get_score()
+            if score >= 60:
+                return "wry"
+            if score >= 20:
+                return "warm"
+    except Exception:
+        pass
+    return "formal"
+
 
 async def _send(ws: ServerConnection, payload: dict) -> None:
     try:
