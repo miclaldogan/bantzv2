@@ -343,15 +343,11 @@ async def execute_plan(
         en_input, tool_names, recent_history=recent_history,
     )
     if not steps:
-        msg = "I couldn't break that into actionable steps. Try being more specific."
         log.warning("execute_plan: planner returned no steps for: %.80s", en_input)
-        data_layer.conversations.add("assistant", msg, tool_used="planner")
-        return BrainResult(response=msg, tool_used="planner")
+        return None
     if len(steps) < 2:
-        msg = "I couldn't break that into actionable steps. Try being more specific."
         log.warning("execute_plan: planner returned only %d step(s) — too few to execute for: %.80s", len(steps), en_input)
-        data_layer.conversations.add("assistant", msg, tool_used="planner")
-        return BrainResult(response=msg, tool_used="planner")
+        return None
 
     itinerary = planner_agent.format_itinerary(steps)
     log.info("Plan-and-Solve itinerary:\n%s", itinerary)
