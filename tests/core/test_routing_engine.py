@@ -216,12 +216,15 @@ class TestGenerateCommand:
 class TestExecutePlan:
     def test_returns_none_for_simple_request(self):
         with patch("bantz.core.routing_engine.registry") as mock_reg, \
-             patch("bantz.agent.planner.planner_agent") as mock_planner:
+             patch("bantz.agent.planner.planner_agent") as mock_planner, \
+             patch("bantz.core.routing_engine.data_layer") as dl:
             mock_reg.names.return_value = ["shell", "weather"]
             mock_planner.decompose = AsyncMock(return_value=[])  # no steps
+            dl.conversations = MagicMock()
             from bantz.core.routing_engine import execute_plan
             result = _run(execute_plan("hello", "hello", {}))
-        assert result is None
+        assert result is not None
+        assert result.tool_used == "planner"
 
     def test_returns_brain_result_for_complex(self):
         steps = [
@@ -284,7 +287,8 @@ class TestExecutePlan:
             from bantz.core.routing_engine import execute_plan
             result = _run(execute_plan("hello", "hello", {}))
 
-        assert result is None
+        assert result is not None
+        assert result.tool_used == "planner"
         call_kwargs = mock_planner.decompose.call_args
         assert call_kwargs.kwargs.get("recent_history") is None
 

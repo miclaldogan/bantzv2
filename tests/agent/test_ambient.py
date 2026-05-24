@@ -207,7 +207,7 @@ class TestAmbientAnalyzerFeed:
     def test_interval_gating(self):
         """Second analysis is blocked until sample_interval elapses."""
         a = self._make_analyzer(interval=60.0, window=0.1)
-        a._last_analysis = 0  # ensure it's ready to fire
+        a._last_analysis = time.monotonic() - 100.0  # ensure it's ready to fire
         # First analysis: should work
         r1 = a.feed_frames([0] * 1600)
         assert r1 is not None
@@ -219,6 +219,7 @@ class TestAmbientAnalyzerFeed:
     def test_interval_gating_expired(self):
         """After interval elapses, next analysis proceeds."""
         a = self._make_analyzer(interval=1.0, window=0.1)
+        a._last_analysis = time.monotonic() - 100.0
         r1 = a.feed_frames([0] * 1600)
         assert r1 is not None
 
@@ -230,8 +231,8 @@ class TestAmbientAnalyzerFeed:
     def test_history_populated(self):
         a = self._make_analyzer(interval=0.0, window=0.1)
         for _ in range(5):
+            a._last_analysis = time.monotonic() - 100.0  # reset to allow immediate re-analysis
             a.feed_frames([0] * 1600)
-            a._last_analysis = 0  # reset to allow immediate re-analysis
         hist = a.history(10)
         assert len(hist) == 5
 
