@@ -581,8 +581,11 @@ class TestBrainPlannerIntegration:
 
             # Planner now runs BEFORE workflow_engine, so even if
             # workflow_engine would match, planner takes priority.
-            result = await brain.process(
-                "search for AI news and save to a file")
+
+            with patch("bantz.core.finalizer.finalize_plan") as mock_finalize:
+                mock_finalize.return_value = "allow me a moment... completed successfully"
+                result = await brain.process(
+                    "search for AI news and save to a file")
 
             assert result.tool_used == "planner"
             assert "allow me a moment" in result.response.lower()
