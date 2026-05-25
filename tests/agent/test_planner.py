@@ -543,7 +543,8 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.routing_engine.data_layer") as dal_re, \
              patch("bantz.core.brain.ollama") as mock_ollama, \
              patch("bantz.core.routing_engine.ollama") as ollama_re, \
-             patch("bantz.core.brain.cot_route") as mock_cot:
+             patch("bantz.core.brain.cot_route") as mock_cot, \
+             patch("bantz.core.finalizer.finalize_plan") as mock_finalizer:
 
             mock_cot.return_value = ({"route": "planner", "tool_name": None, "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "Multi-step request."}, None)
             mock_planner.decompose = AsyncMock(return_value=plan_steps)
@@ -555,6 +556,7 @@ class TestBrainPlannerIntegration:
             dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
             ollama_re.chat = AsyncMock(return_value="")
+            mock_finalizer.return_value = "Allow me a moment... completed successfully"
 
             from bantz.core.brain import Brain
             brain = Brain.__new__(Brain)
@@ -595,13 +597,15 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.brain.data_layer") as mock_dal, \
              patch("bantz.core.routing_engine.data_layer") as dal_re, \
              patch("bantz.core.brain.ollama") as mock_ollama, \
-             patch("bantz.core.routing_engine.ollama") as ollama_re:
+             patch("bantz.core.routing_engine.ollama") as ollama_re, \
+             patch("bantz.core.finalizer.finalize_plan") as mock_finalizer:
 
             mock_cot.return_value = ({"route": "tool", "tool_name": "shell", "tool_args": {"command": "echo test"}, "risk_level": "safe", "confidence": 0.95, "reasoning": "Single tool."}, None)
             mock_dal.conversations = MagicMock()
             dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
             ollama_re.chat = AsyncMock(return_value="")
+            mock_finalizer.return_value = "Allow me a moment... completed successfully"
             with patch("bantz.tools.shell.ShellTool.execute") as mock_shell:
                 mock_shell.return_value = ToolResult(success=True, output="test")
 
@@ -667,7 +671,8 @@ class TestBrainPlannerIntegration:
              patch("bantz.core.brain.ollama") as mock_ollama, \
              patch("bantz.core.routing_engine.ollama") as ollama_re, \
              patch("bantz.core.workflow.workflow_engine") as mock_wf, \
-             patch("bantz.core.brain.cot_route") as mock_cot:
+             patch("bantz.core.brain.cot_route") as mock_cot, \
+             patch("bantz.core.finalizer.finalize_plan") as mock_finalizer:
 
             mock_cot.return_value = ({"route": "planner", "tool_name": None, "tool_args": {}, "risk_level": "safe", "confidence": 0.9, "reasoning": "Multi-step request."}, None)
             mock_planner.decompose = AsyncMock(return_value=plan_steps)
@@ -677,6 +682,7 @@ class TestBrainPlannerIntegration:
             dal_re.conversations = MagicMock()
             mock_ollama.chat = AsyncMock(return_value="")
             ollama_re.chat = AsyncMock(return_value="")
+            mock_finalizer.return_value = "Allow me a moment... completed successfully"
 
             from bantz.core.brain import Brain
             brain = Brain.__new__(Brain)
