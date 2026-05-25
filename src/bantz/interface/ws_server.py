@@ -577,15 +577,19 @@ def _write_config(key: str, value: object) -> tuple[bool, str]:
 def _update_dotenv(key: str, value: str) -> None:
     env_path = Path(".env")
     if not env_path.exists():
-        env_path.write_text(f"{key}={value}\n")
-        return
-    text = env_path.read_text()
-    pattern = re.compile(rf"^{re.escape(key)}\s*=.*$", re.MULTILINE)
-    if pattern.search(text):
-        text = pattern.sub(f"{key}={value}", text)
+        text = f"{key}={value}\n"
     else:
-        text = text.rstrip("\n") + f"\n{key}={value}\n"
-    env_path.write_text(text)
+        text = env_path.read_text()
+        pattern = re.compile(rf"^{re.escape(key)}\s*=.*$", re.MULTILINE)
+        if pattern.search(text):
+            text = pattern.sub(f"{key}={value}", text)
+        else:
+            text = text.rstrip("\n") + f"\n{key}={value}\n"
+
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 async def _collect_services() -> dict:

@@ -1,0 +1,5 @@
+🚨 Severity: CRITICAL
+💡 Vulnerability: A Time-of-Check to Time-of-Use (TOCTOU) vulnerability was found in `src/bantz/interface/ws_server.py` where `Path.write_text()` was used to create or update the `.env` file. This creates the file with default permissions (like 0o644).
+🎯 Impact: Other users on the system could potentially read sensitive environment variables (such as API tokens) stored in the `.env` file either briefly or permanently.
+🔧 Fix: Updated `_update_dotenv` to use `os.open` with `os.O_CREAT | os.O_WRONLY | os.O_TRUNC` and `0o600` mode, followed immediately by `os.fchmod(fd, 0o600)`. This tightly binds the permissions to the file descriptor, ensuring the file is secure from creation.
+✅ Verification: Review the code to verify `os.open` and `os.fchmod` are used correctly with `0o600`. The test suite was also run to ensure no regressions.
