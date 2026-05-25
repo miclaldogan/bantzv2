@@ -200,11 +200,15 @@ async def _capture_import() -> Optional[bytes]:
 async def _capture_pillow() -> Optional[bytes]:
     """Pillow ImageGrab fallback (X11 only)."""
     try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
+        def _grab():
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        # ⚡ Bolt: Offload CPU-bound image capture and PNG conversion to a separate thread
+        # to prevent blocking the async event loop during execution.
+        return await asyncio.to_thread(_grab)
     except Exception:
         return None
 
@@ -283,10 +287,12 @@ async def capture(roi: Optional[ROI] = None) -> Optional[Screenshot]:
         return None
 
     if roi:
-        data, w, h = _crop_image(raw, roi, quality=quality)
+        # ⚡ Bolt: Offload CPU-bound cropping to a separate thread
+        data, w, h = await asyncio.to_thread(_crop_image, raw, roi, quality)
         return Screenshot(data=data, width=w, height=h, source="roi")
 
-    data, w, h = _raw_to_jpeg(raw, quality=quality)
+    # ⚡ Bolt: Offload CPU-bound raw-to-jpeg conversion to a separate thread
+    data, w, h = await asyncio.to_thread(_raw_to_jpeg, raw, quality)
     return Screenshot(data=data, width=w, height=h, source="full")
 
 
@@ -303,7 +309,8 @@ async def capture_window(app_name: str) -> Optional[Screenshot]:
     if display == "x11":
         raw = await _capture_window_xdotool(app_name)
         if raw:
-            data, w, h = _raw_to_jpeg(raw, quality=quality)
+            # ⚡ Bolt: Offload CPU-bound raw-to-jpeg conversion to a separate thread
+            data, w, h = await asyncio.to_thread(_raw_to_jpeg, raw, quality)
             return Screenshot(data=data, width=w, height=h, source="window")
 
     # Fallback to full-screen
