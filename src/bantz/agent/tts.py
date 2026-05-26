@@ -1,5 +1,5 @@
 """
-Bantz — Streaming TTS Pipeline (#131)
+Bantz — Streaming TTS Pipeline (#131, #427)
 
 Sentence-by-sentence text-to-speech using Piper + aplay.
 Designed for audio morning briefings with interrupt support.
@@ -24,7 +24,14 @@ Key design:
   - Synthesize sentence N+1 while playing sentence N
   - stop() sends SIGTERM to active aplay → immediate silence
   - Graceful fallback: if Piper/aplay missing, logs warning and returns
-  - English-first: en_US-lessac-medium Piper model
+  - Model-agnostic: supports any Piper voice (Turkish: tr_TR-dfki-medium)
+
+Voice model search order (BANTZ_TTS_MODEL_PATH overrides all):
+  ~/.local/share/bantz/
+  ~/.local/share/piper-voices/
+  ~/.local/share/piper/voices/
+  ~/.local/share/piper/
+  /usr/share/piper-voices/
 """
 from __future__ import annotations
 
@@ -52,7 +59,7 @@ log = logging.getLogger(__name__)
 
 PHONETIC_REPLACEMENTS: dict[str, str] = {
     # Apostrophe-broken words → remove apostrophe, keep pronunciation
-    r"(?i)\bma'a?m\b":    "mam",        # ma'm, ma'am → mam (apostrof kaldır)
+    r"(?i)\bma'a?m\b":    "mam",        # ma'm, ma'am → mam (remove apostrophe)
     r"(?i)\bsir'?s\b":    "sirs",       # sir's (possessive read as plural)
     r"(?i)\bo'clock\b":   "oh clock",   # o'clock → natural reading
     # Abbreviations that Piper spells out
@@ -319,9 +326,10 @@ class TTSEngine:
         # Resolve model path
         model = config.tts_model_path
         if not model:
-            # Auto-discover: check ~/.local/share/piper-voices/
+            # Auto-discover: check common voice model locations
             model_name = config.tts_model
             search_dirs = [
+                Path.home() / ".local" / "share" / "bantz",
                 Path.home() / ".local" / "share" / "piper-voices",
                 Path.home() / ".local" / "share" / "piper" / "voices",
                 Path.home() / ".local" / "share" / "piper",
@@ -475,7 +483,7 @@ class TTSEngine:
         self._speak_task = asyncio.create_task(self.speak(text))
 
     def stop(self) -> None:
-        """Immediately stop all TTS playback ("Sessiz ol Bantz!")."""
+        """Immediately stop all TTS playback."""
         self._stop_requested = True
         self._kill_playback()
         if self._speak_task and not self._speak_task.done():

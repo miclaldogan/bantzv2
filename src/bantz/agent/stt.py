@@ -53,7 +53,7 @@ class STTEngine:
         self._model = None
         self._model_name: str = ""
         self._device: str = "cpu"
-        self._language: str = "en"
+        self._language: str = "auto"
         self._available: bool | None = None  # None = not checked yet
 
     def _ensure_model(self) -> bool:
@@ -79,7 +79,7 @@ class STTEngine:
         except Exception:
             self._model_name = "tiny"
             self._device = "cpu"
-            self._language = "en"
+            self._language = "auto"
 
         try:
             log.info("STT: loading model '%s' on '%s'...", self._model_name, self._device)
@@ -139,9 +139,9 @@ class STTEngine:
                 vad_parameters=dict(
                     min_silence_duration_ms=300,
                 ),
-                # Initial prompt biases the model toward assistant-context vocab,
+                # Initial prompt biases the model toward expected vocabulary,
                 # reducing common Whisper errors like "what" → "but".
-                initial_prompt="The user is speaking a command to Bantz, an AI assistant.",
+                initial_prompt="The user is speaking a command to Bantz.",
             )
 
             # Collect all segment texts
