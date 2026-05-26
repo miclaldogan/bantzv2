@@ -77,13 +77,22 @@ class VisualClickTool(BaseTool):
                 error=f"Unknown action '{action}'. Supported: {', '.join(_ACTION_MAP)}.",
             )
 
-        # ── Navigate (Cache -> AT-SPI -> VLM) ────────────────────────
+        # ── Step 1: Take a screenshot for context and VLM fallback ──────
+        _screenshot_b64: str = ""
+        try:
+            from bantz.vision.screenshot import capture_base64
+            _screenshot_b64 = await capture_base64() or ""
+        except Exception as _ss_exc:
+            log.debug("visual_click: pre-screenshot failed: %s", _ss_exc)
+
+        # ── Step 2: Navigate (Cache -> AT-SPI -> VLM) ────────────────
         try:
             from bantz.vision.navigator import navigator
 
             nav_result = await navigator.navigate_to(
                 app_name=app,
                 element_label=target,
+                screenshot_b64=_screenshot_b64 or None,
             )
         except Exception as exc:
             log.error("visual_click navigate_to failed: %s", exc, exc_info=True)
@@ -97,12 +106,12 @@ class VisualClickTool(BaseTool):
             )
 
         if not nav_result.found:
+            # Describe what IS visible when element not found
+            _visible_desc = await _describe_visible(target, _screenshot_b64)
             return ToolResult(
                 success=False,
-                output="",
-                error=(
-                    f"Could not find '{target}' via AT-SPI or VLM. Is the element visible on screen?"
-                ),
+                output=_visible_desc,
+                error=f"Could not find '{target}' via AT-SPI or VLM.",
                 data=nav_result.to_dict(),
             )
 
@@ -145,6 +154,47 @@ class VisualClickTool(BaseTool):
             ),
             data=nav_result.to_dict(),
         )
+
+
+async def _describe_visible(target: str, screenshot_b64: str) -> str:
+    """Return a plain-text description of what's visible on screen.
+
+    Called when the element cannot be found, so the user knows what Bantz
+    sees and can correct the request. Uses VLM if enabled, AT-SPI list
+    otherwise, and falls back to a generic message.
+    """
+    # Try AT-SPI apps list first (fast, no GPU)
+    try:
+        from bantz.tools.accessibility import list_applications
+        apps = list_applications()
+        if apps:
+            app_list = ", ".join(apps[:8])
+            suffix = f" (+{len(apps) - 8} more)" if len(apps) > 8 else ""
+            return (
+                f"I could not locate '{target}' on screen. "
+                f"Accessible windows: {app_list}{suffix}. "
+                f"Is '{target}' visible and the window focused?"
+            )
+    except Exception:
+        pass
+
+    # VLM fallback — describe the screen in plain text
+    if screenshot_b64:
+        try:
+            from bantz.vision.remote_vlm import describe_screen
+            result = await describe_screen(screenshot_b64, timeout=10)
+            if result.success and result.raw_text:
+                return (
+                    f"I could not locate '{target}'. "
+                    f"Here is what I see on screen:\n{result.raw_text[:600]}"
+                )
+        except Exception:
+            pass
+
+    return (
+        f"I could not locate '{target}' via accessibility tree or VLM. "
+        f"Please ensure the element is visible and the correct window is focused."
+    )
 
 
 registry.register(VisualClickTool())

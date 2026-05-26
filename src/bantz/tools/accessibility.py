@@ -240,70 +240,88 @@ def find_element(
 
     Returns dict with keys: name, role, bounds, center (x, y).
     If role_filter is specified, only matches that role (e.g. "push button", "entry").
+    When app_name is empty, searches all accessible applications.
     """
-    app = _find_app(app_name)
-    if app is None:
+    if app_name:
+        app = _find_app(app_name)
+        apps_to_search = [app] if app is not None else []
+    else:
+        # No app specified — search all accessible apps
+        desktop = _get_desktop()
+        apps_to_search = []
+        if desktop:
+            for i in range(desktop.get_child_count()):
+                child = desktop.get_child_at_index(i)
+                if child is not None:
+                    apps_to_search.append(child)
+
+    if not apps_to_search:
         return None
 
-    best_match: Optional[dict] = None
-    best_score = 0.0
+    overall_best: Optional[dict] = None
+    overall_score = 0.0
 
-    def _search(node, depth: int = 0):
-        nonlocal best_match, best_score
-        if node is None or depth > 8:
-            return
+    _INTERACTIVE_ROLES = {
+        "push button", "toggle button", "check box",
+        "radio button", "entry", "text", "link",
+        "menu item", "combo box", "tab",
+    }
 
-        try:
-            name = node.get_name() or ""
-            role = node.get_role_name() or ""
+    for app in apps_to_search:
+        if app is None:
+            continue
 
-            # Check role filter
-            if role_filter and role_filter.lower() not in role.lower():
-                pass  # still recurse into children
-            else:
-                score = _fuzzy_match(label, name)
-                # Bonus for interactive roles
-                _INTERACTIVE_ROLES = {
-                    "push button", "toggle button", "check box",
-                    "radio button", "entry", "text", "link",
-                    "menu item", "combo box", "tab",
-                }
-                if role.lower() in _INTERACTIVE_ROLES:
-                    score += 0.05
+        best_match: Optional[dict] = None
+        best_score = 0.0
 
-                if score > best_score:
-                    # Get bounds
-                    try:
-                        comp = node.get_component_iface()
-                        if comp:
-                            ext = comp.get_extents(_atspi.CoordType.SCREEN)
-                            if ext.width > 0 and ext.height > 0:
-                                best_score = score
-                                best_match = {
-                                    "name": name,
-                                    "role": role,
-                                    "bounds": {
-                                        "x": ext.x, "y": ext.y,
-                                        "width": ext.width, "height": ext.height,
-                                    },
-                                    "center": (
-                                        ext.x + ext.width // 2,
-                                        ext.y + ext.height // 2,
-                                    ),
-                                    "score": round(score, 3),
-                                }
-                    except Exception:
-                        pass
+        def _search(node, depth: int = 0) -> None:
+            nonlocal best_match, best_score
+            if node is None or depth > 8:
+                return
+            try:
+                name = node.get_name() or ""
+                role = node.get_role_name() or ""
 
-            # Recurse
-            for i in range(min(node.get_child_count(), 200)):
-                _search(node.get_child_at_index(i), depth + 1)
+                if not (role_filter and role_filter.lower() not in role.lower()):
+                    score = _fuzzy_match(label, name)
+                    if role.lower() in _INTERACTIVE_ROLES:
+                        score += 0.05
+                    if score > best_score:
+                        try:
+                            comp = node.get_component_iface()
+                            if comp:
+                                ext = comp.get_extents(_atspi.CoordType.SCREEN)
+                                if ext.width > 0 and ext.height > 0:
+                                    best_score = score
+                                    best_match = {
+                                        "name": name,
+                                        "role": role,
+                                        "bounds": {
+                                            "x": ext.x, "y": ext.y,
+                                            "width": ext.width, "height": ext.height,
+                                        },
+                                        "center": (
+                                            ext.x + ext.width // 2,
+                                            ext.y + ext.height // 2,
+                                        ),
+                                        "score": round(score, 3),
+                                    }
+                        except Exception:
+                            pass
 
-        except Exception:
-            pass
+                for i in range(min(node.get_child_count(), 200)):
+                    _search(node.get_child_at_index(i), depth + 1)
 
-    _search(app)
-    return best_match if best_score >= 0.4 else None
+            except Exception:
+                pass
+
+        _search(app)
+
+        if best_score > overall_score:
+            overall_score = best_score
+            overall_best = best_match
+
+    return overall_best if overall_score >= 0.4 else None
 
 
 def list_applications() -> list[str]:
