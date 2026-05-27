@@ -654,6 +654,7 @@ async def _doctor() -> None:
     if config.mempalace_enabled:
         try:
             from bantz.memory.bridge import palace_bridge
+            await palace_bridge.init()  # #432: .enabled is always False until init() is called
             if palace_bridge and palace_bridge.enabled:
                 print(f"✅ MemPalace: enabled (wing={config.mempalace_wing})")
             else:
@@ -673,7 +674,25 @@ async def _doctor() -> None:
     import psutil
     print(f"✅ psutil: CPU {psutil.cpu_percent(interval=0.3):.0f}%")
 
-    # Tools
+    # Tools — import modules so they register themselves (#432: count was 0 at import time)
+    import importlib as _importlib
+    for _mod in (
+        "bantz.tools.shell", "bantz.tools.system", "bantz.tools.filesystem",
+        "bantz.tools.weather", "bantz.tools.web_search", "bantz.tools.web_reader",
+        "bantz.tools.gmail", "bantz.tools.calendar", "bantz.tools.classroom",
+        "bantz.tools.reminder",
+    ):
+        _importlib.import_module(_mod)
+    for _opt in (
+        "bantz.tools.news", "bantz.tools.document", "bantz.tools.accessibility",
+        "bantz.tools.visual_click", "bantz.tools.browser_control",
+        "bantz.tools.screenshot_tool", "bantz.tools.desktop",
+        "bantz.tools.delegate_task",
+    ):
+        try:
+            _importlib.import_module(_opt)
+        except (ImportError, Exception):
+            pass
     names = [t["name"] for t in registry.all_schemas()]
     print(f"✅ Tools ({len(names)}): {', '.join(names)}")
 
@@ -712,6 +731,9 @@ async def _doctor() -> None:
 
     # MemPalace (ChromaDB embeddings are handled internally)
     from bantz.memory.bridge import palace_bridge
+    if not palace_bridge.enabled:
+        # init() may not have been called yet (e.g. mempalace_enabled was False above)
+        await palace_bridge.init()  # #432: safe to call again — re-checks config flag
     if palace_bridge.enabled:
         print(f"✅ MemPalace: active  (vector_weight={config.vector_search_weight})")
     else:
@@ -848,6 +870,8 @@ async def _doctor() -> None:
             print("⚪ Voice: disabled  → BANTZ_VOICE_ENABLED=true")
 
     # ── OS-level audio dependency (PortAudio) ────────────────────────
+    _voice_pip_missing: list[str] = []  # #432: collect pip deps for consolidated fix command
+    _voice_apt_missing: list[str] = []
     _portaudio_ok = False
     try:
         import ctypes.util
@@ -860,6 +884,7 @@ async def _doctor() -> None:
             print(f"  ✅ PortAudio: found ({_pa_lib})")
         else:
             print("  ❌ PortAudio: NOT found  → sudo apt install portaudio19-dev")
+            _voice_apt_missing.append("portaudio19-dev")
 
     # ── PyAudio stream test ──────────────────────────────────────────
     _pyaudio_ok = False
@@ -870,6 +895,7 @@ async def _doctor() -> None:
             print("  ✅ PyAudio: importable")
         except ImportError:
             print("  ❌ PyAudio: NOT installed  → pip install pyaudio  (requires portaudio19-dev)")
+            _voice_pip_missing.append("pyaudio")
 
     # TTS / Audio Briefing (#131)
     if config.tts_enabled:
@@ -916,6 +942,7 @@ async def _doctor() -> None:
                         print("  ❌ Wake Word: pvporcupine OK but pyaudio not found")
                 else:
                     print("  ❌ Wake Word: pvporcupine not installed  → pip install pvporcupine")
+                    _voice_pip_missing.append("pvporcupine")
             except Exception as exc:
                 print(f"  ❌ Wake Word: init failed — {exc}")
     else:
@@ -939,8 +966,10 @@ async def _doctor() -> None:
                 missing = []
                 if not stt_ok:
                     missing.append("faster-whisper")
+                    _voice_pip_missing.append("faster-whisper")
                 if not vad_ok:
                     missing.append("webrtcvad")
+                    _voice_pip_missing.append("webrtcvad")
                 print(f"  ❌ Ghost Loop: missing deps → pip install {' '.join(missing)}")
         except Exception as exc:
             print(f"  ❌ Ghost Loop: init failed — {exc}")
@@ -962,6 +991,15 @@ async def _doctor() -> None:
                 print(f"  ❌ Ambient: init failed — {exc}")
     else:
         print("  ⚪ Ambient: disabled  → BANTZ_AMBIENT_ENABLED=true")
+
+    # ── Consolidated voice fix commands (#432) ───────────────────────
+    if _voice_pip_missing or _voice_apt_missing:
+        print()
+        print("  ── Voice setup fix commands:")
+        if _voice_apt_missing:
+            print(f"     sudo apt install {' '.join(_voice_apt_missing)}")
+        if _voice_pip_missing:
+            print(f"     pip install {' '.join(_voice_pip_missing)}")
 
     print()  # end voice section
 

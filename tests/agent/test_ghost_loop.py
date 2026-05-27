@@ -606,8 +606,55 @@ class TestDoctorGhostLoop:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. .env.example completeness
+# #432 — --doctor MemPalace false negative & tool count
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDoctorMemPalaceFix:
+    """Verify --doctor awaits palace_bridge.init() before checking .enabled (#432)."""
+
+    def test_doctor_awaits_palace_init(self):
+        """_doctor() must call await palace_bridge.init() before checking .enabled."""
+        import inspect
+        from bantz.cli.setup import _doctor
+        src = inspect.getsource(_doctor)
+        assert "await palace_bridge.init()" in src, (
+            "_doctor() must await palace_bridge.init() to avoid false-negative enabled check"
+        )
+
+    def test_doctor_palace_init_before_enabled(self):
+        """await palace_bridge.init() must appear before palace_bridge.enabled check."""
+        import inspect
+        from bantz.cli.setup import _doctor
+        src = inspect.getsource(_doctor)
+        init_pos = src.find("await palace_bridge.init()")
+        enabled_pos = src.find("palace_bridge.enabled")
+        assert init_pos != -1, "await palace_bridge.init() not found in _doctor()"
+        assert enabled_pos != -1, "palace_bridge.enabled not found in _doctor()"
+        assert init_pos < enabled_pos, (
+            "await palace_bridge.init() must appear before palace_bridge.enabled"
+        )
+
+    def test_doctor_loads_tool_modules(self):
+        """_doctor() must import tool modules so registry.all_schemas() is non-empty."""
+        import inspect
+        from bantz.cli.setup import _doctor
+        src = inspect.getsource(_doctor)
+        assert "bantz.tools.shell" in src, "_doctor() must import bantz.tools.shell to populate registry"
+        assert "bantz.tools.system" in src, "_doctor() must import bantz.tools.system to populate registry"
+        assert "registry.all_schemas()" in src, "_doctor() must call registry.all_schemas()"
+
+    def test_doctor_voice_tracks_pip_missing(self):
+        """_doctor() must collect missing pip packages for consolidated voice fix output (#432)."""
+        import inspect
+        from bantz.cli.setup import _doctor
+        src = inspect.getsource(_doctor)
+        assert "_voice_pip_missing" in src, (
+            "_doctor() must track missing voice pip packages for consolidated fix command"
+        )
+        assert "_voice_apt_missing" in src, (
+            "_doctor() must track missing voice apt packages for consolidated fix command"
+        )
 
 
 class TestEnvExampleCompleteness:
