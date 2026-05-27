@@ -13,6 +13,8 @@ Commands:
   bantz --setup schedule        → class schedule setup
   bantz --setup telegram        → Telegram bot token setup
   bantz --setup places          → Known locations setup
+  bantz --setup gemini          → Gemini API key setup
+  bantz --setup voice           → Guided voice setup wizard (STT + TTS + wake word)
   bantz --setup systemd         → install systemd user service
 """
 from __future__ import annotations

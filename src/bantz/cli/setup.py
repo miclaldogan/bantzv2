@@ -28,6 +28,9 @@ def _handle_setup(parts: list[str]) -> None:
     if len(parts) >= 1 and parts[0].lower() == "gemini":
         _setup_gemini()
         return
+    if len(parts) >= 1 and parts[0].lower() == "voice":
+        _setup_voice()
+        return
     if len(parts) >= 1 and parts[0].lower() == "systemd":
         if len(parts) >= 2 and parts[1].lower() == "--check":
             _systemd_check()
@@ -48,6 +51,7 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup telegram")
         print("  bantz --setup places")
         print("  bantz --setup gemini")
+        print("  bantz --setup voice")
         print("  bantz --setup systemd")
         print("  bantz --setup systemd --check")
 
@@ -193,6 +197,207 @@ def _setup_gemini() -> None:
     print(f"\n✅ Gemini configured: {env_path}")
     print(f"   Model: {model}")
     print("   Gemini will be used as the finalizer for high-quality responses.")
+
+
+# ── Voice packages checked by _setup_voice ──────────────────────────────────
+# Maps pip install name → importable name
+_VOICE_PACKAGES: dict[str, str] = {
+    "faster-whisper": "faster_whisper",
+    "pyaudio": "pyaudio",
+    "webrtcvad": "webrtcvad",
+    "pvporcupine": "pvporcupine",
+}
+
+# .env keys removed / re-added by _setup_voice
+_VOICE_ENV_PREFIXES: tuple[str, ...] = (
+    "BANTZ_VOICE_ENABLED=",
+    "BANTZ_TTS_ENABLED=",
+    "BANTZ_STT_ENABLED=",
+    "BANTZ_GHOST_LOOP_ENABLED=",
+    "BANTZ_WAKE_WORD_ENABLED=",
+    "BANTZ_PICOVOICE_ACCESS_KEY=",
+)
+
+
+def _setup_voice() -> None:
+    """Guided voice setup wizard (`bantz --setup voice`).
+
+    1. Checks which of faster-whisper, pyaudio, webrtcvad, pvporcupine
+       are installed.
+    2. Offers to run ``pip install`` for missing packages.
+    3. Prompts for ``BANTZ_PICOVOICE_ACCESS_KEY`` (wake-word detection).
+    4. Writes ``BANTZ_VOICE_ENABLED``, ``BANTZ_TTS_ENABLED``,
+       ``BANTZ_STT_ENABLED``, ``BANTZ_GHOST_LOOP_ENABLED`` (and
+       ``BANTZ_WAKE_WORD_ENABLED`` when a Picovoice key is supplied) to
+       ``.env``.
+    5. Runs a mic test, STT availability check, and TTS binary check.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    print("\n🎤 Bantz — Voice Setup Wizard")
+    print("─" * 40)
+    print("Sets up voice input (STT / wake-word) and TTS output.")
+    print()
+
+    # ── Step 1: check installed packages ────────────────────────────────
+    print("Step 1/4 — Checking voice dependencies…")
+    print()
+    missing: list[str] = []
+    for pkg_name, import_name in _VOICE_PACKAGES.items():
+        try:
+            __import__(import_name)
+            print(f"  ✅ {pkg_name}")
+        except ImportError:
+            missing.append(pkg_name)
+            print(f"  ❌ {pkg_name} (not installed)")
+    print()
+
+    # ── Step 2: offer pip install for missing packages ───────────────────
+    if missing:
+        print(f"Step 2/4 — Install missing packages: {', '.join(missing)}")
+        answer = input("  Install now? [Y/n] ").strip().lower()
+        if answer in ("", "y", "yes", "evet", "e"):
+            for pkg in missing:
+                print(f"  pip install {pkg}…")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", pkg],
+                )
+                if result.returncode == 0:
+                    print(f"  ✅ {pkg} installed")
+                else:
+                    print(f"  ❌ {pkg} install failed (exit {result.returncode})")
+        else:
+            print("  Skipped. Install manually:")
+            print(f"    pip install {' '.join(missing)}")
+        print()
+    else:
+        print("Step 2/4 — All packages present. ✅")
+        print()
+
+    # ── Step 3: Picovoice access key ─────────────────────────────────────
+    print("Step 3/4 — Picovoice Access Key (wake-word detection)")
+    print("  Get a free key at: https://console.picovoice.ai/")
+    print("  Leave blank to skip wake-word detection.")
+    picovoice_key = input("  Picovoice Access Key: ").strip()
+    print()
+
+    # ── Step 4: write .env ───────────────────────────────────────────────
+    print("Step 4/4 — Saving settings to .env…")
+    env_path = Path.cwd() / ".env"
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+
+    # Strip any existing voice entries so we write a clean set
+    lines = [
+        line for line in lines
+        if not any(line.startswith(p) for p in _VOICE_ENV_PREFIXES)
+    ]
+
+    lines.append("BANTZ_VOICE_ENABLED=true")
+    lines.append("BANTZ_TTS_ENABLED=true")
+    lines.append("BANTZ_STT_ENABLED=true")
+    lines.append("BANTZ_GHOST_LOOP_ENABLED=true")
+    if picovoice_key:
+        lines.append(f"BANTZ_PICOVOICE_ACCESS_KEY={picovoice_key}")
+        lines.append("BANTZ_WAKE_WORD_ENABLED=true")
+
+    fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  ✅ Saved: {env_path}")
+    print()
+
+    # ── Step 5: component tests ──────────────────────────────────────────
+    print("─" * 40)
+    print("Running voice component tests…")
+    print()
+    mic_ok = _voice_test_mic()
+    stt_ok = _voice_test_stt()
+    tts_ok = _voice_test_tts()
+    print()
+
+    if all([mic_ok, stt_ok, tts_ok]):
+        print("✅ All voice components ready.")
+    else:
+        print("⚠  Some components failed — see above for details.")
+    print("Restart Bantz for settings to take effect: bantz")
+    print()
+
+
+def _voice_test_mic() -> bool:
+    """Test microphone access (reads one PyAudio frame; no recording kept).
+
+    Returns True on success, False on failure.
+    """
+    print("  Mic test…", end=" ", flush=True)
+    try:
+        import pyaudio
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            rate=16000,
+            channels=1,
+            format=pyaudio.paInt16,
+            input=True,
+            frames_per_buffer=480,
+        )
+        data = stream.read(480, exception_on_overflow=False)
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+        if data:
+            print("PASS ✅")
+            return True
+        print("FAIL ❌ (no audio data)")
+        return False
+    except ImportError:
+        print("SKIP ⚠  (pyaudio not installed)")
+        return False
+    except Exception as exc:
+        print(f"FAIL ❌ ({exc})")
+        return False
+
+
+def _voice_test_stt() -> bool:
+    """Test STT availability — import check only (no model loaded here).
+
+    Returns True if faster-whisper is importable, False otherwise.
+    """
+    print("  STT (faster-whisper) test…", end=" ", flush=True)
+    try:
+        import faster_whisper  # noqa: F401
+        print("PASS ✅")
+        return True
+    except ImportError:
+        print("FAIL ❌ (faster-whisper not installed)")
+        return False
+
+
+def _voice_test_tts() -> bool:
+    """Test TTS availability — checks for the Piper binary.
+
+    Returns True if a Piper executable is found, False otherwise.
+    """
+    import shutil
+    from pathlib import Path
+
+    print("  TTS (Piper) test…", end=" ", flush=True)
+    candidates = [
+        shutil.which("piper"),
+        shutil.which("piper-tts"),
+        str(Path.home() / ".local" / "bin" / "piper"),
+        str(Path.home() / "miniforge3" / "bin" / "piper"),
+    ]
+    if any(c and Path(c).exists() for c in candidates):
+        print("PASS ✅")
+        return True
+    print("FAIL ❌ (piper binary not found — see https://github.com/rhasspy/piper)")
+    return False
 
 
 async def _setup_places() -> None:
