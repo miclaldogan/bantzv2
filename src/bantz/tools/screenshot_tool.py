@@ -64,7 +64,9 @@ class ScreenshotTool(BaseTool):
 
         action = str(kwargs.get("action", "capture")).strip().lower()
 
-        if not config.telegram_screenshot_enabled and action != "analyze":
+        # Screenshots allowed via Telegram OR input_control (local desktop use)
+        screenshot_allowed = config.telegram_screenshot_enabled or config.input_control_enabled
+        if not screenshot_allowed and action != "analyze":
             return ToolResult(
                 success=False, output="",
                 error="Daguerreotype apparatus is disabled in configuration, ma'am.",

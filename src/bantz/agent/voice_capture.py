@@ -76,6 +76,23 @@ class VoiceCapture:
         self._pa = None  # PyAudio instance
         self._vad = None  # WebRTC VAD instance
 
+        # Eagerly warn about missing dependencies so failures are visible at startup
+        _missing = []
+        try:
+            import webrtcvad  # noqa: F401
+        except ImportError:
+            _missing.append("webrtcvad")
+        try:
+            import pyaudio  # noqa: F401
+        except ImportError:
+            _missing.append("pyaudio")
+        if _missing:
+            log.warning(
+                "VoiceCapture: missing voice dependencies: %s — "
+                "run: pip install 'bantz[voice]'",
+                ", ".join(_missing),
+            )
+
     def _ensure_init(self) -> bool:
         """Lazy-initialize PyAudio and WebRTC VAD. Returns True if ready."""
         if self._vad is not None:

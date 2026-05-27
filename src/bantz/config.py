@@ -172,6 +172,7 @@ class Config(BaseSettings):
     tts_model_path: str = Field("", alias="BANTZ_TTS_MODEL_PATH")
     tts_speaker: int = Field(0, alias="BANTZ_TTS_SPEAKER")
     tts_rate: float = Field(1.0, alias="BANTZ_TTS_RATE")
+    tts_length_scale: float = Field(1.0, alias="BANTZ_TTS_LENGTH_SCALE")  # direct piper --length_scale
     tts_auto_briefing: bool = Field(True, alias="BANTZ_TTS_AUTO_BRIEFING")
     tts_speak_all_responses: bool = Field(False, alias="BANTZ_TTS_SPEAK_ALL_RESPONSES")
     tts_animatronic_filter: bool = Field(False, alias="BANTZ_TTS_ANIMATRONIC_FILTER")

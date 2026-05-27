@@ -724,6 +724,21 @@ async def _doctor() -> None:
     else:
         print("⚪ Profile: not configured  → bantz --setup profile")
 
+    # AT-SPI Accessibility
+    try:
+        from bantz.tools.accessibility import _init_atspi, list_applications, detect_display_server
+        atspi_ok = _init_atspi()
+        if atspi_ok:
+            _atspi_apps = list_applications()
+            _display = detect_display_server()
+            print(f"✅ AT-SPI2: available — {len(_atspi_apps)} accessible app(s), display={_display}")
+            if not _atspi_apps:
+                print("   ⚠ No accessible apps found — ensure AT-SPI bus is active and apps support accessibility")
+        else:
+            print("❌ AT-SPI2: unavailable — sudo apt install python3-gi gir1.2-atspi-2.0")
+    except Exception as _exc:
+        print(f"❌ AT-SPI2: import failed ({_exc})")
+
     # Input Control (#122)
     if config.input_control_enabled:
         try:

@@ -254,6 +254,10 @@ class WsBroadcastServer:
                 await _send(ws, {"type": "token", "text": response})
             await _send(ws, {"type": "done"})
 
+        # ── TTS: speak the response aloud when enabled ────────────────────
+        if response.strip():
+            _maybe_speak(response)
+
     # ── tasks ──────────────────────────────────────────────────────────────
 
     async def _handle_get_tasks(self, ws: ServerConnection) -> None:
@@ -458,6 +462,23 @@ async def _to_tr(text: str) -> str:
     except Exception as exc:
         log.debug("EN→TR translation failed: %s", exc)
     return text
+
+
+def _maybe_speak(text: str) -> None:
+    """Fire-and-forget TTS for a chat response when speak_all_responses is on.
+
+    Called after the response has been sent to the UI so TTS never delays
+    the WebSocket reply.  Skipped silently if TTS is unavailable.
+    """
+    try:
+        from bantz.config import config as _cfg
+        if not _cfg.tts_enabled or not _cfg.tts_speak_all_responses:
+            return
+        from bantz.agent.tts import tts_engine
+        if tts_engine.available():
+            asyncio.create_task(tts_engine.speak_background(text))
+    except Exception as exc:
+        log.debug("TTS speak skipped: %s", exc)
 
 
 async def _send(ws: ServerConnection, payload: dict) -> None:

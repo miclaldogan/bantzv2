@@ -89,11 +89,14 @@ TOOLS:
 RULES:
 - CASUAL GREETINGS (hey, hi, hello, hey bud, yo, sup, what's up, howdy, good morning, good evening, how are you, how's it going) → ALWAYS route="chat". NEVER run_workflow, NEVER briefing, NEVER any tool. These are conversational openers, not requests.
 - ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
-- Factual / knowledge questions → web_search. NEVER answer from memory.
+- Factual / knowledge questions about CURRENT EVENTS, recent news, prices, or live data → web_search.
+- "what do you know about X", "tell me what you know about X", "what can you tell me about X" → route="chat". Answer from training knowledge — do NOT run a web search.
+- "who is X" → route="chat". Answer from your training knowledge. Only use web_search if the user explicitly says "search for" or "look up".
+- "do you remember X", "do you know me", "have I told you", "who am I", "do you know who I am" → route="chat". Use conversation context, never a tool.
 - "check my mail/email/inbox" → gmail action=summary. NEVER hallucinate email content.
 - "add/create/schedule event/dinner/meeting at TIME" → calendar action=create with title and time. NOT action=today.
 - "delete/cancel/remove reminder #N" or "delete the no N reminder" → reminder action=cancel id=N. The tool name is "reminder" NOT "cancel_reminder".
-- "remind me in X minutes/a minute" → reminder action=add. Parse time carefully: "a minute" = 1 minute, NOT 1 hour.
+- "remind me in X minutes/a minute", "set a reminder", "set an alarm", "remind me at X", "remind me to X", "in X minutes remind me", "X minutes from now remind" → reminder action=add. Parse time carefully: "a minute" = 1 minute, NOT 1 hour. NEVER route reminder requests to planner.
 - "weather in X tomorrow/forecast/this week/will it rain" → weather tool directly. The weather tool already returns a 3-day forecast — NEVER route weather queries to planner.
 - "just open YouTube/Spotify/Netflix" (no specific content) → browser_control action=open app=firefox url=https://youtube.com
 - "open Gemini/ChatGPT/Claude" or any WEB APP → browser_control action=navigate url=<correct URL>. Known web apps: gemini=https://gemini.google.com, chatgpt=https://chatgpt.com, claude=https://claude.ai, perplexity=https://perplexity.ai, github=https://github.com, reddit=https://reddit.com
@@ -111,7 +114,13 @@ RULES:
 - Tool name must be EXACT registry name in snake_case. Never invent tool names like "cancel_reminder" or "delete_event". Use the base tool with the right action param.
 - Clicking a UI element → visual_click with "target" param (e.g. visual_click: click a button or link). NOT shell, NOT browser_control.
 - Create folder + file in one step → filesystem action=create_folder_and_file with folder_path and file_name params.
-- Entity lookups ("who is X", "what is X") → web_search. Never answer from memory.
+- Entity lookups ("what is the capital of X", "who founded X company") → web_search only when the answer is time-sensitive or obscure.
+
+EMOTIONAL AND PERSONAL STATEMENT RULES — HIGHEST PRIORITY:
+- Any message starting with "I feel", "I'm feeling", "I am feeling" → ALWAYS route="chat". No exceptions.
+- Messages expressing stress, overwhelm, exhaustion, frustration, or sadness → ALWAYS route="chat". NEVER route to planner, calendar, gmail, or any task tool.
+- Venting and personal statements ("I have so much to do", "everything is piling up", "I'm exhausted", "I can't handle this") → route="chat". The user is sharing, not issuing a command.
+- A sentence that lists multiple topics without an explicit action verb (do, check, open, set, find, search, send) is a personal statement → route="chat".
 
 ANTI-FALSE-POSITIVE RULES (when in doubt, route to chat):
 - Never guess a tool. Only trigger a tool when the intent is unambiguous and explicit.
@@ -351,6 +360,37 @@ def _clean_thinking_text(text: str) -> str:
     return text.strip()
 
 
+# ── Fast pre-route regexes — compiled once at module load ─────────────────────
+# Both checked against the English input BEFORE the LLM routing call.
+# Turkish never reaches this logic; translation happens upstream in ws_server.
+
+_REMINDER_FAST = re.compile(
+    r"(?i)"
+    r"\bremind me\b|"
+    r"\bset (a |an )?(reminder|alarm)\b|"
+    r"\breminder in \d+\b|"
+    r"\bin \d+ (minute|hour|second)s?\b.*(remind|alert|notify)\b|"
+    r"\b(remind|alert|notify) me in \d+\b",
+)
+
+_CHAT_FAST = re.compile(
+    r"(?i)"
+    r"what do you know about\b|"
+    r"tell me what you know\b|"
+    r"what can you tell me about\b|"
+    r"do you know (who|what|anything about)\b|"
+    r"do you remember\b|"
+    r"have (i|you) told you\b|"
+    r"\bwho (?:is|was|were|are)\b(?!.*(?:ceo|founder|president|prime minister|capital))|"
+    r"^i (feel|felt|am feeling|was feeling|have been feeling)\b|"
+    r"^i (am|was|have been) (so )?(tired|exhausted|stressed|overwhelmed|sad|anxious|frustrated|angry|happy|excited|worried|scared|afraid|depressed)\b|"
+    r"\bi (can't|cannot) (handle|deal with|cope)\b|"
+    r"\beverything is (piling up|too much|overwhelming)\b|"
+    r"\bi have (so much|too much|a lot of) (to do|work)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 async def cot_route(
     en_input: str,
     tool_schemas: list[dict],
@@ -384,6 +424,18 @@ async def cot_route(
         events) injected only when relevant (#275 — avoids bloating the
         prompt when unrelated queries are asked).
     """
+    if _REMINDER_FAST.search(en_input):
+        log.debug("cot_route fast-path: pre-route to reminder for: %.80s", en_input)
+        _time_m = re.search(r"in (\d+)\s*(minute|hour|second)", en_input, re.IGNORECASE)
+        _minutes = int(_time_m.group(1)) if _time_m else 10
+        if _time_m and "hour" in _time_m.group(2).lower():
+            _minutes *= 60
+        return {"route": "tool", "tool_name": "reminder", "tool_args": {"action": "add", "title": en_input, "minutes": _minutes}, "confidence": 0.9, "reasoning": "pre-route: reminder pattern"}, None
+
+    if _CHAT_FAST.search(en_input):
+        log.debug("cot_route fast-path: pre-route to chat for: %.80s", en_input)
+        return {"route": "chat", "tool_name": None, "tool_args": {}, "confidence": 0.95, "reasoning": "pre-route: knowledge/emotional pattern"}, None
+
     schema_str = _build_compact_schemas(tool_schemas)
 
     # Build optional history block for coreference resolution

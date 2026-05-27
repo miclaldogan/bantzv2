@@ -127,9 +127,14 @@ class GhostLoop:
             bus.emit_threadsafe("stt_model_loading")
             log.info("Ghost Loop: pre-loading STT model …")
             from bantz.agent.stt import stt_engine
-            stt_engine._ensure_model()
-            bus.emit_threadsafe("stt_model_ready")
-            log.info("Ghost Loop: STT model ready")
+            ready = stt_engine._ensure_model()
+            if ready:
+                bus.emit_threadsafe("stt_model_ready")
+                log.info("Ghost Loop: STT model ready")
+            else:
+                error = "faster-whisper not installed — run: pip install 'bantz[voice]'"
+                log.warning("Ghost Loop: STT unavailable — %s", error)
+                bus.emit_threadsafe("stt_model_failed", error=error)
         except Exception as exc:
             log.debug("Ghost Loop: STT preload failed — %s", exc)
             bus.emit_threadsafe("stt_model_failed", error=str(exc))

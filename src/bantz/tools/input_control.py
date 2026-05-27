@@ -48,7 +48,7 @@ _pynput_keyboard_controller = None
 
 
 def _detect_backend() -> str:
-    """Detect best input backend: pyautogui (X11) or pynput (Wayland)."""
+    """Detect best input backend for the current display server."""
     global _backend
     if _backend is not None:
         return _backend
@@ -57,6 +57,7 @@ def _detect_backend() -> str:
     wayland = session == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY"))
 
     if wayland:
+        # Prefer pynput (evdev/uinput, no daemon needed)
         try:
             from pynput import mouse, keyboard  # noqa: F401
             _backend = "pynput"
@@ -65,7 +66,23 @@ def _detect_backend() -> str:
         except ImportError:
             pass
 
-    # X11 or fallback
+        # ydotool: Wayland-native xdotool replacement (needs ydotoold daemon)
+        try:
+            r = subprocess.run(["which", "ydotool"], capture_output=True, timeout=2)
+            if r.returncode == 0:
+                # Verify ydotoold daemon is reachable
+                r2 = subprocess.run(
+                    ["ydotool", "mousemove", "--", "0", "0"],
+                    capture_output=True, timeout=2,
+                )
+                if r2.returncode == 0:
+                    _backend = "ydotool"
+                    log.debug("Input backend: ydotool (Wayland)")
+                    return _backend
+        except Exception:
+            pass
+
+    # X11 / XWayland
     try:
         import pyautogui  # noqa: F401
         _backend = "pyautogui"
@@ -83,12 +100,12 @@ def _detect_backend() -> str:
     except ImportError:
         pass
 
-    # xdotool as last resort
+    # xdotool (X11 only)
     try:
-        result = subprocess.run(["which", "xdotool"], capture_output=True)
-        if result.returncode == 0:
+        r = subprocess.run(["which", "xdotool"], capture_output=True)
+        if r.returncode == 0:
             _backend = "xdotool"
-            log.debug("Input backend: xdotool (fallback)")
+            log.debug("Input backend: xdotool (X11 fallback)")
             return _backend
     except Exception:
         pass
@@ -245,10 +262,18 @@ async def click(x: int, y: int) -> dict:
         from pynput.mouse import Button
         mc.position = (x, y)
         mc.click(Button.left, 1)
+    elif backend == "ydotool":
+        proc = await asyncio.create_subprocess_exec(
+            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        )
+        await proc.wait()
+        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        await proc.wait()
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             "xdotool", "mousemove", str(x), str(y), "click", "1",
         )
+        await proc.wait()
     else:
         raise RuntimeError("No input backend available")
 
@@ -269,11 +294,21 @@ async def double_click(x: int, y: int) -> dict:
         from pynput.mouse import Button
         mc.position = (x, y)
         mc.click(Button.left, 2)
+    elif backend == "ydotool":
+        proc = await asyncio.create_subprocess_exec(
+            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        )
+        await proc.wait()
+        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        await proc.wait()
+        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        await proc.wait()
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             "xdotool", "mousemove", str(x), str(y),
             "click", "--repeat", "2", "--delay", "50", "1",
         )
+        await proc.wait()
     else:
         raise RuntimeError("No input backend available")
 
@@ -294,10 +329,18 @@ async def right_click(x: int, y: int) -> dict:
         from pynput.mouse import Button
         mc.position = (x, y)
         mc.click(Button.right, 1)
+    elif backend == "ydotool":
+        proc = await asyncio.create_subprocess_exec(
+            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        )
+        await proc.wait()
+        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC1")
+        await proc.wait()
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             "xdotool", "mousemove", str(x), str(y), "click", "3",
         )
+        await proc.wait()
     else:
         raise RuntimeError("No input backend available")
 
@@ -316,8 +359,14 @@ async def move_to(x: int, y: int) -> dict:
     elif backend == "pynput":
         mc, _ = _get_pynput()
         mc.position = (x, y)
+    elif backend == "ydotool":
+        proc = await asyncio.create_subprocess_exec(
+            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        )
+        await proc.wait()
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec("xdotool", "mousemove", str(x), str(y))
+        proc = await asyncio.create_subprocess_exec("xdotool", "mousemove", str(x), str(y))
+        await proc.wait()
     else:
         raise RuntimeError("No input backend available")
 

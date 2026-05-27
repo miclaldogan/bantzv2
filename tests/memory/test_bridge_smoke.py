@@ -58,7 +58,7 @@ def bridge(mock_config):
     with patch("bantz.memory.bridge._get_config", return_value=mock_config):
         from bantz.memory.bridge import MemPalaceBridge
         b = MemPalaceBridge()
-        asyncio.get_event_loop().run_until_complete(b.init())
+        asyncio.run(b.init())
         yield b
         b.close()
 
@@ -89,7 +89,7 @@ class TestBridgeInit:
         with patch("bantz.memory.bridge._get_config", return_value=mock_cfg):
             from bantz.memory.bridge import MemPalaceBridge
             b = MemPalaceBridge()
-            asyncio.get_event_loop().run_until_complete(b.init())
+            asyncio.run(b.init())
             assert b.enabled is False
 
 

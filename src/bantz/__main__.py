@@ -328,6 +328,23 @@ async def _daemon() -> None:
     # Start WebSocket server for Tauri UI
     await _start_ws_server()
 
+    # Warm up TTS engine so the first chat response isn't delayed by model load
+    if config.tts_enabled:
+        try:
+            from bantz.agent.tts import tts_engine
+            if tts_engine._ensure_init():
+                log.info(
+                    "TTS engine initialized, model=%s speak_all=%s",
+                    tts_engine._model_path, config.tts_speak_all_responses,
+                )
+            else:
+                log.warning(
+                    "TTS enabled but engine failed to initialize "
+                    "(piper binary or model file missing?)"
+                )
+        except Exception as _tts_exc:
+            log.warning("TTS warm-up failed: %s", _tts_exc)
+
     # Graceful shutdown
     stop_event = asyncio.Event()
 

@@ -261,6 +261,7 @@ class Navigator:
         *,
         role_filter: Optional[str] = None,
         preferred_method: Optional[str] = None,
+        screenshot_b64: Optional[str] = None,
     ) -> NavResult:
         """Find a UI element using the multi-method pipeline.
 
@@ -269,6 +270,7 @@ class Navigator:
             element_label: Human description (e.g., "search bar", "save button")
             role_filter: Optional AT-SPI role (e.g., "push button")
             preferred_method: Force a specific method ("cache", "atspi", "vlm")
+            screenshot_b64: Pre-captured base64 screenshot for VLM (avoids double capture).
 
         Returns:
             NavResult with coordinates if found, or found=False
@@ -295,7 +297,7 @@ class Navigator:
                 elif method == "atspi":
                     r = self._try_atspi(app_name, element_label, role_filter)
                 elif method == "vlm":
-                    r = await self._try_vlm(app_name, element_label)
+                    r = await self._try_vlm(app_name, element_label, screenshot_b64=screenshot_b64)
                 else:
                     continue
 
@@ -465,24 +467,27 @@ class Navigator:
             log.debug("AT-SPI lookup failed: %s", exc)
         return None
 
-    async def _try_vlm(self, app_name: str, label: str) -> Optional[NavResult]:
+    async def _try_vlm(
+        self, app_name: str, label: str, *, screenshot_b64: Optional[str] = None,
+    ) -> Optional[NavResult]:
         """Step 3: Remote VLM screenshot analysis."""
         try:
             from bantz.config import config
             if not config.vlm_enabled:
                 return None
 
-            from bantz.vision.screenshot import capture_window_base64, capture_base64
             from bantz.vision.remote_vlm import analyze_screenshot
 
-            # Try capturing the specific app window, fall back to full screen
-            img_b64 = None
-            try:
-                img_b64 = await capture_window_base64(app_name)
-            except Exception:
-                pass
+            # Use pre-captured screenshot if provided (avoids second capture)
+            img_b64 = screenshot_b64
             if not img_b64:
-                img_b64 = await capture_base64()
+                from bantz.vision.screenshot import capture_window_base64, capture_base64
+                try:
+                    img_b64 = await capture_window_base64(app_name)
+                except Exception:
+                    pass
+                if not img_b64:
+                    img_b64 = await capture_base64()
             if not img_b64:
                 return None
 
