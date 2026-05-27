@@ -144,14 +144,26 @@ class NewsTool(BaseTool):
             ids_resp.raise_for_status()
             ids = ids_resp.json()[:limit]
 
-            titles = []
-            for story_id in ids:
+            import asyncio
+
+            async def fetch_item(story_id: int):
                 item_resp = await client.get(
                     f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
                     timeout=TIMEOUT,
                 )
                 item_resp.raise_for_status()
-                item = item_resp.json()
+                return item_resp.json()
+
+            # ⚡ Bolt: Fetch HN items concurrently to eliminate sequential N+1 API calls.
+            results = await asyncio.gather(
+                *(fetch_item(story_id) for story_id in ids),
+                return_exceptions=True
+            )
+
+            titles = []
+            for item in results:
+                if isinstance(item, Exception):
+                    continue
                 if title := item.get("title"):
                     score = item.get("score", 0)
                     titles.append(f"{title}  ({score} pts)")
