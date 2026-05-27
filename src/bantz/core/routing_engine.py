@@ -88,6 +88,32 @@ def quick_route(orig: str, en: str) -> dict | None:
     if re.search(r"clear\s+memory", both):
         return {"tool": "_clear_memory", "args": {}}
 
+    # ── Turkish system/hardware queries (#433) ────────────────────────
+    # Caught on the ORIGINAL text (before translation) so MarianMT artifacts
+    # ("what is the use of cpu") cannot cause mis-routing to web_search.
+    # Also catches the MarianMT artifact on the English side for robustness.
+    _sys_tr = re.search(
+        r"cpu\s+kullan[ıi]m[ıi]|ram\s+kullan[ıi]m[ıi]|bellek\s+kullan[ıi]m[ıi]|"
+        r"disk\s+kullan[ıi]m[ıi]|i[sş]lemci\s+kullan[ıi]m[ıi]|"
+        r"ne\s+kadar\s+(ram|bellek|disk|cpu)|"
+        r"(ram|bellek|disk|cpu|i[sş]lemci)\s+(ne\s+kadar|nedir|durumu)|"
+        r"sistem\s+(durumu|bilgisi|metrikleri)|"
+        r"depolama\s+(kullan[ıi]m[ıi]|durumu)",
+        o,
+    )
+    _sys_marian = re.search(
+        r"what\s+is\s+the\s+use\s+of\s+(cpu|ram|disk|memory|processor|storage)",
+        e,
+    )
+    if _sys_tr or _sys_marian:
+        if re.search(r"\bcpu\b|\bi[sş]lemci\b|\bprocessor\b", both):
+            return {"tool": "system", "args": {"metric": "cpu"}}
+        if re.search(r"\bram\b|\bbellek\b|\bmemory\b", both):
+            return {"tool": "system", "args": {"metric": "ram"}}
+        if re.search(r"\bdisk\b|\bdepolama\b|\bstorage\b", both):
+            return {"tool": "system", "args": {"metric": "disk"}}
+        return {"tool": "system", "args": {"metric": "all"}}
+
     # Everything else → cot_route (LLM-based reasoning)
     return None
 
