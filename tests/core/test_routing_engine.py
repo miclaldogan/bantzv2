@@ -121,6 +121,60 @@ class TestQuickRoute:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# #433 — Turkish system queries routed to system tool, not web_search
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestQuickRouteTurkishSystem:
+    """Turkish hardware/metric queries must fast-path to system tool (#433)."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from bantz.core.routing_engine import quick_route
+        self.qr = quick_route
+
+    @pytest.mark.parametrize("orig,en,expected_metric", [
+        # Turkish original → correct metric
+        ("CPU kullanımı nedir?", "What is the use of CPU?", "cpu"),
+        ("cpu kullanımı ne kadar", "What is the cpu usage", "cpu"),
+        ("RAM kullanımı nedir?", "What is the use of RAM?", "ram"),
+        ("bellek kullanımı ne kadar", "How much memory usage", "ram"),
+        ("disk kullanımı nedir?", "What is the use of disk?", "disk"),
+        ("depolama durumu", "storage status", "disk"),
+        ("işlemci kullanımı kaç", "How much processor usage", "cpu"),
+        # MarianMT artifact on the English side (orig may already be English)
+        ("cpu nedir", "what is the use of cpu", "cpu"),
+        ("ram nedir", "what is the use of ram", "ram"),
+        ("disk nedir", "what is the use of disk", "disk"),
+        # System overview
+        ("sistem durumu", "system status", "all"),
+        ("sistem bilgisi", "system info", "all"),
+    ])
+    def test_turkish_system_routes_to_system_tool(self, orig, en, expected_metric):
+        """Turkish system queries must route to system tool before LLM sees them."""
+        r = self.qr(orig, en)
+        assert r is not None, f"quick_route({orig!r}, {en!r}) returned None — should route to system"
+        assert r["tool"] == "system", f"Expected tool=system, got {r['tool']!r}"
+        assert r["args"].get("metric") == expected_metric, (
+            f"Expected metric={expected_metric!r}, got {r['args']!r}"
+        )
+
+    @pytest.mark.parametrize("orig,en", [
+        # English system queries must still go through LLM (#272)
+        ("cpu usage", "cpu usage"),
+        ("memory usage", "memory usage"),
+        ("check disk space", "check disk space"),
+        ("how much RAM is free", "how much RAM is free"),
+        ("system status", "system status"),
+    ])
+    def test_english_system_still_uses_llm(self, orig, en):
+        """Plain English system queries must still go through cot_route (LLM)."""
+        r = self.qr(orig, en)
+        assert r is None, (
+            f"quick_route({orig!r}, {en!r}) returned {r!r} — English should go through LLM"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 2. dispatch_internal — internal tool execution
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -351,3 +405,24 @@ class TestWorkflowHandlers:
             result = _run(handle_run_reflection())
         assert "❌" in result
         assert "fail" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# #433 — _ROUTING_HINTS system entry includes Turkish examples
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestRoutingHintsTurkishSystem:
+    """_ROUTING_HINTS for system tool must include Turkish keywords (#433)."""
+
+    def test_system_hint_has_turkish_keywords(self):
+        from bantz.core.intent import _ROUTING_HINTS
+        hint = _ROUTING_HINTS["system"]
+        assert "cpu kullanımı" in hint.lower() or "cpu kullanımı" in hint
+        assert "ram kullanımı" in hint.lower() or "ram kullanımı" in hint
+        assert "işlemci" in hint
+
+    def test_system_hint_has_marian_artifact_note(self):
+        from bantz.core.intent import _ROUTING_HINTS
+        hint = _ROUTING_HINTS["system"]
+        assert "what is the use of" in hint.lower()
+        assert "web_search" in hint

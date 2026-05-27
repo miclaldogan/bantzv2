@@ -39,7 +39,12 @@ _ROUTING_HINTS: dict[str, str] = {
     "weather": "Current weather AND forecast — handles 'tomorrow', 'this week', 'will it rain', forecast queries. Single tool call, no planning needed. city param optional (auto-detects location).",
     "reminder": "Create, list, cancel, snooze reminders and timers. action=add for new reminders. action=cancel with id=N for 'delete/cancel/remove reminder #N'. action=list for 'show my reminders'.",
     "shell": "Run a bash command (ls, df, top, apt, etc.)",
-    "system": "Live system metrics: CPU, RAM, disk usage, uptime",
+    "system": (
+        "Live system metrics: CPU, RAM, disk usage, uptime. "
+        "Turkish: 'cpu kullanımı', 'ram kullanımı', 'bellek kullanımı', 'disk kullanımı', "
+        "'sistem durumu', 'işlemci'. "
+        "MarianMT artifact: 'what is the use of cpu/ram/disk' = system metric query, NOT web_search."
+    ),
     "filesystem": "Read, write, list files and folders under home directory",
     "browser_control": "Launch apps AND control browser. Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
     "visual_click": "Click any visible UI element on screen by describing it",
