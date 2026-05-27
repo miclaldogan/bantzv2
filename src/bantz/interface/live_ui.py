@@ -878,7 +878,8 @@ class LiveUI:
             except Exception as exc:
                 self._busy = False
                 self._streaming_text = None
-                self.add_chat("error", f"Unexpected error: {exc}")
+                log.error("Chat loop error: %s", exc)
+                self.add_chat("error", "I'm afraid I encountered a slight mechanical difficulty, ma'am.")
 
     # ─────────────────────────────────────────────────────────────
     # Process user input
@@ -900,7 +901,8 @@ class LiveUI:
             result = await brain.process(text)
         except Exception as exc:
             self._busy = False
-            self.add_chat("error", f"{type(exc).__name__}: {exc}")
+            log.error("Process input error: %s", exc)
+            self.add_chat("error", "I'm afraid I encountered a slight mechanical difficulty, ma'am.")
             return
 
         # ── Streaming ─────────────────────────────────────────────
@@ -919,7 +921,8 @@ class LiveUI:
             except Exception as exc:
                 self._streaming_text = None
                 self._busy = False
-                self.add_chat("error", f"Stream error: {exc}")
+                log.error("Stream error: %s", exc)
+                self.add_chat("error", "I'm afraid the stream encountered a slight difficulty, ma'am.")
                 return
 
             self._streaming_text = None

@@ -1044,3 +1044,172 @@ class TestPromptParity:
         from bantz.core.brain import Brain
         src_process = inspect.getsource(Brain.process)
         assert "_is_remote" in src_process
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. Exception → butler-voice persona mapping (#442)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestExceptionPersonaMapping:
+    """#442 — Tool/LLM exceptions must yield butler-voice responses, not raw tracebacks."""
+
+    def test_exc_to_butler_generic(self):
+        """Generic exception maps to the general butler-difficulty message."""
+        from bantz.core.brain import _exc_to_butler
+        result = _exc_to_butler(ValueError("bad value"))
+        assert "ma'am" in result
+        assert "ValueError" not in result
+
+    def test_exc_to_butler_connection_error(self):
+        """Connection-type exceptions map to the network butler message."""
+        from bantz.core.brain import _exc_to_butler
+        result = _exc_to_butler(ConnectionError("Connection refused"))
+        assert "ma'am" in result
+        assert "ConnectionError" not in result
+        # Network-specific phrase
+        assert "reach" in result or "wires" in result
+
+    def test_exc_to_butler_timeout_error(self):
+        """Timeout exceptions trigger the network butler message."""
+        from bantz.core.brain import _exc_to_butler
+        result = _exc_to_butler(TimeoutError("timed out"))
+        assert "ma'am" in result
+        assert "TimeoutError" not in result
+
+    def test_no_ollama_string_in_chat_error(self):
+        """_chat must not leak '(Ollama error: ...)' strings to the user."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat)
+        assert "(Ollama error:" not in src
+
+    def test_no_ollama_string_in_stream_error(self):
+        """_chat_stream must not leak '(Ollama error: ...)' strings to the user."""
+        import inspect
+        from bantz.core.brain import Brain
+        src = inspect.getsource(Brain._chat_stream)
+        assert "(Ollama error:" not in src
+
+    def test_chat_ollama_error_returns_butler_voice(self):
+        """_chat() Ollama failure returns a butler-voice message, not raw exc."""
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._bridge = False
+        b._memory_ready = True
+        b._graph_ready = True
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
+
+        tc = {"prompt_hint": ""}
+
+        with patch("bantz.llm.ollama.ollama.chat", new=AsyncMock(side_effect=RuntimeError("ollama down"))):
+            with patch("bantz.core.brain.data_layer") as mock_dl:
+                mock_dl.conversations.context.return_value = []
+                with patch("bantz.core.brain._inject_memory", new=AsyncMock()):
+                    with patch("bantz.core.brain._build_chat_system", return_value="sys"):
+                        result = _run(b._chat("hello", tc))
+
+        assert "ollama down" not in result
+        assert "Ollama error" not in result
+        assert "ma'am" in result
+
+    def test_chat_stream_ollama_error_yields_butler_voice(self):
+        """_chat_stream() Ollama failure yields a butler-voice token, not raw exc."""
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._bridge = False
+        b._memory_ready = True
+        b._graph_ready = True
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
+
+        tc = {"prompt_hint": ""}
+
+        async def _collect():
+            tokens = []
+            async for tok in b._chat_stream("hello", tc):
+                tokens.append(tok)
+            return "".join(tokens)
+
+        with patch("bantz.llm.ollama.ollama.chat_stream", side_effect=RuntimeError("ollama down")):
+            with patch("bantz.core.brain.data_layer") as mock_dl:
+                mock_dl.conversations.context.return_value = []
+                with patch("bantz.core.brain._inject_memory", new=AsyncMock()):
+                    with patch("bantz.core.brain._build_chat_system", return_value="sys"):
+                        result = _run(_collect())
+
+        assert "ollama down" not in result
+        assert "Ollama error" not in result
+        assert "ma'am" in result
+
+    def test_tool_execute_exception_caught_as_butler_voice(self):
+        """If tool.execute() raises, process() returns a butler-voice BrainResult."""
+        from bantz.core.brain import Brain
+        b = Brain.__new__(Brain)
+        b._bridge = False
+        b._memory_ready = True
+        b._graph_ready = True
+        b._last_messages = []
+        b._last_events = []
+        b._last_draft = None
+        b._last_tool_output = ""
+        b._last_tool_name = ""
+        b._feedback_ctx = ""
+        b._turn_counter = 0
+        b._context_turn = 0
+        b._CONTEXT_TTL = 3
+        b._last_screen_description = ""
+        b._screen_description_turn = -1
+        b._pending_vlm_task = None
+
+        boom_tool = MagicMock()
+        boom_tool.execute = AsyncMock(side_effect=RuntimeError("tool exploded"))
+
+        cot_plan = {
+            "route": "tool",
+            "tool_name": "weather",
+            "tool_args": {},
+            "risk_level": "safe",
+            "confidence": 0.9,
+            "reasoning": "test",
+        }
+
+        with patch("bantz.core.brain.time_ctx") as mock_tc, \
+             patch("bantz.core.brain.data_layer") as mock_dl, \
+             patch("bantz.core.brain.registry") as mock_reg, \
+             patch("bantz.core.brain.cot_route", new_callable=AsyncMock,
+                   return_value=(cot_plan, None)), \
+             patch("bantz.core.brain._quick_route_fn", return_value=None):
+
+            mock_tc.snapshot.return_value = {"prompt_hint": "", "time_segment": "morning",
+                                              "day_name": "Monday"}
+            mock_dl.conversations = MagicMock()
+            mock_dl.conversations.context.return_value = []
+            mock_reg.get.return_value = boom_tool
+
+            result = _run(b.process("what's the weather?"))
+
+        assert "tool exploded" not in result.response
+        assert "Traceback" not in result.response
+        assert "ma'am" in result.response
+

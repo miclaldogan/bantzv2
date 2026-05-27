@@ -89,7 +89,9 @@ async def finalize(
     Short output (< 800 chars) is returned verbatim.
     """
     if not result.success:
-        return f"Error: {result.error}"
+        return (
+            f"I regret the mechanism encountered an error, ma'am: {result.error}"
+        )
 
     output = result.output.strip()
     if not output or output == "(command executed successfully, no output)":

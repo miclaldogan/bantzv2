@@ -380,7 +380,10 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text = await briefing.generate()
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Briefing error: {exc}")
+        log.exception("briefing error")
+        await update.message.reply_text(
+            "I'm afraid the briefing mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -388,9 +391,16 @@ async def cmd_hava(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.tools.weather import WeatherTool
         result = await WeatherTool().execute(city="")
-        await _safe_reply(update, result.output if result.success else f"Error: {result.error}")
+        await _safe_reply(
+            update,
+            result.output if result.success
+            else f"I regret the weather contraption returned an error, ma'am: {result.error}",
+        )
     except Exception as exc:
-        await update.message.reply_text(f"Weather error: {exc}")
+        log.exception("weather error")
+        await update.message.reply_text(
+            "I'm afraid the weather mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -401,10 +411,13 @@ async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if result.success:
             text = result.output.strip() or "No unread emails ✓"
         else:
-            text = f"Error: {result.error}"
+            text = f"I regret the postal contraption returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Mail error: {exc}")
+        log.exception("mail error")
+        await update.message.reply_text(
+            "I'm afraid the postal mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -415,10 +428,13 @@ async def cmd_takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if result.success:
             text = result.output.strip() or "No events today ✓"
         else:
-            text = f"Error: {result.error}"
+            text = f"I regret the calendar mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Calendar error: {exc}")
+        log.exception("calendar error")
+        await update.message.reply_text(
+            "I'm afraid the calendar mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -429,10 +445,13 @@ async def cmd_odev(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if result.success:
             text = result.output.strip() or "No upcoming assignments ✓"
         else:
-            text = f"Error: {result.error}"
+            text = f"I regret the assignments mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Assignment error: {exc}")
+        log.exception("assignment error")
+        await update.message.reply_text(
+            "I'm afraid the assignments mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -442,7 +461,10 @@ async def cmd_ders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = schedule.format_today()
         await _safe_reply(update, text or "No classes today ✓")
     except Exception as exc:
-        await update.message.reply_text(f"Schedule error: {exc}")
+        log.exception("schedule error")
+        await update.message.reply_text(
+            "I'm afraid the schedule mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -452,7 +474,10 @@ async def cmd_siradaki(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text = schedule.format_next()
         await _safe_reply(update, text or "No upcoming classes ✓")
     except Exception as exc:
-        await update.message.reply_text(f"Schedule error: {exc}")
+        log.exception("schedule error")
+        await update.message.reply_text(
+            "I'm afraid the schedule mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -463,10 +488,13 @@ async def cmd_haber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if result.success:
             text = result.output.strip() or "No news found"
         else:
-            text = f"Error: {result.error}"
+            text = f"I regret the news mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"News error: {exc}")
+        log.exception("news error")
+        await update.message.reply_text(
+            "I'm afraid the news mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -478,7 +506,10 @@ async def cmd_hatirlatici(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         text = scheduler.format_upcoming(limit=10)
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Reminder error: {exc}")
+        log.exception("reminder error")
+        await update.message.reply_text(
+            "I'm afraid the reminder mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -491,7 +522,10 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         text = await digest_manager.daily_digest()
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Digest error: {exc}")
+        log.exception("digest error")
+        await update.message.reply_text(
+            "I'm afraid the digest mechanism has encountered a difficulty, ma'am."
+        )
 
 
 @_authorized
@@ -525,7 +559,11 @@ async def cmd_ekran(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await _safe_edit(placeholder, f"⚠️ {result.error}")
     except Exception as exc:
-        await _safe_edit(placeholder, f"⚠️ Daguerreotype error: {exc}")
+        log.exception("daguerreotype error")
+        await _safe_edit(
+            placeholder,
+            "I'm afraid the daguerreotype apparatus has encountered a difficulty, ma'am.",
+        )
 
 
 @_authorized
@@ -594,7 +632,10 @@ async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         text = await digest_manager.weekly_digest()
         await _safe_reply(update, text)
     except Exception as exc:
-        await update.message.reply_text(f"Weekly digest error: {exc}")
+        log.exception("weekly digest error")
+        await update.message.reply_text(
+            "I'm afraid the weekly digest mechanism has encountered a difficulty, ma'am."
+        )
 
 
 # ── Proactive digest notifications ───────────────────────────────────────────
