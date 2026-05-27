@@ -63,6 +63,32 @@ except ImportError:
     palace_bridge = None  # mempalace not installed
 _toast_callback = None  # written by app.py / tests
 
+# ── Butler-voice error messages (#442) ────────────────────────────────────────
+_BUTLER_NET_ERROR = (
+    "I'm afraid I cannot reach the service at present, ma'am. "
+    "The wires appear to be indisposed."
+)
+_BUTLER_TOOL_ERROR = (
+    "I was unable to complete that task, ma'am. "
+    "The mechanism has encountered a difficulty."
+)
+_BUTLER_LLM_ERROR = (
+    "I'm afraid I encountered a slight mechanical difficulty, ma'am. "
+    "Please do try again presently."
+)
+
+
+def _exc_to_butler(exc: Exception) -> str:
+    """Map an exception to a butler-voice error message (#442)."""
+    msg = str(exc).lower()
+    name = type(exc).__name__.lower()
+    if any(x in msg or x in name for x in (
+        "connection", "timeout", "network", "unreachable", "refused",
+        "timed out", "ssl", "socket",
+    )):
+        return _BUTLER_NET_ERROR
+    return _BUTLER_TOOL_ERROR
+
 
 def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> None:
     """Compat shim → ``notification_manager.notify_toast``."""
@@ -794,7 +820,11 @@ class Brain:
             except Exception:
                 pass
 
-        result = await tool.execute(**tool_args)
+        try:
+            result = await tool.execute(**tool_args)
+        except Exception as exc:
+            log.exception("Tool %r raised unexpectedly: %s", tool_name, exc)
+            return BrainResult(response=_exc_to_butler(exc), tool_used=tool_name)
 
         # ── RL reward: positive signal on successful tool use (#125) ──
         self._rl_reward_hook(tool_name, result)
@@ -996,7 +1026,8 @@ class Brain:
                 return "Sorry, I can't help with that. Try something else."
             return strip_markdown(raw)
         except Exception as exc:
-            return f"(Ollama error: {exc})"
+            log.error("LLM chat error: %s", exc)
+            return _BUTLER_LLM_ERROR
 
     async def _chat_stream(
         self, en_input: str, tc: dict,
@@ -1060,7 +1091,8 @@ class Brain:
             async for token in ollama.chat_stream(messages):
                 yield token
         except Exception as exc:
-            yield f"(Ollama error: {exc})"
+            log.error("LLM stream error: %s", exc)
+            yield _BUTLER_LLM_ERROR
 
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
