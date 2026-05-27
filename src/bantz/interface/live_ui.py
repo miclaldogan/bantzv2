@@ -200,11 +200,19 @@ class LiveUI:
         # ── service dots ──────────────────────────────────────────
         self._services: dict[str, ServiceDot] = {
             "Ollama": ServiceDot.UNCONFIGURED,
+            "MemPalace": ServiceDot.UNCONFIGURED,  # #437
+            "TTS": ServiceDot.UNCONFIGURED,         # #437
+            "STT": ServiceDot.UNCONFIGURED,         # #437
+            "Voice": ServiceDot.UNCONFIGURED,       # #437
             "Neo4j": ServiceDot.UNCONFIGURED,
             "Redis": ServiceDot.UNCONFIGURED,
             "Gemini": ServiceDot.UNCONFIGURED,
             "Telegram": ServiceDot.UNCONFIGURED,
         }
+
+        # ── status bar info (#437) ─────────────────────────────────
+        self._memory_count: int = -1      # -1 = not yet fetched
+        self._persona_state: str = ""     # from AffinityEngine
 
         # ── system stats ──────────────────────────────────────────
         self._cpu: float = 0.0
@@ -241,7 +249,7 @@ class LiveUI:
     def _build_layout(self) -> Layout:
         layout = Layout()
         layout.split_column(
-            Layout(name="header", size=3),
+            Layout(name="header", size=5),   # #437: was 3; now shows dots + info
             Layout(name="chat", ratio=3),
             Layout(name="bottom", ratio=1, minimum_size=7),
         )
@@ -273,11 +281,26 @@ class LiveUI:
             f"{_DOT_STYLE[s]} {n}" for n, s in self._services.items()
         )
         now = datetime.now().strftime("%H:%M:%S")
+        # ── info line: model name, persona state, memory drawer count (#437) ──
+        info_parts: list[str] = [
+            f"[dim]model:[/][bold cyan]{config.ollama_model}[/]",
+        ]
+        if self._memory_count >= 0:
+            info_parts.append(
+                f"[dim]mem:[/][bold]{self._memory_count}[/]"
+            )
+        if self._persona_state:
+            info_parts.append(
+                f"[dim]persona:[/][bold]{self._persona_state}[/]"
+            )
+        info_parts.append(f"[bold]{now}[/]")
+        info_line = "  [dim]│[/]  ".join(info_parts)
         content = Text.from_markup(
-            f"  [bold]BANTZ // OPERATIONS CENTER[/]"
-            f"      {dots}  [dim]│[/]  [bold]{now}[/]"
+            f"  [bold]BANTZ // OPERATIONS CENTER[/]\n"
+            f"  {dots}\n"
+            f"  {info_line}"
         )
-        return Panel(content, style="bold blue", height=3)
+        return Panel(content, style="bold blue", height=5)
 
     def _render_stats(self) -> Panel:
         lines: list[str] = [
@@ -569,6 +592,70 @@ class LiveUI:
                     f"(model needed: {config.ollama_model})",
                 )
 
+        async def check_mempalace() -> None:  # #437
+            try:
+                if getattr(config, "mempalace_enabled", False):
+                    from bantz.memory.bridge import palace_bridge
+                    if not palace_bridge.enabled:
+                        await palace_bridge.init()
+                    self._services["MemPalace"] = (
+                        ServiceDot.UP if palace_bridge.enabled
+                        else ServiceDot.DOWN
+                    )
+                else:
+                    self._services["MemPalace"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["MemPalace"] = ServiceDot.DOWN
+
+        async def check_tts() -> None:  # #437
+            try:
+                if getattr(config, "tts_enabled", False):
+                    from bantz.agent.tts import tts_engine as _tts
+                    self._services["TTS"] = (
+                        ServiceDot.UP if _tts.available()
+                        else ServiceDot.DOWN
+                    )
+                else:
+                    self._services["TTS"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["TTS"] = ServiceDot.DOWN
+
+        async def check_stt() -> None:  # #437
+            try:
+                if getattr(config, "stt_enabled", False):
+                    try:
+                        import faster_whisper  # noqa: F401
+                        self._services["STT"] = ServiceDot.UP
+                    except ImportError:
+                        self._services["STT"] = ServiceDot.DOWN
+                else:
+                    self._services["STT"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["STT"] = ServiceDot.DOWN
+
+        async def check_voice() -> None:  # #437
+            try:
+                voice_on = getattr(config, "voice_enabled", False)
+                any_voice = any([
+                    getattr(config, attr, False)
+                    for attr in (
+                        "tts_enabled", "wake_word_enabled",
+                        "stt_enabled", "ghost_loop_enabled",
+                    )
+                ])
+                if voice_on or any_voice:
+                    up = (
+                        self._services["TTS"] == ServiceDot.UP
+                        or self._services["STT"] == ServiceDot.UP
+                    )
+                    self._services["Voice"] = (
+                        ServiceDot.UP if up else ServiceDot.DEGRADED
+                    )
+                else:
+                    self._services["Voice"] = ServiceDot.UNCONFIGURED
+            except Exception:
+                self._services["Voice"] = ServiceDot.DOWN
+
         async def check_neo4j() -> None:
             try:
                 if getattr(config, "mempalace_enabled", False):
@@ -634,11 +721,16 @@ class LiveUI:
         async with httpx.AsyncClient(timeout=3.0) as client:
             await asyncio.gather(
                 check_ollama(client),
+                check_mempalace(),
+                check_tts(),
+                check_stt(),
                 check_neo4j(),
                 check_redis(),
                 check_gemini(client),
                 check_telegram(client),
             )
+        # voice depends on TTS/STT state — run after the gather
+        await check_voice()
         self.add_log("Service probes complete")
 
     async def _warm_ollama(self) -> None:
@@ -647,6 +739,35 @@ class LiveUI:
             await ollama.chat([{"role": "user", "content": "hi"}])
         except Exception:
             pass
+
+    async def _service_poller(self) -> None:
+        """Re-run health probes every 30 seconds (#437)."""
+        while self._running:
+            await asyncio.sleep(30)
+            if not self._running:
+                break
+            try:
+                await self._probe_services()
+            except Exception:
+                pass
+
+    async def _status_updater(self) -> None:
+        """Refresh memory count + persona state every 30 seconds (#437)."""
+        while self._running:
+            try:
+                from bantz.core.memory import memory as _mem
+                stats = _mem.stats()
+                self._memory_count = stats.get("total_conversations", 0)
+            except Exception:
+                pass
+            try:
+                from bantz.agent.affinity_engine import affinity_engine
+                state = affinity_engine.get_persona_state()
+                # Keep it short — strip the period and take first 20 chars
+                self._persona_state = state.rstrip(".")[:20] if state else ""
+            except Exception:
+                pass
+            await asyncio.sleep(30)
 
     async def _enrich_greeting(self) -> None:
         try:
@@ -1032,6 +1153,8 @@ class LiveUI:
             asyncio.create_task(self._stats_collector()),
             asyncio.create_task(self._panel_updater(self._layout)),
             asyncio.create_task(self._scheduler_loop()),
+            asyncio.create_task(self._service_poller()),   # #437: re-probe every 30s
+            asyncio.create_task(self._status_updater()),   # #437: refresh model/persona/mem
         ]
         asyncio.create_task(self._probe_services())
         asyncio.create_task(self._warm_ollama())
