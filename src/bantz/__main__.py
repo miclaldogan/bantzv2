@@ -6,6 +6,7 @@ Commands:
   bantz --once "query"          → single query, no UI
   bantz --daemon                → headless daemon (scheduler + GPS, no TUI)
   bantz --doctor                → system health check
+  bantz --setup onboarding         → first-run personalization wizard
   bantz --setup profile         → user profile setup
   bantz --setup google gmail    → OAuth setup for Gmail
   bantz --setup google classroom → OAuth setup for Classroom
@@ -248,6 +249,7 @@ def _mood_history() -> None:
 
 
 async def _once(query: str) -> None:
+    print("Loading models…", flush=True)
     from bantz.core.brain import brain
     result = await brain.process(query)
     print(result.response)

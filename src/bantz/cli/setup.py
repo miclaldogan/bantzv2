@@ -10,6 +10,9 @@ import asyncio
 
 
 def _handle_setup(parts: list[str]) -> None:
+    if len(parts) >= 1 and parts[0].lower() == "onboarding":
+        _setup_onboarding()
+        return
     if len(parts) >= 1 and parts[0].lower() == "profile":
         _setup_profile()
         return
@@ -38,6 +41,7 @@ def _handle_setup(parts: list[str]) -> None:
     else:
         print(f"Unknown setup target: {' '.join(parts)}")
         print("Available:")
+        print("  bantz --setup onboarding")
         print("  bantz --setup profile")
         print("  bantz --setup google [gmail|classroom|calendar]")
         print("  bantz --setup schedule")
@@ -46,6 +50,53 @@ def _handle_setup(parts: list[str]) -> None:
         print("  bantz --setup gemini")
         print("  bantz --setup systemd")
         print("  bantz --setup systemd --check")
+
+
+def _setup_onboarding() -> None:
+    """Run the first-run onboarding wizard (bantz --setup onboarding)."""
+    from pathlib import Path
+    from bantz.config import config
+
+    print("\n🧠 Bantz — First-Run Onboarding")
+    print("─" * 40)
+
+    config.ensure_dirs()
+
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph
+        from mempalace.entity_registry import EntityRegistry
+    except ImportError:
+        print("⚠  MemPalace is not installed.")
+        print("   Run: pip install 'bantz[memory]'")
+        return
+
+    from bantz.memory.onboarding import is_onboarding_done, run_onboarding
+
+    palace_path = config.resolved_palace_path
+    kg_path = config.resolved_kg_path
+    identity_path = config.resolved_identity_path
+    palace_parent = str(Path(palace_path).parent)
+
+    if is_onboarding_done(palace_parent):
+        print("Onboarding was already completed.")
+        redo = input("Run again? [y/N] ").strip().lower()
+        if redo not in ("y", "yes", "evet", "e"):
+            print("Skipped.")
+            return
+
+    Path(palace_path).mkdir(parents=True, exist_ok=True)
+    Path(kg_path).parent.mkdir(parents=True, exist_ok=True)
+
+    kg = KnowledgeGraph(db_path=kg_path)
+    registry = EntityRegistry.load()
+
+    run_onboarding(
+        identity_path=identity_path,
+        kg=kg,
+        registry=registry,
+        palace_parent=palace_parent,
+    )
+    print("\n✅ Onboarding complete. Bantz now knows who you are.")
 
 
 def _setup_telegram() -> None:

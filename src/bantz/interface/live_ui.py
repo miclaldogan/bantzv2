@@ -807,6 +807,28 @@ class LiveUI:
         self.add_chat("system", f"Model: {config.ollama_model}")
         self.add_chat("system", "─" * 38)
 
+        # ── First-run welcome banner ───────────────────────────────
+        try:
+            from bantz.memory.onboarding import is_onboarding_done
+            from pathlib import Path as _Path
+            _palace_parent = str(_Path(config.resolved_palace_path).parent)
+            if not is_onboarding_done(_palace_parent):
+                self.add_chat("system", "")
+                self.add_chat("system", "╔══ Welcome to Bantz — First Run ══╗")
+                self.add_chat("system", "  ✅  Text chat (English & Turkish)")
+                self.add_chat("system", "  ✅  Turkish translation (MarianMT)")
+                tts_ok = getattr(config, "tts_enabled", False)
+                self.add_chat("system",
+                    "  ✅  TTS voice responses" if tts_ok
+                    else "  ⚙   TTS (set BANTZ_TTS_ENABLED=true to enable)")
+                self.add_chat("system", "  ⚙   Voice input — needs setup")
+                self.add_chat("system", "╚══════════════════════════════════╝")
+                self.add_chat("system",
+                    "Run [bold]bantz --setup onboarding[/] to personalise Bantz "
+                    "and confirm Ollama is running.")
+        except Exception:
+            pass
+
         try:
             from bantz.core.time_context import time_ctx
             self.add_chat("bantz", time_ctx.greeting_line())
