@@ -326,7 +326,7 @@ class TestTemplateIntegration:
         result = CHAT_SYSTEM.format(
             persona_state="TEST_PERSONA",
             style_hint="", formality_hint="", time_hint="", profile_hint="",
-            memory_context="", desktop_hint="",
+            memory_context="", desktop_hint="", habit_hint="",
         )
         assert "TEST_PERSONA" in result
 
