@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable, Optional
 
 from bantz.config import config
 from bantz.core.time_context import time_ctx
@@ -51,6 +51,7 @@ from bantz.core.translation_layer import (  # noqa: F401
     POSITIVE_FEEDBACK_KWS,
     NEGATIVE_FEEDBACK_KWS,
     detect_feedback as _detect_feedback,
+    get_bridge,  # exposed at module level so tests can patch bantz.core.brain.get_bridge (#435)
 )
 # Toast compat shim — canonical impl in notification_manager.py (#225)
 import bantz.core.notification_manager as _notif_mod
@@ -511,11 +512,28 @@ class Brain:
         from bantz.core.location_handler import handle_location
         return await handle_location()
 
-    async def process(self, user_input: str, confirmed: bool = False,
-                      is_remote: bool = False) -> BrainResult:
+    async def process(
+        self,
+        user_input: str,
+        confirmed: bool = False,
+        is_remote: bool = False,
+        progress_cb: Optional[Callable[[str], None]] = None,
+    ) -> BrainResult:
+        """Process *user_input* through the full pipeline.
+
+        Args:
+            progress_cb: Optional callback invoked at key pipeline stages
+                         (translation, routing, …) so callers can display
+                         progress to the user (#435).
+        """
         self._is_remote = is_remote
         self._ensure_memory()
         await self._ensure_graph()
+        # Show translation progress before the (potentially slow) MarianMT load
+        if progress_cb:
+            _b = get_bridge()
+            if _b and _b.is_enabled():
+                progress_cb("Translating\u2026")
         en_input = await self._to_en(user_input)
         tc = time_ctx.snapshot()
         self._turn_counter += 1  # (#276) advance TTL clock
@@ -630,6 +648,8 @@ class Brain:
             self._maybe_inject_awareness_screenshot(en_input, user_input)
 
         # ── Step 2: cot_route — LLM decides everything ───────────────
+        if progress_cb:  # #435: tell the user we're about to call the LLM
+            progress_cb("Thinking\u2026")
         tool_ctx = self._build_tool_context(en_input)
         plan, routing_error = await cot_route(
             en_input, registry.all_schemas(),
