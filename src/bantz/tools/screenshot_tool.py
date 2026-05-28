@@ -165,23 +165,12 @@ class ScreenshotTool(BaseTool):
         """Run VLM analysis on screenshot bytes and return description."""
         try:
             import base64
-            from bantz.config import config as _cfg
             from bantz.vision.remote_vlm import describe_screen
 
             b64 = base64.b64encode(image_data).decode()
-
-            result = await describe_screen(b64, timeout=_cfg.vlm_timeout)
+            result = await describe_screen(b64)
             if result.success and result.raw_text:
                 return result.raw_text
-
-            # VLM disabled or failed — try Ollama directly
-            if not _cfg.vlm_enabled:
-                log.debug("VLM disabled, trying Ollama VLM fallback for screen analysis")
-                from bantz.vision.remote_vlm import _call_ollama_vlm, DESCRIBE_PROMPT
-                result = await _call_ollama_vlm(b64, DESCRIBE_PROMPT, timeout=15)
-                if result.success and result.raw_text:
-                    return result.raw_text
-
             return ""
         except Exception as exc:
             log.debug("VLM analysis failed: %s", exc)
