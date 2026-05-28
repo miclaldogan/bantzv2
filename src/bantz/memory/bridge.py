@@ -175,7 +175,6 @@ class MemPalaceBridge:
 
     Singletons this does NOT replace:
       - memory        (core/memory.py — SQLite conversation log)
-      - session_store (Redis — session state, queues, pubsub)
       - omni_memory   (will be rewritten to call bridge instead)
     """
 

@@ -26,6 +26,7 @@ Env:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
@@ -71,7 +72,54 @@ if config.telegram_allowed_users.strip():
     }
 
 # ── Active chat IDs for proactive notifications ──────────────────────────────
-_active_chats: set[int] = set()
+
+class _ActiveChatStore:
+    """Persistent set of active Telegram chat IDs.
+
+    Backed by SQLiteKVStore so chat IDs survive restarts (#436).
+    Falls back to an in-memory set if the DB is unavailable.
+    """
+
+    _KEY = "telegram_active_chats"
+
+    def __init__(self) -> None:
+        try:
+            from bantz.data.sqlite_store import SQLiteKVStore
+            self._store: object | None = SQLiteKVStore(config.db_path)
+        except Exception as exc:
+            log.warning("ActiveChatStore: falling back to in-memory set: %s", exc)
+            self._store = None
+            self._mem: set[int] = set()
+
+    def _load(self) -> set[int]:
+        if self._store is None:
+            return set(self._mem)
+        raw = self._store.get(self._KEY, "[]")
+        try:
+            return set(json.loads(raw))
+        except Exception:
+            return set()
+
+    def _save(self, chats: set[int]) -> None:
+        if self._store is None:
+            self._mem = chats
+            return
+        self._store.set(self._KEY, json.dumps(sorted(chats)))
+
+    def add(self, chat_id: int) -> None:
+        chats = self._load()
+        if chat_id not in chats:
+            chats.add(chat_id)
+            self._save(chats)
+
+    def __bool__(self) -> bool:
+        return bool(self._load())
+
+    def __iter__(self):
+        return iter(self._load())
+
+
+_active_chats = _ActiveChatStore()
 
 # ── Rate limiter (max 10 messages per minute per user) ────────────────────────
 _RATE_WINDOW = 60  # seconds
