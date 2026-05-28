@@ -251,10 +251,46 @@ def _mood_history() -> None:
 
 
 async def _once(query: str) -> None:
-    print("Loading models…", flush=True)
+    """Single-shot query — no TUI.
+
+    Emits progress to *stderr* so scripts piping stdout still get clean
+    output.  Drains streaming responses and optionally speaks them via
+    TTS (#435).
+    """
+    import sys
+
+    def _progress(msg: str) -> None:  # writes to stderr — stdout stays clean
+        print(msg, file=sys.stderr, flush=True)
+
     from bantz.core.brain import brain
-    result = await brain.process(query)
-    print(result.response)
+    result = await brain.process(query, progress_cb=_progress)
+
+    # Drain streaming response when brain returns a generator (chat route)
+    if result.stream is not None:
+        _progress("Streaming response…")
+        chunks: list[str] = []
+        async for chunk in result.stream:
+            chunks.append(chunk)
+        response = "".join(chunks)
+    else:
+        response = result.response
+
+    print(response)
+
+    # Speak the response when TTS is fully configured (#435)
+    from bantz.config import config
+    if (
+        config.tts_enabled
+        and config.tts_speak_all_responses
+        and response
+        and result.tool_used != "tts"
+    ):
+        _progress("Synthesising voice…")
+        try:
+            from bantz.agent.tts import tts_engine
+            await tts_engine.speak(response)
+        except Exception:
+            pass
 
     # Draft confirmation flow — auto-send for --once
     if result.needs_confirm and result.pending_tool and result.pending_args:
