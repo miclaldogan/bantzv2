@@ -62,6 +62,7 @@ class BantzContext:
     formality_hint: str = ""         # bonding-meter hint
     style_hint: str = ""             # response_style + pronoun instruction
     profile_hint: str = ""           # user profile summary
+    habit_hint: str = ""             # top tools for current time segment (HabitEngine)
 
     # ── 6. Routing / intent ───────────────────────────────────────────
     route: str = "chat"              # "chat" | "tool"
