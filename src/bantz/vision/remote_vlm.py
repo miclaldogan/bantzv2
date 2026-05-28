@@ -306,8 +306,12 @@ async def _call_ollama_vlm(
     url = f"{base_url}/api/generate"
     timeout_s = timeout or _cfg.vlm_timeout
 
-    # Try common VLM models
-    vlm_models = ["llava", "bakllava", "llava-llama3", "moondream"]
+    # Try the configured model first, then common alternatives
+    configured_model = _cfg.vlm_model or "llava"
+    vlm_models = [configured_model] + [
+        m for m in ["llava", "bakllava", "llava-llama3", "moondream"]
+        if m != configured_model
+    ]
 
     t0 = time.monotonic()
 
@@ -341,9 +345,10 @@ async def _call_ollama_vlm(
             continue
 
     elapsed = int((time.monotonic() - t0) * 1000)
+    tried = ", ".join(vlm_models)
     return VLMResult(
         success=False, latency_ms=elapsed,
-        error="No VLM model available in Ollama (tried: llava, bakllava, llava-llama3, moondream)",
+        error=f"No VLM model available in Ollama (tried: {tried})",
         source="ollama",
     )
 
@@ -357,7 +362,12 @@ async def analyze_screenshot(
     timeout: int | None = None,
 ) -> VLMResult:
     """
-    Analyse a screenshot via remote VLM, with Ollama fallback.
+    Analyse a screenshot via VLM.
+
+    Backend selection (BANTZ_VLM_BACKEND):
+      "ollama" (default) — uses local Ollama with BANTZ_VLM_MODEL (default: llava).
+                           VLM is auto-enabled; no remote server required.
+      "remote"           — POSTs to BANTZ_VLM_ENDPOINT, falls back to Ollama on failure.
 
     Args:
         image_b64: Base64-encoded JPEG image.
@@ -371,7 +381,7 @@ async def analyze_screenshot(
     if not config.vlm_enabled:
         return VLMResult(
             success=False,
-            error="VLM is disabled. Set BANTZ_VLM_ENABLED=true to enable.",
+            error="VLM is disabled. Set BANTZ_VLM_ENABLED=true (or BANTZ_VLM_BACKEND=ollama) to enable.",
         )
 
     # Build prompt
@@ -382,7 +392,20 @@ async def analyze_screenshot(
     else:
         final_prompt = DEFAULT_PROMPT
 
-    # Try remote endpoint first
+    # Route by backend
+    if config.vlm_backend == "ollama":
+        # Local Ollama — no remote round-trip
+        result = await _call_ollama_vlm(image_b64, final_prompt, timeout=timeout)
+        if result.success:
+            log.info(
+                "VLM analysis: %d elements, %dms (%s)",
+                len(result.elements), result.latency_ms, result.source,
+            )
+        else:
+            log.warning("Ollama VLM failed: %s", result.error)
+        return result
+
+    # Remote backend — try endpoint first, Ollama as fallback
     result = await _call_remote(image_b64, final_prompt, timeout=timeout)
     if result.success:
         log.info(
@@ -393,7 +416,6 @@ async def analyze_screenshot(
 
     log.debug("Remote VLM failed (%s), trying Ollama fallback", result.error)
 
-    # Fallback to Ollama VLM
     result = await _call_ollama_vlm(image_b64, final_prompt, timeout=timeout)
     if result.success:
         log.info(

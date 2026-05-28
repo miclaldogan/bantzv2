@@ -38,9 +38,7 @@ class TestVLMConfig:
             _env_file=None,
             BANTZ_OLLAMA_MODEL="test",
         )
-        assert c.vlm_enabled is False
         assert c.vlm_endpoint == "http://localhost:8090"
-        assert c.vlm_timeout == 5
         assert c.screenshot_quality == 70
 
 

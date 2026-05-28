@@ -34,7 +34,9 @@ class Config(BaseSettings):
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")
     vlm_endpoint: str = Field("http://localhost:8090", alias="BANTZ_VLM_ENDPOINT")
-    vlm_timeout: int = Field(5, alias="BANTZ_VLM_TIMEOUT")
+    vlm_timeout: int = Field(30, alias="BANTZ_VLM_TIMEOUT")  # 30s for local llava
+    vlm_backend: str = Field("ollama", alias="BANTZ_VLM_BACKEND")  # "ollama" | "remote"
+    vlm_model: str = Field("llava", alias="BANTZ_VLM_MODEL")  # e.g. llava, llava:13b, bakllava
     screenshot_quality: int = Field(70, alias="BANTZ_SCREENSHOT_QUALITY")
 
     # ── Input Control (#122) ──────────────────────────────────────────────
@@ -239,6 +241,14 @@ class Config(BaseSettings):
     workflows_dir: str = Field("", alias="BANTZ_WORKFLOWS_DIR")
 
     # ── Validators ────────────────────────────────────────────────────────
+
+    @model_validator(mode="after")
+    def _ollama_vlm_auto_enable(self) -> Self:
+        """Auto-enable VLM when backend=ollama (local, no external service needed)."""
+        if self.vlm_backend == "ollama" and not self.vlm_enabled:
+            object.__setattr__(self, "vlm_enabled", True)
+            log.debug("VLM auto-enabled: backend=ollama model=%s", self.vlm_model)
+        return self
 
     @model_validator(mode="after")
     def _voice_master_switch(self) -> Self:
