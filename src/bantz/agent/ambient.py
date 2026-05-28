@@ -389,3 +389,155 @@ class AmbientAnalyzer:
 # ═══════════════════════════════════════════════════════════════════════════
 
 ambient_analyzer = AmbientAnalyzer()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# StandaloneAmbientSampler — independent mic stream (#441)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_STANDALONE_FRAME_SIZE = 512   # samples per PyAudio read (16-bit mono)
+
+
+class StandaloneAmbientSampler:
+    """Open a raw PyAudio stream and feed frames into AmbientAnalyzer.
+
+    Used when ``ambient_enabled=True`` but ``wake_word_enabled=False`` so
+    that the WakeWordListener (Porcupine) is not running and the analyzer
+    would otherwise never receive audio.
+
+    The sampler runs on a daemon thread — it does NOT use asyncio so it
+    works cleanly alongside the Textual / Rich event loop.
+    """
+
+    def __init__(self) -> None:
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._running = False
+        self._pa = None
+        self._stream = None
+
+    # ── Public API ──────────────────────────────────────────────────────
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    def start(self) -> bool:
+        """Open the microphone and start sampling.  Returns True on success."""
+        if self._running:
+            return True
+
+        try:
+            import pyaudio
+        except ImportError:
+            log.warning(
+                "StandaloneAmbientSampler: pyaudio not installed — "
+                "pip install pyaudio"
+            )
+            return False
+
+        try:
+            from bantz.agent.voice_capture import suppress_alsa_stderr
+            with suppress_alsa_stderr():
+                self._pa = pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                rate=_DEFAULT_SAMPLE_RATE,
+                channels=1,
+                format=pyaudio.paInt16,
+                input=True,
+                frames_per_buffer=_STANDALONE_FRAME_SIZE,
+            )
+        except Exception as exc:
+            log.warning("StandaloneAmbientSampler: mic init failed — %s", exc)
+            self._cleanup()
+            return False
+
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._sample_loop,
+            name="bantz-ambient-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+        self._running = True
+        log.info(
+            "StandaloneAmbientSampler: started (rate=%d, frame=%d)",
+            _DEFAULT_SAMPLE_RATE, _STANDALONE_FRAME_SIZE,
+        )
+        return True
+
+    def stop(self) -> None:
+        """Stop sampling and release audio resources."""
+        if not self._running:
+            return
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        self._cleanup()
+        self._running = False
+        log.info("StandaloneAmbientSampler: stopped")
+
+    # ── Sampling thread ──────────────────────────────────────────────────
+
+    def _sample_loop(self) -> None:
+        """Read PCM frames from mic and feed into ambient_analyzer."""
+        import struct
+
+        stream = self._stream
+        if stream is None:
+            self._running = False
+            return
+
+        log.debug("StandaloneAmbientSampler: entering sample loop")
+        while not self._stop.is_set():
+            try:
+                raw = stream.read(_STANDALONE_FRAME_SIZE, exception_on_overflow=False)
+                pcm = struct.unpack_from(f"{_STANDALONE_FRAME_SIZE}h", raw)
+                try:
+                    ambient_analyzer.feed_frames(pcm)
+                except Exception:
+                    pass  # never crash the audio thread
+            except Exception as exc:
+                if self._stop.is_set():
+                    break
+                log.warning("StandaloneAmbientSampler: read error — %s", exc)
+                threading.Event().wait(0.1)  # brief back-off
+
+        log.debug("StandaloneAmbientSampler: exited sample loop")
+
+    # ── Cleanup ──────────────────────────────────────────────────────────
+
+    def _cleanup(self) -> None:
+        if self._stream:
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        if self._pa:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+            self._pa = None
+
+
+standalone_ambient_sampler = StandaloneAmbientSampler()
+
+
+def maybe_start_standalone() -> bool:
+    """Start the standalone sampler when ambient is enabled without wake word.
+
+    Call this once at application startup.  Idempotent — safe to call
+    multiple times.
+
+    Returns True if the sampler was started (or was already running).
+    """
+    try:
+        from bantz.config import config
+        if config.ambient_enabled and not config.wake_word_enabled:
+            return standalone_ambient_sampler.start()
+    except Exception as exc:
+        log.warning("maybe_start_standalone: %s", exc)
+    return False
