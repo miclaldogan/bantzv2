@@ -40,6 +40,7 @@ Never break character.
 {formality_hint}
 {time_hint}
 {profile_hint}
+{habit_hint}
 {memory_context}
 {desktop_hint}
 CRITICAL RULES — FOLLOW STRICTLY:
@@ -160,6 +161,7 @@ def build_chat_system(ctx: "BantzContext", tc: dict) -> str:
         desktop_hint=ctx.desktop_context,
         persona_state=ctx.persona_state,
         formality_hint=ctx.formality_hint,
+        habit_hint=ctx.habit_hint,
     )
     # Inject computer-use authorization when input control is active
     from bantz.config import config

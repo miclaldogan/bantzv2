@@ -104,6 +104,41 @@ def formality_hint() -> str:
         return ""
 
 
+def habit_hint() -> str:
+    """Return top-tool usage for the current time segment (HabitEngine, #438).
+
+    Produces a short text like::
+
+        [Usage habits — morning] Most-used tools: weather (5×), news (3×)
+
+    Returns an empty string when no data is available or the DB is absent.
+    """
+    try:
+        from datetime import datetime
+
+        from bantz.core.habits import habits
+
+        hour = datetime.now().hour
+        if 6 <= hour < 12:
+            segment = "morning"
+        elif 12 <= hour < 17:
+            segment = "afternoon"
+        elif 17 <= hour < 21:
+            segment = "evening"
+        elif 21 <= hour < 24:
+            segment = "night"
+        else:
+            segment = "late_night"
+
+        top = habits.top_tools_for_segment(segment, n=3)
+        if not top:
+            return ""
+        tool_list = ", ".join(f"{t['tool']} ({t['count']}×)" for t in top)
+        return f"[Usage habits — {segment}] Most-used tools: {tool_list}"
+    except Exception:
+        return ""
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Desktop context (AppDetector — no DB, but may be slow on dbus)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -235,3 +270,4 @@ async def inject(ctx: "BantzContext", en_input: str) -> None:
 
     from bantz.core.profile import profile
     ctx.profile_hint = profile.prompt_hint()
+    ctx.habit_hint = habit_hint()

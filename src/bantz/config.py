@@ -132,7 +132,7 @@ class Config(BaseSettings):
     observer_enable_llm: bool = Field(True, alias="BANTZ_OBSERVER_ENABLE_LLM")
 
     # ── RL Engine (#125) ───────────────────────────────────────────────────
-    rl_enabled: bool = Field(False, alias="BANTZ_RL_ENABLED")
+    rl_enabled: bool = Field(True, alias="BANTZ_RL_ENABLED")  # safe to enable; AffinityEngine is lightweight
     rl_learning_rate: float = Field(0.3, alias="BANTZ_RL_LEARNING_RATE")
     rl_discount_factor: float = Field(0.9, alias="BANTZ_RL_DISCOUNT_FACTOR")
     rl_exploration_rate: float = Field(0.15, alias="BANTZ_RL_EXPLORATION_RATE")
