@@ -1,6 +1,6 @@
 # Known Issues
 
-Last updated: 2026-05-28  
+Last updated: 2026-05-29 (develop branch, pre-release)  
 Test environment: Python 3.12.7, pytest 9.0.3
 
 All failures below are **pre-existing** — they existed before the v2.1.0 feature work
