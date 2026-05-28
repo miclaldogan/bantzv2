@@ -1160,6 +1160,7 @@ class LiveUI:
         asyncio.create_task(self._warm_ollama())
         asyncio.create_task(self._enrich_greeting())
         asyncio.create_task(self._start_ws())
+        asyncio.create_task(self._start_ambient_sampler())
 
         try:
             with Live(
@@ -1194,6 +1195,14 @@ class LiveUI:
             await ws_server.start()
         except Exception as exc:
             logger.warning("WS server failed to start: %s", exc)
+
+    async def _start_ambient_sampler(self) -> None:
+        """Start the standalone ambient sampler when wake word is disabled (#441)."""
+        try:
+            from bantz.agent.ambient import maybe_start_standalone
+            maybe_start_standalone()
+        except Exception as exc:
+            logger.warning("Ambient sampler failed to start: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

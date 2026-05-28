@@ -1234,10 +1234,16 @@ async def _doctor() -> None:
     else:
         print("  ⚪ Ghost Loop: disabled  → BANTZ_GHOST_LOOP_ENABLED=true + BANTZ_STT_ENABLED=true")
 
-    # Ambient Sound Analysis (#166)
+    # Ambient Sound Analysis (#166, #441)
     if config.ambient_enabled:
         if not config.wake_word_enabled:
-            print("  ❌ Ambient: enabled but wake_word disabled (ambient piggybacks on wake word mic)")
+            try:
+                from bantz.agent.ambient import ambient_analyzer as _amb
+                diag = _amb.diagnose()
+                print(f"  ✅ Ambient: ready via standalone sampler (interval={config.ambient_interval}s, window={config.ambient_window}s)")
+                print("       → wake word disabled; StandaloneAmbientSampler will open its own mic stream")
+            except Exception as exc:
+                print(f"  ❌ Ambient: init failed — {exc}")
         else:
             try:
                 from bantz.agent.ambient import ambient_analyzer as _amb

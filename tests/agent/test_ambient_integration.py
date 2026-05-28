@@ -240,12 +240,19 @@ class TestAmbientDoesNotTouchTTS:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAmbientNoOwnMic:
-    """Issue #166 Trap #1: ambient must NEVER open its own pyaudio stream."""
+    """AmbientAnalyzer (core analyser) must NEVER open its own pyaudio stream.
 
-    def test_no_pyaudio_in_ambient(self):
+    Note: StandaloneAmbientSampler (#441) is the explicit standalone mic
+    source added later — it intentionally uses pyaudio.  These tests scope
+    the no-pyaudio constraint to the AmbientAnalyzer class only.
+    """
+
+    def test_ambient_analyzer_class_has_no_pyaudio(self):
         import ast
+        import inspect
         import bantz.agent.ambient as mod
-        source = open(mod.__file__).read()
+
+        source = inspect.getsource(mod.AmbientAnalyzer)
         tree = ast.parse(source)
         imports = []
         for node in ast.walk(tree):
@@ -253,14 +260,17 @@ class TestAmbientNoOwnMic:
                 imports.extend(a.name for a in node.names)
             elif isinstance(node, ast.ImportFrom):
                 imports.append(node.module or "")
-        assert not any("pyaudio" in i for i in imports)
+        assert not any("pyaudio" in i for i in imports), (
+            "AmbientAnalyzer should not import pyaudio — use StandaloneAmbientSampler"
+        )
 
-    def test_no_stream_open_in_ambient(self):
+    def test_ambient_analyzer_class_does_not_open_stream(self):
         import inspect
         import bantz.agent.ambient as mod
-        source = inspect.getsource(mod)
+
+        source = inspect.getsource(mod.AmbientAnalyzer)
         assert "pa.open" not in source
-        assert ".open(" not in source
+        assert "PyAudio" not in source
 
     def test_no_numpy_dependency(self):
         """MVP: pure stdlib math, no numpy."""
