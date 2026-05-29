@@ -400,13 +400,17 @@ def log_finalizer_call(
     confidence: float,
     tool_used: str | None,
     mode: str = "short",
-) -> None:
+) -> int | None:
     """Log every finalizer call to SQLite for retrospective analysis.
 
     Writes one row per finalize/finalize_stream invocation, regardless of
     confidence. Paper-1 evaluation needs the full distribution including
     high-confidence rows (true negatives) — the old censored-tail logging
     made retrospective precision/recall unmeasurable.
+
+    Returns the inserted row id, or None on failure (DB not initialised,
+    schema error, etc.). Callers may use the row id for hard-linking; the
+    soft-join via :mod:`bantz.core.eval_view` works either way.
 
     Args:
         mode: 'short' for non-streaming finalize, 'stream' for streaming.
@@ -443,13 +447,13 @@ def log_finalizer_call(
                     conn.execute(ddl)
                 except sqlite3.OperationalError:
                     pass
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO hallucination_log"
                 "(timestamp, user_input, tool_used, tool_output, response,"
                 " confidence, mode, flagged) "
                 "VALUES (?,?,?,?,?,?,?,?)",
                 (
-                    datetime.now().isoformat(timespec="seconds"),
+                    datetime.now().isoformat(timespec="milliseconds"),
                     user_input[:500],
                     tool_used,
                     tool_output[:2000],
@@ -459,6 +463,7 @@ def log_finalizer_call(
                     flagged,
                 ),
             )
+            row_id = cur.lastrowid
         if flagged:
             log.info(
                 "Finalizer flagged: confidence=%.2f mode=%s tool=%s input=%s",
@@ -469,8 +474,10 @@ def log_finalizer_call(
                 "Finalizer logged: confidence=%.2f mode=%s tool=%s",
                 confidence, mode, tool_used,
             )
+        return row_id
     except Exception as exc:
         log.debug("Failed to log finalizer call: %s", exc)
+        return None
 
 
 # Backward-compat alias — external code may have referenced the old name.

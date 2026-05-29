@@ -35,7 +35,9 @@ log = logging.getLogger("bantz.data.sqlite")
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    # Millisecond precision so paper-1 eval_view joins disambiguate
+    # multiple writes inside the same second (#paper-1/patch-3).
+    return datetime.now().isoformat(timespec="milliseconds")
 
 
 # ━━ Conversation Store ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

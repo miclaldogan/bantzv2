@@ -510,7 +510,8 @@ class Memory(ConversationStore):
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    # Millisecond precision for paper-1 eval_view soft-join (#patch-3).
+    return datetime.now().isoformat(timespec="milliseconds")
 
 
 # Singleton — import this everywhere
