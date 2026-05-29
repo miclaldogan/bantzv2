@@ -86,7 +86,7 @@ def log_route(
                 " source, attempt, outcome, error, thinking)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    datetime.now().isoformat(timespec="seconds"),
+                    datetime.now().isoformat(timespec="milliseconds"),
                     (en_input or "")[:500],
                     route,
                     tool_name,
