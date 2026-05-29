@@ -429,17 +429,31 @@ async def cot_route(
         events) injected only when relevant (#275 — avoids bloating the
         prompt when unrelated queries are asked).
     """
+    from bantz.core.route_log import log_route, _extract_thinking
+
     if _REMINDER_FAST.search(en_input):
         log.debug("cot_route fast-path: pre-route to reminder for: %.80s", en_input)
         _time_m = re.search(r"in (\d+)\s*(minute|hour|second)", en_input, re.IGNORECASE)
         _minutes = int(_time_m.group(1)) if _time_m else 10
         if _time_m and "hour" in _time_m.group(2).lower():
             _minutes *= 60
-        return {"route": "tool", "tool_name": "reminder", "tool_args": {"action": "add", "title": en_input, "minutes": _minutes}, "confidence": 0.9, "reasoning": "pre-route: reminder pattern"}, None
+        fast_plan = {"route": "tool", "tool_name": "reminder", "tool_args": {"action": "add", "title": en_input, "minutes": _minutes}, "confidence": 0.9, "reasoning": "pre-route: reminder pattern"}
+        log_route(
+            en_input=en_input, route=fast_plan["route"], tool_name=fast_plan["tool_name"],
+            confidence=fast_plan["confidence"], reasoning=fast_plan["reasoning"],
+            source="fast_reminder", attempt=0, outcome="ok",
+        )
+        return fast_plan, None
 
     if _CHAT_FAST.search(en_input):
         log.debug("cot_route fast-path: pre-route to chat for: %.80s", en_input)
-        return {"route": "chat", "tool_name": None, "tool_args": {}, "confidence": 0.95, "reasoning": "pre-route: knowledge/emotional pattern"}, None
+        fast_plan = {"route": "chat", "tool_name": None, "tool_args": {}, "confidence": 0.95, "reasoning": "pre-route: knowledge/emotional pattern"}
+        log_route(
+            en_input=en_input, route="chat", tool_name=None,
+            confidence=0.95, reasoning=fast_plan["reasoning"],
+            source="fast_chat", attempt=0, outcome="ok",
+        )
+        return fast_plan, None
 
     schema_str = _build_compact_schemas(tool_schemas)
 
@@ -473,6 +487,12 @@ async def cot_route(
 
         if _is_refusal(raw):
             log.warning("CoT refused (attempt 1): %.100s", raw)
+            log_route(
+                en_input=en_input, route=None, tool_name=None,
+                confidence=None, reasoning=None,
+                source="cot", attempt=1, outcome="refusal",
+                thinking=_extract_thinking(raw),
+            )
             return None, None
 
         _log_thinking(raw)
@@ -483,12 +503,31 @@ async def cot_route(
 
         if plan.get("confidence", 0.5) < confidence_threshold:
             log.info("CoT low confidence (%.2f) — falling back", plan["confidence"])
+            log_route(
+                en_input=en_input, route=plan.get("route"), tool_name=plan.get("tool_name"),
+                confidence=plan.get("confidence"), reasoning=plan.get("reasoning"),
+                source="cot", attempt=1, outcome="low_confidence",
+                thinking=_extract_thinking(raw),
+            )
             return None, None
 
+        log_route(
+            en_input=en_input, route=plan.get("route"), tool_name=plan.get("tool_name"),
+            confidence=plan.get("confidence"), reasoning=plan.get("reasoning"),
+            source="cot", attempt=1, outcome="ok",
+            thinking=_extract_thinking(raw),
+        )
         return plan, None
 
     except (json.JSONDecodeError, AttributeError) as exc:
         log.warning("CoT JSON parse failed (attempt 1): %s — raw: %.200s", exc, raw)
+        log_route(
+            en_input=en_input, route=None, tool_name=None,
+            confidence=None, reasoning=None,
+            source="cot", attempt=1, outcome="parse_error",
+            error=f"{type(exc).__name__}: {exc}",
+            thinking=_extract_thinking(raw),
+        )
         # Fall through to attempt 2
     except Exception as exc:
         # If the routing model is missing/broken, retry once with main model
@@ -512,10 +551,28 @@ async def cot_route(
                     if plan.get("confidence", 0.5) >= confidence_threshold:
                         # Fix routing_model for subsequent calls this session
                         ollama.routing_model = ollama.model
+                        log_route(
+                            en_input=en_input, route=plan.get("route"), tool_name=plan.get("tool_name"),
+                            confidence=plan.get("confidence"), reasoning=plan.get("reasoning"),
+                            source="cot_fallback", attempt=1, outcome="ok",
+                            thinking=_extract_thinking(raw),
+                        )
                         return plan, None
             except Exception as fb_exc:
                 log.warning("CoT fallback also failed: %s", fb_exc)
+                log_route(
+                    en_input=en_input, route=None, tool_name=None,
+                    confidence=None, reasoning=None,
+                    source="cot_fallback", attempt=1, outcome="model_error",
+                    error=f"{type(fb_exc).__name__}: {fb_exc}",
+                )
         log.warning("CoT error (attempt 1): %s", exc)
+        log_route(
+            en_input=en_input, route=None, tool_name=None,
+            confidence=None, reasoning=None,
+            source="cot", attempt=1, outcome="model_error",
+            error=f"{type(exc).__name__}: {exc}",
+        )
         return None, f"CoT routing error: {exc}"
 
     # ── Attempt 2: retry with correction (streaming, no thinking events) ──
@@ -538,8 +595,20 @@ async def cot_route(
         )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2)
+        log_route(
+            en_input=en_input, route=plan.get("route"), tool_name=plan.get("tool_name"),
+            confidence=plan.get("confidence"), reasoning=plan.get("reasoning"),
+            source="cot_retry", attempt=2, outcome="ok",
+            thinking=_extract_thinking(raw2),
+        )
         return plan, None
 
     except Exception as exc:
         log.warning("CoT parse failed (attempt 2): %s", exc)
+        log_route(
+            en_input=en_input, route=None, tool_name=None,
+            confidence=None, reasoning=None,
+            source="cot_retry", attempt=2, outcome="parse_error",
+            error=f"{type(exc).__name__}: {exc}",
+        )
         return None, f"Intent routing failed after 2 attempts: {exc}"
