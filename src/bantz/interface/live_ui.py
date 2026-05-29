@@ -41,7 +41,7 @@ from rich.text import Text
 from bantz.config import config
 from bantz.core.event_bus import bus, Event
 
-logger = logging.getLogger("bantz.live_ui")
+log = logging.getLogger("bantz.live_ui")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -848,7 +848,7 @@ class LiveUI:
         bus.on("stt_model_failed", self._on_bus_stt_failed)
         bus.on("delegation_start", self._on_bus_delegation_start)
         bus.on("delegation_done", self._on_bus_delegation_done)
-        logger.debug("EventBus → LiveUI bridge active")
+        log.debug("EventBus → LiveUI bridge active")
 
     def _on_bus_voice_input(self, event: Event) -> None:
         text = event.data.get("text", "").strip()
@@ -1194,7 +1194,7 @@ class LiveUI:
             from bantz.interface.ws_server import ws_server
             await ws_server.start()
         except Exception as exc:
-            logger.warning("WS server failed to start: %s", exc)
+            log.warning("WS server failed to start: %s", exc)
 
     async def _start_ambient_sampler(self) -> None:
         """Start the standalone ambient sampler when wake word is disabled (#441)."""
@@ -1202,7 +1202,7 @@ class LiveUI:
             from bantz.agent.ambient import maybe_start_standalone
             maybe_start_standalone()
         except Exception as exc:
-            logger.warning("Ambient sampler failed to start: %s", exc)
+            log.warning("Ambient sampler failed to start: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

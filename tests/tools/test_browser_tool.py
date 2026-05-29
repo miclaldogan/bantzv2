@@ -42,7 +42,7 @@ def _fail_proc(stderr: str = "error", code: int = 1) -> MagicMock:
 
 def _run(coro):
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 URL = "https://example.com"

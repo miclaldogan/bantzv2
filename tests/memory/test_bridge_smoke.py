@@ -129,7 +129,7 @@ class TestStoreExchange:
     def test_store_creates_drawer(self, bridge, mock_config):
         """store_exchange() should add a drawer to ChromaDB."""
         with patch("bantz.memory.bridge._get_config", return_value=mock_config):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 bridge.store_exchange(
                     user_msg="What's the weather in Istanbul?",
                     assistant_msg="It's 18°C and sunny in Istanbul today.",
@@ -146,7 +146,7 @@ class TestStoreExchange:
     def test_store_extracts_kg_triples(self, bridge, mock_config):
         """store_exchange() should extract triples into the KG."""
         with patch("bantz.memory.bridge._get_config", return_value=mock_config):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 bridge.store_exchange(
                     user_msg="I had a meeting with Alice about the project",
                     assistant_msg="I noted your meeting with Alice.",
@@ -162,7 +162,7 @@ class TestStoreExchange:
     def test_store_routes_to_correct_room(self, bridge, mock_config):
         """Tool-based exchanges should route to the right room."""
         with patch("bantz.memory.bridge._get_config", return_value=mock_config):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 bridge.store_exchange(
                     user_msg="Check my calendar",
                     assistant_msg="You have 3 meetings today.",
@@ -191,7 +191,7 @@ class TestStoreExchange:
                  None),
             ]
             for user, asst, tool in exchanges:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     bridge.store_exchange(user, asst, tool)
                 )
 
@@ -220,7 +220,7 @@ class TestDistillation:
 
         with patch("bantz.memory.bridge._get_config", return_value=mock_config), \
              patch("bantz.data.connection_pool.get_pool", return_value=mock_pool):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 bridge.distill_session(999)
             )
         assert result["drawers_added"] == 0
@@ -249,7 +249,7 @@ class TestStats:
         """growth_since() counts new KG entries after a timestamp."""
         # Store something first
         with patch("bantz.memory.bridge._get_config", return_value=mock_config):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 bridge.store_exchange(
                     "Meeting with Bob tomorrow",
                     "Noted your meeting with Bob.",

@@ -138,7 +138,7 @@ class TestScreenshotTool:
                  patch("bantz.tools.screenshot_tool._reencode_jpeg", side_effect=lambda d, q: d):
                 return await ScreenshotTool().execute()
 
-        result = asyncio.get_event_loop().run_until_complete(_run())
+        result = asyncio.run(_run())
         assert "daguerreotype" in result.output.lower()
 
 

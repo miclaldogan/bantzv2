@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_tool(*, compose_body: str = "Generated body.", subject: str = ""):

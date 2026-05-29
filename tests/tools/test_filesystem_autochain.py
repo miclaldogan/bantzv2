@@ -31,7 +31,7 @@ import pytest
 
 def _run(coro):
     """Sync wrapper for async tests."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

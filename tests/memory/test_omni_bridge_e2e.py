@@ -18,9 +18,13 @@ import pytest
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def _run(coro):
-    """Run a coroutine in the default event loop."""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(coro)
+    """Run a coroutine in a new event loop."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 @pytest.fixture
