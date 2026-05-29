@@ -130,14 +130,14 @@ async def finalize(
     # Anti-hallucination guard
     cleaned, confidence = hallucination_check(cleaned, output)
 
-    if confidence < 0.8:
-        log_hallucination(
-            user_input=en_input,
-            tool_output=output[:2000],
-            response=cleaned[:2000],
-            confidence=confidence,
-            tool_used=result.tool,
-        )
+    log_finalizer_call(
+        user_input=en_input,
+        tool_output=output[:2000],
+        response=cleaned[:2000],
+        confidence=confidence,
+        tool_used=getattr(result, "tool", None),
+        mode="short",
+    )
 
     return cleaned
 
@@ -186,12 +186,31 @@ async def finalize_stream(
     ]
 
     async def _stream() -> AsyncIterator[str]:
+        buf: list[str] = []
+        tool_used = getattr(result, "tool", None)
         try:
             from bantz.llm.ollama import ollama
             async for token in ollama.chat_stream(messages):
+                buf.append(token)
                 yield token
         except Exception:
-            yield output[:1500]
+            fallback = output[:1500]
+            buf.append(fallback)
+            yield fallback
+        finally:
+            try:
+                accumulated = strip_markdown("".join(buf))
+                _, confidence = hallucination_check(accumulated, output)
+                log_finalizer_call(
+                    user_input=en_input,
+                    tool_output=output[:2000],
+                    response=accumulated[:2000],
+                    confidence=confidence,
+                    tool_used=tool_used,
+                    mode="stream",
+                )
+            except Exception as exc:
+                log.debug("finalize_stream post-hoc log failed: %s", exc)
 
     return _stream()
 
@@ -368,21 +387,39 @@ def hallucination_check(response: str, tool_output: str) -> tuple[str, float]:
     return response, confidence
 
 
-def log_hallucination(
+# Confidence threshold below which a finalizer call is "flagged" as a
+# likely hallucination. Used for paper-1 evaluation (precision/recall at
+# threshold sweeps) — every call is now logged regardless.
+HALLUCINATION_FLAG_THRESHOLD: float = 0.8
+
+
+def log_finalizer_call(
     user_input: str,
     tool_output: str,
     response: str,
     confidence: float,
     tool_used: str | None,
+    mode: str = "short",
 ) -> None:
-    """Log a hallucination incident to SQLite for analysis."""
+    """Log every finalizer call to SQLite for retrospective analysis.
+
+    Writes one row per finalize/finalize_stream invocation, regardless of
+    confidence. Paper-1 evaluation needs the full distribution including
+    high-confidence rows (true negatives) — the old censored-tail logging
+    made retrospective precision/recall unmeasurable.
+
+    Args:
+        mode: 'short' for non-streaming finalize, 'stream' for streaming.
+    """
     try:
+        import sqlite3
         from datetime import datetime
         from bantz.core.memory import memory
         from bantz.data.connection_pool import get_pool
 
         if not memory._initialized:
             return
+        flagged = 1 if confidence < HALLUCINATION_FLAG_THRESHOLD else 0
         with get_pool().connection(write=True) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS hallucination_log ("
@@ -392,13 +429,25 @@ def log_hallucination(
                 "  tool_used TEXT,"
                 "  tool_output TEXT,"
                 "  response TEXT,"
-                "  confidence REAL NOT NULL"
+                "  confidence REAL NOT NULL,"
+                "  mode TEXT,"
+                "  flagged INTEGER"
                 ")",
             )
+            # Backfill columns on pre-paper-1 databases.
+            for ddl in (
+                "ALTER TABLE hallucination_log ADD COLUMN mode TEXT",
+                "ALTER TABLE hallucination_log ADD COLUMN flagged INTEGER",
+            ):
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass
             conn.execute(
                 "INSERT INTO hallucination_log"
-                "(timestamp, user_input, tool_used, tool_output, response, confidence) "
-                "VALUES (?,?,?,?,?,?)",
+                "(timestamp, user_input, tool_used, tool_output, response,"
+                " confidence, mode, flagged) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     datetime.now().isoformat(timespec="seconds"),
                     user_input[:500],
@@ -406,11 +455,23 @@ def log_hallucination(
                     tool_output[:2000],
                     response[:2000],
                     confidence,
+                    mode,
+                    flagged,
                 ),
             )
-        log.info(
-            "Hallucination logged: confidence=%.2f tool=%s input=%s",
-            confidence, tool_used, user_input[:80],
-        )
+        if flagged:
+            log.info(
+                "Finalizer flagged: confidence=%.2f mode=%s tool=%s input=%s",
+                confidence, mode, tool_used, user_input[:80],
+            )
+        else:
+            log.debug(
+                "Finalizer logged: confidence=%.2f mode=%s tool=%s",
+                confidence, mode, tool_used,
+            )
     except Exception as exc:
-        log.debug("Failed to log hallucination: %s", exc)
+        log.debug("Failed to log finalizer call: %s", exc)
+
+
+# Backward-compat alias — external code may have referenced the old name.
+log_hallucination = log_finalizer_call
