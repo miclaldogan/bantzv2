@@ -260,10 +260,10 @@ def fetch_eval_rows(
                 if msg["tool_used"] != tool_filter and ftool != tool_filter:
                     continue
 
-            yield _build_eval_row(msg, fin, rt)
-            yielded += 1
             if limit is not None and yielded >= limit:
                 return
+            yield _build_eval_row(msg, fin, rt)
+            yielded += 1
 
 
 def stats() -> dict:
