@@ -21,7 +21,6 @@ class TestRLEnabledDefault:
     def test_rl_enabled_is_true_by_default(self):
         """rl_enabled must default to True so the AffinityEngine fires (#438)."""
         from bantz.config import Config
-        import inspect, dataclasses
 
         # Inspect the Field default directly so .env overrides don't mask the code default
         fields = Config.model_fields

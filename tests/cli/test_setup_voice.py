@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import inspect
 import io
-import os
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ── Module-level constant sanity checks ───────────────────────────────────────
