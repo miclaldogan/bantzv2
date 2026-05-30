@@ -1053,14 +1053,19 @@ async def email_stats_today() -> dict:
         creds = token_store.get("gmail")
         loop = asyncio.get_event_loop()
 
-        unread = await loop.run_in_executor(None, tool._count_sync, creds)
-        received = await loop.run_in_executor(
-            None, _count_query_sync, creds, "newer_than:1d in:inbox",
+        # ⚡ Bolt Optimization: Use asyncio.gather to fetch stats concurrently instead of sequentially
+        results = await asyncio.gather(
+            loop.run_in_executor(None, tool._count_sync, creds),
+            loop.run_in_executor(None, _count_query_sync, creds, "newer_than:1d in:inbox"),
+            loop.run_in_executor(None, _count_query_sync, creds, "newer_than:1d in:sent"),
+            return_exceptions=True
         )
-        sent = await loop.run_in_executor(
-            None, _count_query_sync, creds, "newer_than:1d in:sent",
-        )
-        return {"received": received, "sent": sent, "unread": unread}
+
+        for result in results:
+            if isinstance(result, Exception):
+                raise result
+
+        return {"received": results[1], "sent": results[2], "unread": results[0]}
     except Exception:
         return {"received": 0, "sent": 0, "unread": 0}
 
@@ -1072,13 +1077,18 @@ async def email_stats_week() -> dict:
         creds = token_store.get("gmail")
         loop = asyncio.get_event_loop()
 
-        unread = await loop.run_in_executor(None, tool._count_sync, creds)
-        received = await loop.run_in_executor(
-            None, _count_query_sync, creds, "newer_than:7d in:inbox",
+        # ⚡ Bolt Optimization: Use asyncio.gather to fetch stats concurrently instead of sequentially
+        results = await asyncio.gather(
+            loop.run_in_executor(None, tool._count_sync, creds),
+            loop.run_in_executor(None, _count_query_sync, creds, "newer_than:7d in:inbox"),
+            loop.run_in_executor(None, _count_query_sync, creds, "newer_than:7d in:sent"),
+            return_exceptions=True
         )
-        sent = await loop.run_in_executor(
-            None, _count_query_sync, creds, "newer_than:7d in:sent",
-        )
-        return {"received": received, "sent": sent, "unread": unread}
+
+        for result in results:
+            if isinstance(result, Exception):
+                raise result
+
+        return {"received": results[1], "sent": results[2], "unread": results[0]}
     except Exception:
         return {"received": 0, "sent": 0, "unread": 0}
