@@ -12,3 +12,6 @@
 ## 2025-02-12 - Concurrent HTTP Fetching Optimization
 **Learning:** Sequential HTTP calls (N+1) using `await` inside a loop are a major bottleneck for network-bound tools in Bantz.
 **Action:** When performing multiple independent HTTP requests (like fetching API items), group them using `asyncio.gather` with `return_exceptions=True` instead of sequential `await` calls.
+## 2025-02-12 - [Concurrent Execution of I/O Bound API Calls using asyncio.gather]
+**Learning:** In `src/bantz/tools/gmail.py`, independent synchronous network-bound operations wrapped in `loop.run_in_executor()` were being awaited sequentially. This caused an N+1 latency bottleneck (the total execution time was the sum of each request).
+**Action:** Use `asyncio.gather()` to run independent `run_in_executor` tasks concurrently. This reduces the total time to the duration of the longest request. If preserving prior exception handling logic (like a generic catch block that returns fallback zeros), do not use `return_exceptions=True` unless you iterate over the results to manually re-raise exceptions; otherwise, a single failing task will halt the gather block, seamlessly bubbling up to the `except` handler as desired.
