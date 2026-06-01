@@ -33,17 +33,11 @@ echo "and runs a health check. Press Ctrl-C at any time to abort."
 
 # ── OS Detection ─────────────────────────────────────────────────────────────
 _os="$(uname -s 2>/dev/null || echo unknown)"
-_is_wsl=false
-if grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; then
-  _is_wsl=true
-fi
-
 if [[ "$_os" == MINGW* || "$_os" == CYGWIN* || "$_os" == MSYS* ]]; then
   echo
   echo -e "${YLW}${BLD}Windows detected (Git Bash / MSYS).${RST}"
   echo
-  echo "The Bantz backend (AI engine, scheduler, voice pipeline) requires Linux."
-  echo "You have two options:"
+  echo "The Bantz backend requires Linux. You have two options:"
   echo
   echo -e "  ${BLD}Option 1 — WSL2 (recommended, full Bantz)${RST}"
   echo "    Install WSL2 from the Microsoft Store, then inside WSL run:"
@@ -52,27 +46,105 @@ if [[ "$_os" == MINGW* || "$_os" == CYGWIN* || "$_os" == MSYS* ]]; then
   echo -e "  ${BLD}Option 2 — UI only (Windows-native desktop app)${RST}"
   echo "    Install Node.js (https://nodejs.org) and Rust (https://rustup.rs), then:"
   echo "    git clone https://github.com/miclaldogan/bantzv2.git"
-  echo "    cd bantzv2/bantz-ui"
-  echo "    npm install"
-  echo "    npm run tauri:build"
-  echo "    The installer will appear in src-tauri/target/release/bundle/"
-  echo "    Point the app at a Bantz backend running on WSL2 or a Linux machine."
+  echo "    cd bantzv2/bantz-ui && npm install && npm run tauri:build"
+  echo "    The installer appears in src-tauri/target/release/bundle/"
+  echo "    Point it at a Bantz backend on WSL2 or a Linux machine."
   echo
   exit 0
 fi
 
 # ── Step 1: Python 3.11+ ─────────────────────────────────────────────────────
-step "1/9" "Checking Python version…"
-if ! command -v python3 &>/dev/null; then
-  die "Python 3.11+ is required. Install it from https://python.org and re-run."
+step "1/9" "Checking Python 3.11+…"
+
+_PYTHON=""
+
+# Helper: returns minor version of a given python binary, or empty if < 3.11
+_check_py() {
+  local bin="$1"
+  command -v "$bin" &>/dev/null || return 1
+  local minor
+  minor=$("$bin" -c "import sys; print(sys.version_info.minor)" 2>/dev/null) || return 1
+  local major
+  major=$("$bin" -c "import sys; print(sys.version_info.major)" 2>/dev/null) || return 1
+  [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && echo "$bin"
+}
+
+# 1. Look for an existing 3.11+ binary (newest first)
+for _candidate in python3.13 python3.12 python3.11 python3 python; do
+  if _PYTHON=$(_check_py "$_candidate"); then
+    break
+  fi
+  _PYTHON=""
+done
+
+# 2. If not found, try to get one automatically
+if [ -z "$_PYTHON" ]; then
+  _found_ver=$(python3 --version 2>/dev/null || python --version 2>/dev/null || echo "none")
+  warn "Python 3.11+ not found (system has: ${_found_ver})."
+  echo "  Trying to install Python 3.11 automatically…"
+  echo
+
+  # ── 2a. uv (already installed) ───────────────────────────────────────────
+  if command -v uv &>/dev/null; then
+    echo "  [→] uv found — installing Python 3.11…"
+    uv python install 3.11
+    _PYTHON=$(uv python find 3.11 2>/dev/null || echo "")
+
+  # ── 2b. pyenv (already installed) ────────────────────────────────────────
+  elif command -v pyenv &>/dev/null; then
+    echo "  [→] pyenv found — installing Python 3.11…"
+    pyenv install -s 3.11
+    _PYTHON=$(pyenv prefix 3.11)/bin/python3
+
+  # ── 2c. conda / miniforge / micromamba ───────────────────────────────────
+  elif command -v conda &>/dev/null; then
+    echo "  [→] conda found — creating bantz env with Python 3.11…"
+    conda create -y -n bantz python=3.11 --quiet
+    _PYTHON=$(conda run -n bantz which python3)
+
+  # ── 2d. apt (Debian/Ubuntu) ───────────────────────────────────────────────
+  elif command -v apt-get &>/dev/null; then
+    echo "  [→] apt found — installing python3.11…"
+    sudo apt-get update -qq
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+    _PYTHON=python3.11
+
+  # ── 2e. dnf (Fedora/RHEL) ────────────────────────────────────────────────
+  elif command -v dnf &>/dev/null; then
+    echo "  [→] dnf found — installing python3.11…"
+    sudo dnf install -y python3.11
+
+    _PYTHON=python3.11
+
+  # ── 2f. pacman (Arch) ────────────────────────────────────────────────────
+  elif command -v pacman &>/dev/null; then
+    echo "  [→] pacman found — installing python311…"
+    sudo pacman -S --noconfirm python311
+    _PYTHON=python3.11
+
+  # ── 2g. brew (macOS / Linuxbrew) ─────────────────────────────────────────
+  elif command -v brew &>/dev/null; then
+    echo "  [→] brew found — installing python@3.11…"
+    brew install python@3.11
+    _PYTHON=$(brew --prefix python@3.11)/bin/python3.11
+
+  # ── 2h. Last resort: install uv and use it ───────────────────────────────
+  else
+    echo "  [→] No package manager found — installing uv…"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+    uv python install 3.11
+    _PYTHON=$(uv python find 3.11 2>/dev/null || echo "")
+  fi
+
+  # Verify we actually got something usable
+  if [ -z "$_PYTHON" ] || ! _check_py "$_PYTHON" &>/dev/null; then
+    die "Could not install Python 3.11 automatically.\nPlease install it manually: https://python.org/downloads"
+  fi
 fi
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
-PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
-  die "Python 3.11+ required (found ${PY_VER}). Please upgrade and re-run."
-fi
-ok "Python ${PY_VER}"
+
+_PY_VER=$("$_PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+ok "Python ${_PY_VER} (${_PYTHON})"
 
 # ── Step 2: git ───────────────────────────────────────────────────────────────
 step "2/9" "Checking git…"
@@ -105,44 +177,48 @@ else
   ok "Repository cloned to ${INSTALL_DIR}"
 fi
 
-# ── Step 5: pip install ───────────────────────────────────────────────────────
-step "5/9" "Installing Bantz Python package (this may take a minute)…"
-PIP=pip3
-if ! command -v pip3 &>/dev/null; then
-  if command -v pip &>/dev/null; then
-    PIP=pip
-  else
-    die "pip not found. Fix with: python3 -m ensurepip --upgrade"
-  fi
+# ── Step 5: Virtual env + install ────────────────────────────────────────────
+VENV_DIR="${HOME}/.local/share/bantz/venv"
+step "5/9" "Setting up virtual environment and installing Bantz…"
+
+# Create or reuse venv with the Python we found
+if [ ! -f "${VENV_DIR}/bin/python" ]; then
+  echo "  Creating venv at ${VENV_DIR}…"
+  "$_PYTHON" -m venv "$VENV_DIR"
 fi
-"$PIP" install -e "${INSTALL_DIR}[dev]" --quiet
-ok "Package installed"
+
+VENV_PY="${VENV_DIR}/bin/python"
+VENV_PIP="${VENV_DIR}/bin/pip"
+
+"$VENV_PIP" install --quiet --upgrade pip
+"$VENV_PIP" install --quiet -e "${INSTALL_DIR}[dev]"
+ok "Bantz installed in isolated venv"
 
 # ── Step 6: PATH ──────────────────────────────────────────────────────────────
 LOCAL_BIN="${HOME}/.local/bin"
-step "6/9" "Verifying PATH…"
-if command -v bantz &>/dev/null; then
-  ok "bantz found at $(command -v bantz)"
-else
-  warn "bantz not found in PATH. Adding ${LOCAL_BIN} to PATH…"
-  EXPORT_LINE='export PATH="${HOME}/.local/bin:${PATH}"'
-  for RC in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
-    if [ -f "$RC" ] && ! grep -q ".local/bin" "$RC"; then
-      { echo ""; echo "# Added by Bantz installer"; echo "$EXPORT_LINE"; } >> "$RC"
-      echo "  Updated: $RC"
-    fi
-  done
-  export PATH="${LOCAL_BIN}:${PATH}"
-  ok "PATH updated — restart your shell or run: export PATH=\"${LOCAL_BIN}:\${PATH}\""
-fi
+BANTZ_BIN="${VENV_DIR}/bin/bantz"
+step "6/9" "Wiring bantz command to PATH…"
+mkdir -p "$LOCAL_BIN"
+
+# Symlink venv binary → ~/.local/bin/bantz so it's on PATH anywhere
+ln -sf "$BANTZ_BIN" "${LOCAL_BIN}/bantz"
+
+EXPORT_LINE='export PATH="${HOME}/.local/bin:${PATH}"'
+for RC in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+  if [ -f "$RC" ] && ! grep -q ".local/bin" "$RC"; then
+    { echo ""; echo "# Added by Bantz installer"; echo "$EXPORT_LINE"; } >> "$RC"
+    echo "  Updated: $RC"
+  fi
+done
+export PATH="${LOCAL_BIN}:${PATH}"
+ok "bantz → ${LOCAL_BIN}/bantz"
 
 # ── Step 7: Setup wizard ──────────────────────────────────────────────────────
 step "7/9" "${BLD}Setup Wizard${RST} — press Enter to accept defaults shown in [brackets]."
 echo
 
 # _ask VAR PROMPT DEFAULT
-# Reads one line from /dev/tty, assigns to VAR (no subshell — printf goes
-# straight to the terminal so the prompt is always visible).
+# No subshell — printf goes straight to terminal, read from /dev/tty
 _ask() {
   local _var="$1" _prompt="$2" _default="$3" _reply
   printf "  %b%s%b [%b%s%b]: " "$BLD" "$_prompt" "$RST" "$CYN" "$_default" "$RST"
@@ -177,7 +253,7 @@ fi
 TG_TOKEN=""; TG_USERS=""
 _ask_yn _TG "Set up Telegram remote access?" "n"
 if [[ "$_TG" =~ ^[Yy] ]]; then
-  _ask TG_TOKEN "Telegram bot token"                              ""
+  _ask TG_TOKEN "Telegram bot token"                                 ""
   _ask TG_USERS "Whitelisted Telegram user ID(s) (comma-separated)" ""
 fi
 
@@ -198,26 +274,23 @@ _set_key() {
 }
 
 cp "$TEMPLATE" "$ENV_FILE"
-_set_key "BANTZ_OLLAMA_MODEL"      "$OLLAMA_MODEL"  "$ENV_FILE"
-_set_key "BANTZ_LANGUAGE"          "$LANGUAGE"      "$ENV_FILE"
+_set_key "BANTZ_OLLAMA_MODEL"      "$OLLAMA_MODEL"   "$ENV_FILE"
+_set_key "BANTZ_LANGUAGE"          "$LANGUAGE"       "$ENV_FILE"
 _set_key "BANTZ_GEMINI_ENABLED"    "$GEMINI_ENABLED" "$ENV_FILE"
-[ -n "$GEMINI_KEY"  ] && _set_key "BANTZ_GEMINI_API_KEY"        "$GEMINI_KEY"  "$ENV_FILE"
-_set_key "BANTZ_WAKE_WORD_ENABLED" "$WAKE_WORD"     "$ENV_FILE"
-[ -n "$PICO_KEY"    ] && _set_key "BANTZ_PICOVOICE_ACCESS_KEY"  "$PICO_KEY"   "$ENV_FILE"
-[ -n "$TG_TOKEN"    ] && _set_key "TELEGRAM_BOT_TOKEN"          "$TG_TOKEN"   "$ENV_FILE"
-[ -n "$TG_USERS"    ] && _set_key "TELEGRAM_ALLOWED_USERS"      "$TG_USERS"   "$ENV_FILE"
+[ -n "$GEMINI_KEY" ] && _set_key "BANTZ_GEMINI_API_KEY"       "$GEMINI_KEY" "$ENV_FILE"
+_set_key "BANTZ_WAKE_WORD_ENABLED" "$WAKE_WORD"      "$ENV_FILE"
+[ -n "$PICO_KEY"   ] && _set_key "BANTZ_PICOVOICE_ACCESS_KEY" "$PICO_KEY"   "$ENV_FILE"
+[ -n "$TG_TOKEN"   ] && _set_key "TELEGRAM_BOT_TOKEN"         "$TG_TOKEN"   "$ENV_FILE"
+[ -n "$TG_USERS"   ] && _set_key "TELEGRAM_ALLOWED_USERS"     "$TG_USERS"   "$ENV_FILE"
 
-# Symlink into source dir so bantz can load it from its working directory
-if [ ! -e "${INSTALL_DIR}/.env" ]; then
-  ln -s "$ENV_FILE" "${INSTALL_DIR}/.env"
-fi
+# Symlink into source dir so bantz finds it from its own working directory too
+[ ! -e "${INSTALL_DIR}/.env" ] && ln -s "$ENV_FILE" "${INSTALL_DIR}/.env"
 ok ".env written"
 
 # ── Step 9: Doctor ────────────────────────────────────────────────────────────
 step "9/9" "Running bantz --doctor…"
 echo
-BANTZ_BIN="$(command -v bantz 2>/dev/null || echo "${LOCAL_BIN}/bantz")"
-"$BANTZ_BIN" --doctor 2>&1 || true
+"${LOCAL_BIN}/bantz" --doctor 2>&1 || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo
