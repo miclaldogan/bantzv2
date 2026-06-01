@@ -112,14 +112,14 @@ echo
 
 _ask() {
   local prompt="$1" default="$2"
-  printf "  %b%s%b [%b%s%b]: " "$BLD" "$prompt" "$RST" "$CYN" "$default" "$RST"
+  printf "  %b%s%b [%b%s%b]: " "$BLD" "$prompt" "$RST" "$CYN" "$default" "$RST" >&2
   read -r REPLY < /dev/tty
   printf '%s' "${REPLY:-$default}"
 }
 
 _ask_yn() {
   local prompt="$1" default="$2"
-  printf "  %b%s%b (y/n) [%b%s%b]: " "$BLD" "$prompt" "$RST" "$CYN" "$default" "$RST"
+  printf "  %b%s%b (y/n) [%b%s%b]: " "$BLD" "$prompt" "$RST" "$CYN" "$default" "$RST" >&2
   read -r REPLY < /dev/tty
   printf '%s' "${REPLY:-$default}"
 }
