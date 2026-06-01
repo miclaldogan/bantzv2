@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+log = logging.getLogger(__name__)
 import os
 import re
 import subprocess
