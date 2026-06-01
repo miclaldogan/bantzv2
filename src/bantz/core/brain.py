@@ -21,7 +21,6 @@ from bantz.core.finalizer import (
     hallucination_check as _hallucination_check_fn,
     strip_markdown,
 )
-from bantz.llm.ollama import ollama
 from bantz.tools import registry, ToolResult
 from bantz.core.context import BantzContext  # noqa: F401  — re-export for compat
 from bantz.core.types import BrainResult, Attachment  # noqa: F401  — canonical def in types.py
