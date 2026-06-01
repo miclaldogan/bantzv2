@@ -3,6 +3,7 @@ Bantz v2 — Entry point
 
 Commands:
   bantz                         → TUI
+  bantz --ui                    → desktop UI (Tauri; starts daemon if not running)
   bantz --once "query"          → single query, no UI
   bantz --daemon                → headless daemon (scheduler + GPS, no TUI)
   bantz --doctor                → system health check
@@ -53,6 +54,8 @@ def main() -> None:
                         help="Show 24h mood transition history")
     parser.add_argument("--config", action="store_true",
                         help="Show current configuration (secrets masked)")
+    parser.add_argument("--ui", action="store_true",
+                        help="Launch the Bantz desktop UI (Tauri)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -103,12 +106,71 @@ def main() -> None:
         asyncio.run(_once(args.once))
         return
 
+    if args.ui:
+        _open_ui()
+        return
+
     if args.daemon:
         asyncio.run(_daemon())
         return
 
     from bantz.interface.live_ui import run
     run()
+
+
+def _open_ui() -> None:
+    import os
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # bantz-ui/ sits next to the repo root (3 levels up from src/bantz/__main__.py)
+    ui_dir = Path(__file__).resolve().parent.parent.parent / "bantz-ui"
+    if not ui_dir.exists():
+        sys.exit(
+            f"[✗] bantz-ui directory not found at {ui_dir}\n"
+            "    Manual fallback: cd ~/bantzv2/bantz-ui && npm run tauri:dev"
+        )
+
+    # Start backend daemon if WebSocket port 8765 is not already open
+    def _ws_up() -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", 8765), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    if not _ws_up():
+        print("[→] Backend not running — starting bantz --daemon …")
+        subprocess.Popen(
+            [sys.executable, "-m", "bantz", "--daemon"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    # Prefer compiled release binary, then AppImage, then dev server
+    release_bin = ui_dir / "src-tauri" / "target" / "release" / "bantz-ui"
+    appimage_dir = ui_dir / "src-tauri" / "target" / "release" / "bundle" / "appimage"
+    appimages = sorted(appimage_dir.glob("*.AppImage")) if appimage_dir.exists() else []
+
+    if release_bin.exists():
+        print("[→] Launching Bantz UI …")
+        os.execv(str(release_bin), [str(release_bin)])
+
+    elif appimages:
+        print("[→] Launching Bantz UI …")
+        os.execv(str(appimages[0]), [str(appimages[0])])
+
+    else:
+        # No compiled binary yet — run via Vite/Tauri dev server
+        if not (ui_dir / "node_modules").exists():
+            print("[→] Installing npm dependencies (first run) …")
+            subprocess.run(["npm", "install"], cwd=ui_dir, check=True)
+        print("[→] Starting Bantz UI (dev mode) …")
+        os.chdir(ui_dir)
+        os.execvp("npm", ["npm", "run", "tauri:dev"])
 
 
 async def _start_ws_server() -> None:
