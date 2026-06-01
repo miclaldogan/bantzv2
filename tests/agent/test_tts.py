@@ -390,7 +390,7 @@ class TestTTSAsync:
             await eng._synthesize("Hello")
             # Check that --length-scale was passed
             call_args = mock_exec.call_args[0]
-            assert "--length-scale" in call_args
+            assert "--length_scale" in call_args
 
     @pytest.mark.asyncio
     async def test_synthesize_with_speaker(self):

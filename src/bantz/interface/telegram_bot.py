@@ -427,7 +427,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         from bantz.core.briefing import briefing
         text = await briefing.generate()
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("briefing error")
         await update.message.reply_text(
             "I'm afraid the briefing mechanism has encountered a difficulty, ma'am."
@@ -444,7 +444,7 @@ async def cmd_hava(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             result.output if result.success
             else f"I regret the weather contraption returned an error, ma'am: {result.error}",
         )
-    except Exception as exc:
+    except Exception:
         log.exception("weather error")
         await update.message.reply_text(
             "I'm afraid the weather mechanism has encountered a difficulty, ma'am."
@@ -461,7 +461,7 @@ async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             text = f"I regret the postal contraption returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("mail error")
         await update.message.reply_text(
             "I'm afraid the postal mechanism has encountered a difficulty, ma'am."
@@ -478,7 +478,7 @@ async def cmd_takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         else:
             text = f"I regret the calendar mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("calendar error")
         await update.message.reply_text(
             "I'm afraid the calendar mechanism has encountered a difficulty, ma'am."
@@ -495,7 +495,7 @@ async def cmd_odev(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             text = f"I regret the assignments mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("assignment error")
         await update.message.reply_text(
             "I'm afraid the assignments mechanism has encountered a difficulty, ma'am."
@@ -508,7 +508,7 @@ async def cmd_ders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from bantz.core.schedule import schedule
         text = schedule.format_today()
         await _safe_reply(update, text or "No classes today ✓")
-    except Exception as exc:
+    except Exception:
         log.exception("schedule error")
         await update.message.reply_text(
             "I'm afraid the schedule mechanism has encountered a difficulty, ma'am."
@@ -521,7 +521,7 @@ async def cmd_siradaki(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         from bantz.core.schedule import schedule
         text = schedule.format_next()
         await _safe_reply(update, text or "No upcoming classes ✓")
-    except Exception as exc:
+    except Exception:
         log.exception("schedule error")
         await update.message.reply_text(
             "I'm afraid the schedule mechanism has encountered a difficulty, ma'am."
@@ -538,7 +538,7 @@ async def cmd_haber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             text = f"I regret the news mechanism returned an error, ma'am: {result.error}"
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("news error")
         await update.message.reply_text(
             "I'm afraid the news mechanism has encountered a difficulty, ma'am."
@@ -553,7 +553,7 @@ async def cmd_hatirlatici(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         from bantz.core.scheduler import scheduler
         text = scheduler.format_upcoming(limit=10)
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("reminder error")
         await update.message.reply_text(
             "I'm afraid the reminder mechanism has encountered a difficulty, ma'am."
@@ -569,7 +569,7 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         from bantz.core.digest import digest_manager
         text = await digest_manager.daily_digest()
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("digest error")
         await update.message.reply_text(
             "I'm afraid the digest mechanism has encountered a difficulty, ma'am."
@@ -606,7 +606,7 @@ async def cmd_ekran(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 pass
         else:
             await _safe_edit(placeholder, f"⚠️ {result.error}")
-    except Exception as exc:
+    except Exception:
         log.exception("daguerreotype error")
         await _safe_edit(
             placeholder,
@@ -679,7 +679,7 @@ async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         from bantz.core.digest import digest_manager
         text = await digest_manager.weekly_digest()
         await _safe_reply(update, text)
-    except Exception as exc:
+    except Exception:
         log.exception("weekly digest error")
         await update.message.reply_text(
             "I'm afraid the weekly digest mechanism has encountered a difficulty, ma'am."

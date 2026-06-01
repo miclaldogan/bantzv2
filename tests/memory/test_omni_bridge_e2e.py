@@ -58,7 +58,13 @@ def live_bridge(mock_config):
     with patch("bantz.memory.bridge._get_config", return_value=mock_config):
         from bantz.memory.bridge import MemPalaceBridge
         b = MemPalaceBridge()
-        _run(b.init())
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.run_until_complete(b.init())
         assert b.enabled, "Bridge should be enabled after init"
         yield b
         b.close()

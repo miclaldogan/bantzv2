@@ -127,6 +127,16 @@ class TestScreenshotTool:
         from bantz.tools.screenshot_tool import ScreenshotTool
         import asyncio
 
+def _get_loop():
+    import asyncio
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
         fake_shot = MagicMock()
         fake_shot.data = b"JPEG"
         fake_shot.width = 1920
@@ -138,7 +148,7 @@ class TestScreenshotTool:
                  patch("bantz.tools.screenshot_tool._reencode_jpeg", side_effect=lambda d, q: d):
                 return await ScreenshotTool().execute()
 
-        result = asyncio.get_event_loop().run_until_complete(_run())
+        result = _get_loop().run_until_complete(_run())
         assert "daguerreotype" in result.output.lower()
 
 

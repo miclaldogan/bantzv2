@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-log = logging.getLogger(__name__)
 import os
 import re
 import subprocess
@@ -1000,7 +999,7 @@ class LiveUI:
             except Exception as exc:
                 self._busy = False
                 self._streaming_text = None
-                log.error("Chat loop error: %s", exc)
+                logger.error("Chat loop error: %s", exc)
                 self.add_chat("error", "I'm afraid I encountered a slight mechanical difficulty, ma'am.")
 
     # ─────────────────────────────────────────────────────────────
@@ -1023,7 +1022,7 @@ class LiveUI:
             result = await brain.process(text)
         except Exception as exc:
             self._busy = False
-            log.error("Process input error: %s", exc)
+            logger.error("Process input error: %s", exc)
             self.add_chat("error", "I'm afraid I encountered a slight mechanical difficulty, ma'am.")
             return
 
@@ -1043,7 +1042,7 @@ class LiveUI:
             except Exception as exc:
                 self._streaming_text = None
                 self._busy = False
-                log.error("Stream error: %s", exc)
+                logger.error("Stream error: %s", exc)
                 self.add_chat("error", "I'm afraid the stream encountered a slight difficulty, ma'am.")
                 return
 

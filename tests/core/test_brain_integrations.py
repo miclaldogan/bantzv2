@@ -5,6 +5,16 @@ job_scheduler, maintenance, and reflection (#125-#130 brain wiring).
 from __future__ import annotations
 
 import asyncio
+
+def _get_loop():
+    import asyncio
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,7 +28,7 @@ pytest.importorskip('textual')
 
 def _run(coro):
     """Run an async coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return _get_loop().run_until_complete(coro)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
