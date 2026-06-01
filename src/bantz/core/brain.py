@@ -1030,20 +1030,12 @@ class Brain:
             {"role": "user", "content": en_input},
         ]
 
-        # Prefer Gemini for chat if available (#58)
+        from bantz.llm.router import get_provider
         try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                raw = await gemini.chat(messages)
-                if not _is_refusal(raw):
-                    return strip_markdown(raw)
-        except Exception:
-            pass  # fall through to Ollama
-
-        try:
-            raw = await ollama.chat(messages)
+            provider = get_provider()
+            raw = await provider.chat(messages)
             if _is_refusal(raw):
-                return "Sorry, I can't help with that. Try something else."
+                return "I'm afraid that's outside my service area, sir."
             return strip_markdown(raw)
         except Exception as exc:
             log.error("LLM chat error: %s", exc)
@@ -1096,19 +1088,10 @@ class Brain:
             {"role": "user", "content": en_input},
         ]
 
-        # Try Gemini streaming first
+        from bantz.llm.router import get_provider
         try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                async for token in gemini.chat_stream(messages):
-                    yield token
-                return
-        except Exception:
-            pass  # fall through to Ollama
-
-        # Ollama streaming fallback
-        try:
-            async for token in ollama.chat_stream(messages):
+            provider = get_provider()
+            async for token in provider.chat_stream(messages):
                 yield token
         except Exception as exc:
             log.error("LLM stream error: %s", exc)

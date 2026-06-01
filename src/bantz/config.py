@@ -45,6 +45,19 @@ class Config(BaseSettings):
     input_type_interval_ms: int = Field(50, alias="BANTZ_INPUT_TYPE_INTERVAL_MS")
     desktop_automation_enabled: bool = Field(False, alias="BANTZ_DESKTOP_AUTOMATION_ENABLED")
 
+    # ── LLM Provider ─────────────────────────────────────────────────────
+    # Which provider handles conversation: ollama | claude | openai | gemini
+    llm_provider: str = Field("ollama", alias="BANTZ_LLM_PROVIDER")
+
+    # ── Claude / Anthropic ────────────────────────────────────────────────
+    anthropic_api_key: str = Field("", alias="BANTZ_ANTHROPIC_API_KEY")
+    anthropic_model: str = Field("claude-sonnet-4-6", alias="BANTZ_ANTHROPIC_MODEL")
+
+    # ── OpenAI (or any OpenAI-compatible endpoint) ────────────────────────
+    openai_api_key: str = Field("", alias="BANTZ_OPENAI_API_KEY")
+    openai_model: str = Field("gpt-4o-mini", alias="BANTZ_OPENAI_MODEL")
+    openai_base_url: str = Field("https://api.openai.com/v1", alias="BANTZ_OPENAI_BASE_URL")
+
     # ── Gemini (optional) ─────────────────────────────────────────────────
     gemini_enabled: bool = Field(False, alias="BANTZ_GEMINI_ENABLED")
     gemini_api_key: str = Field("", alias="BANTZ_GEMINI_API_KEY")

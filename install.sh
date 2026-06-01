@@ -233,15 +233,37 @@ _ask_yn() {
   printf -v "$_var" '%s' "${_reply:-$_default}"
 }
 
-_ask OLLAMA_MODEL "Ollama model for Bantz"        "llama3.1:8b"
-_ask LANGUAGE     "Preferred language (tr/en)"    "tr"
+# ── LLM provider ─────────────────────────────────────────────────────────────
+echo -e "  Providers: ${BLD}ollama${RST} (local) · ${BLD}claude${RST} · ${BLD}openai${RST} · ${BLD}gemini${RST}"
+_ask LLM_PROVIDER "LLM provider" "ollama"
 
-GEMINI_ENABLED="false"; GEMINI_KEY=""
-_ask_yn _GEMINI "Enable Gemini as a fallback LLM?" "n"
-if [[ "$_GEMINI" =~ ^[Yy] ]]; then
-  GEMINI_ENABLED="true"
-  _ask GEMINI_KEY "Gemini API key" ""
-fi
+# Defaults for all providers
+OLLAMA_MODEL="llama3.1:8b"
+ANTHROPIC_KEY=""; ANTHROPIC_MODEL="claude-sonnet-4-6"
+OPENAI_KEY="";    OPENAI_MODEL="gpt-4o-mini"
+GEMINI_KEY="";    GEMINI_MODEL="gemini-2.0-flash"; GEMINI_ENABLED="false"
+
+case "${LLM_PROVIDER,,}" in
+  claude)
+    _ask ANTHROPIC_KEY   "Anthropic API key (get one at console.anthropic.com)" ""
+    _ask ANTHROPIC_MODEL "Claude model" "claude-sonnet-4-6"
+    ;;
+  openai)
+    _ask OPENAI_KEY   "OpenAI API key (get one at platform.openai.com)" ""
+    _ask OPENAI_MODEL "OpenAI model (gpt-4o / gpt-4o-mini / o3-mini)"  "gpt-4o-mini"
+    ;;
+  gemini)
+    GEMINI_ENABLED="true"
+    _ask GEMINI_KEY   "Gemini API key (get one at aistudio.google.com)" ""
+    _ask GEMINI_MODEL "Gemini model" "gemini-2.0-flash"
+    ;;
+  ollama|*)
+    LLM_PROVIDER="ollama"
+    _ask OLLAMA_MODEL "Ollama model (run: ollama pull <model>)" "llama3.1:8b"
+    ;;
+esac
+
+_ask LANGUAGE "Preferred language (tr/en)" "tr"
 
 PICO_KEY=""; WAKE_WORD="false"
 _ask_yn _PICO "Do you have a Porcupine key for wake word detection?" "n"
@@ -274,10 +296,16 @@ _set_key() {
 }
 
 cp "$TEMPLATE" "$ENV_FILE"
+_set_key "BANTZ_LLM_PROVIDER"      "$LLM_PROVIDER"   "$ENV_FILE"
 _set_key "BANTZ_OLLAMA_MODEL"      "$OLLAMA_MODEL"   "$ENV_FILE"
-_set_key "BANTZ_LANGUAGE"          "$LANGUAGE"       "$ENV_FILE"
+[ -n "$ANTHROPIC_KEY"   ] && _set_key "BANTZ_ANTHROPIC_API_KEY"  "$ANTHROPIC_KEY"   "$ENV_FILE"
+[ -n "$ANTHROPIC_MODEL" ] && _set_key "BANTZ_ANTHROPIC_MODEL"    "$ANTHROPIC_MODEL" "$ENV_FILE"
+[ -n "$OPENAI_KEY"      ] && _set_key "BANTZ_OPENAI_API_KEY"     "$OPENAI_KEY"      "$ENV_FILE"
+[ -n "$OPENAI_MODEL"    ] && _set_key "BANTZ_OPENAI_MODEL"       "$OPENAI_MODEL"    "$ENV_FILE"
 _set_key "BANTZ_GEMINI_ENABLED"    "$GEMINI_ENABLED" "$ENV_FILE"
-[ -n "$GEMINI_KEY" ] && _set_key "BANTZ_GEMINI_API_KEY"       "$GEMINI_KEY" "$ENV_FILE"
+[ -n "$GEMINI_KEY"   ] && _set_key "BANTZ_GEMINI_API_KEY"       "$GEMINI_KEY"   "$ENV_FILE"
+[ -n "$GEMINI_MODEL" ] && _set_key "BANTZ_GEMINI_MODEL"         "$GEMINI_MODEL" "$ENV_FILE"
+_set_key "BANTZ_LANGUAGE"          "$LANGUAGE"       "$ENV_FILE"
 _set_key "BANTZ_WAKE_WORD_ENABLED" "$WAKE_WORD"      "$ENV_FILE"
 [ -n "$PICO_KEY"   ] && _set_key "BANTZ_PICOVOICE_ACCESS_KEY" "$PICO_KEY"   "$ENV_FILE"
 [ -n "$TG_TOKEN"   ] && _set_key "TELEGRAM_BOT_TOKEN"         "$TG_TOKEN"   "$ENV_FILE"
