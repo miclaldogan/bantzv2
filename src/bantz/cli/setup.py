@@ -178,9 +178,9 @@ def _write_env(updates: dict[str, str], *, prefix_strip: list[str] | None = None
     env_path = _env_path()
     lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     for pfx in (prefix_strip or []):
-        lines = [l for l in lines if not l.startswith(pfx)]
+        lines = [line for line in lines if not line.startswith(pfx)]
     for k, v in updates.items():
-        lines = [l for l in lines if not l.startswith(f"{k}=")]
+        lines = [line for line in lines if not line.startswith(f"{k}=")]
         lines.append(f"{k}={v}")
     env_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -220,7 +220,7 @@ def _setup_claude() -> None:
         "BANTZ_ANTHROPIC_API_KEY": api_key,
         "BANTZ_ANTHROPIC_MODEL": model,
     })
-    print(f"   Provider: Claude / Anthropic")
+    print("   Provider: Claude / Anthropic")
     print(f"   Model:    {model}")
     print("\nRun 'bantz --doctor' to verify the connection.")
 
@@ -260,7 +260,7 @@ def _setup_openai() -> None:
         updates["BANTZ_OPENAI_BASE_URL"] = base_url
 
     _write_env(updates)
-    print(f"   Provider: OpenAI")
+    print("   Provider: OpenAI")
     print(f"   Model:    {model}")
     print("\nRun 'bantz --doctor' to verify the connection.")
 
@@ -287,7 +287,7 @@ def _setup_gemini() -> None:
         "BANTZ_GEMINI_API_KEY": api_key,
         "BANTZ_GEMINI_MODEL":   model,
     })
-    print(f"   Provider: Gemini")
+    print("   Provider: Gemini")
     print(f"   Model:    {model}")
     print("\nRun 'bantz --doctor' to verify the connection.")
 
@@ -989,7 +989,7 @@ async def _doctor() -> None:
             if _ok:
                 print(f"✅ Claude: connected — {config.anthropic_model}")
             else:
-                print(f"❌ Claude: UNREACHABLE — check BANTZ_ANTHROPIC_API_KEY")
+                print("❌ Claude: UNREACHABLE — check BANTZ_ANTHROPIC_API_KEY")
         else:
             print("❌ Claude: API key not set  → bantz --setup claude")
     elif _provider == "openai":
@@ -999,7 +999,7 @@ async def _doctor() -> None:
             if _ok:
                 print(f"✅ OpenAI: connected — {config.openai_model}")
             else:
-                print(f"❌ OpenAI: UNREACHABLE — check BANTZ_OPENAI_API_KEY")
+                print("❌ OpenAI: UNREACHABLE — check BANTZ_OPENAI_API_KEY")
         else:
             print("❌ OpenAI: API key not set  → bantz --setup openai")
     elif _provider == "gemini":
