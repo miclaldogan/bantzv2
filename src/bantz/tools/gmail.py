@@ -944,19 +944,28 @@ class GmailTool(BaseTool):
         add_labels: list[str], remove_labels: list[str],
     ) -> int:
         """Modify labels on multiple messages. Returns count modified."""
+        if not message_ids:
+            return 0
+
         svc = self._build_service(creds)
         body: dict[str, Any] = {}
         if add_labels:
             body["addLabelIds"] = add_labels
         if remove_labels:
             body["removeLabelIds"] = remove_labels
+
         count = 0
-        for mid in message_ids:
+        # ⚡ Bolt Optimization: Use batchModify with chunks of 1000 to eliminate N+1 API calls
+        chunk_size = 1000
+        for i in range(0, len(message_ids), chunk_size):
+            chunk = message_ids[i:i + chunk_size]
+            chunk_body = body.copy()
+            chunk_body["ids"] = chunk
             try:
-                svc.users().messages().modify(
-                    userId="me", id=mid, body=body
+                svc.users().messages().batchModify(
+                    userId="me", body=chunk_body
                 ).execute()
-                count += 1
+                count += len(chunk)
             except Exception:
                 continue
         return count
