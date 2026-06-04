@@ -73,24 +73,17 @@ class SummarizerTool(BaseTool):
             {"role": "user", "content": instruction},
         ]
 
-        # Try Gemini Flash first (lower latency for summarization)
+        # Use the configured LLM provider (respects BANTZ_LLM_PROVIDER)
         raw: str | None = None
         try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                raw = await gemini.chat(messages, temperature=0.2)
-        except Exception:
-            pass  # fall through to Ollama
-
-        if raw is None:
-            try:
-                from bantz.llm.ollama import ollama
-                raw = await ollama.chat(messages)
-            except Exception as exc:
-                return ToolResult(
-                    success=False, output="",
-                    error=f"LLM unavailable: {exc}",
-                )
+            from bantz.llm.router import get_llm
+            llm = get_llm()
+            raw = await llm.chat(messages)
+        except Exception as exc:
+            return ToolResult(
+                success=False, output="",
+                error=f"LLM unavailable: {exc}",
+            )
 
         # Strip leaked <thinking> blocks (#214)
         try:
