@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -257,6 +256,8 @@ class LiveUI:
         self._input_queue: asyncio.Queue[str | None] = asyncio.Queue()
         # True while we are waiting for user input (suppress auto-refresh)
         self._waiting_input: bool = False
+        # Prompt text rendered in the Live layout (cleared after input, #464)
+        self._prompt_text: str = ""
 
     # ─────────────────────────────────────────────────────────────
     # Layout
@@ -268,6 +269,7 @@ class LiveUI:
             Layout(name="header", size=5),   # #437: was 3; now shows dots + info
             Layout(name="chat", ratio=3),
             Layout(name="bottom", ratio=1, minimum_size=7),
+            Layout(name="prompt", size=1),    # input prompt row, #464
         )
         layout["bottom"].split_row(
             Layout(name="stats", size=28),
@@ -432,11 +434,16 @@ class LiveUI:
             border_style="cyan",
         )
 
+    def _render_prompt(self) -> Text:
+        """One-line prompt row shown at the bottom of the Live layout. (#464)"""
+        return Text.from_markup(self._prompt_text)
+
     def _update_panels(self, layout: Layout) -> None:
         layout["header"].update(self._render_header())
         layout["bottom"]["stats"].update(self._render_stats())
         layout["bottom"]["logs"].update(self._render_logs())
         layout["chat"].update(self._render_chat())
+        layout["prompt"].update(self._render_prompt())
 
     # ─────────────────────────────────────────────────────────────
     # Data helpers
@@ -485,23 +492,15 @@ class LiveUI:
         t.start()
         return t
 
-    def _erase_prompt_line(self, typed: str) -> None:
-        """After readline() returns, the terminal has echoed '› {typed}\\n'
-        and moved the cursor one line below the live-render area.
+    def _erase_prompt_line(self, typed: str) -> None:  # noqa: ARG002
+        """Clear the prompt panel so the next Live refresh erases it. (#464)
 
-        We move the cursor back up by the number of lines that text
-        occupied, then clear to end-of-screen so the next live.refresh()
-        starts from the correct position without any residual prompt text.
+        Previously this wrote raw escape sequences directly to stdout while
+        Rich Live was running, which raced with the render loop and duplicated
+        the TUI layout.  Now we simply reset _prompt_text; the next
+        _refresh_now() call picks it up through the normal Live render path.
         """
-        try:
-            width = self.console.width or 80
-            # "› " is 2 chars; typed text follows on the same line
-            chars = 2 + len(typed)
-            lines_used = max(1, (chars + width - 1) // width)
-            # Go up lines_used lines, go to column 0, clear to end of screen
-            os.write(1, f"\033[{lines_used}A\r\033[J".encode())
-        except OSError:
-            pass
+        self._prompt_text = ""
 
     # ─────────────────────────────────────────────────────────────
     # Background tasks
@@ -1021,13 +1020,10 @@ class LiveUI:
         while self._running:
             # ── 1. Render current state and pause auto-refresh ────
             self._waiting_input = True
+            self._prompt_text = "› "  # rendered inside the Live layout, #464
             self._refresh_now(layout)
 
-            # ── 2. Print "› " prompt below the panels ─────────────
-            sys.stdout.write("› ")
-            sys.stdout.flush()
-
-            # ── 3. Wait for a line from the input thread ──────────
+            # ── 2. Wait for a line from the input thread ──────────
             try:
                 text = await self._input_queue.get()
             except asyncio.CancelledError:
