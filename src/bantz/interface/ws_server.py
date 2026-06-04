@@ -731,7 +731,7 @@ class _WSLogHandler(logging.Handler):
                 except RuntimeError:
                     return
             if loop and not loop.is_closed():
-                loop.call_soon_threadsafe(self._log_q.put_nowait, payload)
+                loop.call_soon_threadsafe(self._q.put_nowait, payload)
         except Exception:
             pass
 
