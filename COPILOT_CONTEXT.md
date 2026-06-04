@@ -234,13 +234,9 @@ Every user message travels this pipeline:
 
 ---
 
-### #463 — TUI: Rich `Live` Full-Screen Layout Causes Terminal Paint UX — No Scrollback, Can't Copy Text (HIGH)
+### ~~#463 — TUI: Rich `Live` Full-Screen Layout Causes Terminal Paint UX — No Scrollback, Can't Copy Text~~ ✅ ALREADY FIXED (closed 2026-06-04)
 **Affected files**: `interface/live_ui.py`
-**What needs to change**:
-- `Live(screen=True, ...)` at line 1178 owns the entire terminal in an alternate buffer — on exit, all output vanishes; there is no scrollback and the user cannot select/copy text from previous responses
-- Redraws cause visible flicker and overwrite terminal history
-- Fix: replace full-screen `Live` with a panel-based approach that renders inline (no alternate screen), or switch to Textual's `App` which handles this correctly via its own compositor — Textual is already a dependency
-- At minimum, remove `screen=True` and test whether the layout still works at reduced refresh rate
+**Status**: `screen=False`, `transient=False`, `refresh_per_second=4`, `auto_refresh=False` were already present in the codebase before this issue was triaged. Inline rendering, no alternate buffer, 4 fps, scrollback preserved. Issue closed with comment.
 
 ---
 
