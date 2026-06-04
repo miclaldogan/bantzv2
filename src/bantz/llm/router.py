@@ -65,3 +65,7 @@ def get_provider():
 
     from bantz.llm.ollama import ollama
     return ollama
+
+
+# Alias used by finalizer and other call-sites
+get_llm = get_provider

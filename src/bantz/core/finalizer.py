@@ -120,8 +120,9 @@ async def finalize(
 
     raw = None
     try:
-        from bantz.llm.ollama import ollama
-        raw = await ollama.chat(messages)
+        from bantz.llm.router import get_llm
+        llm = get_llm()
+        raw = await llm.chat(messages)
     except Exception:
         return output[:1500]
 
@@ -187,8 +188,9 @@ async def finalize_stream(
 
     async def _stream() -> AsyncIterator[str]:
         try:
-            from bantz.llm.ollama import ollama
-            async for token in ollama.chat_stream(messages):
+            from bantz.llm.router import get_llm
+            llm = get_llm()
+            async for token in llm.chat_stream(messages):
                 yield token
         except Exception:
             yield output[:1500]
@@ -297,8 +299,9 @@ async def finalize_plan(
     ]
 
     try:
-        from bantz.llm.ollama import ollama
-        raw = await ollama.chat(messages)
+        from bantz.llm.router import get_llm
+        llm = get_llm()
+        raw = await llm.chat(messages)
         cleaned = strip_markdown(raw)
         # Strip outer quotation marks some models wrap their response in.
         if len(cleaned) > 2 and cleaned[0] in ('"', '“') and cleaned[-1] in ('"', '”'):
