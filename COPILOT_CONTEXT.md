@@ -251,14 +251,12 @@ Every user message travels this pipeline:
 
 ---
 
-### #422 — Async Streaming Translation to Reduce Turkish Response Latency from 18s to <10s (HIGH)
-**Affected files**: `core/finalizer.py`, `i18n/bridge.py`, `interface/live_ui.py`, `interface/ws_server.py`
-**What needs to change**:
-- EN→TR back-translation in `finalizer.py` runs as a single blocking call on the full accumulated response — the user waits for LLM inference *plus* full-text translation before seeing any output (measured: 12–18s per turn)
-- Fix path A (quick): switch EN→TR model from `opus-mt-tc-big-en-tr` to `opus-mt-en-tr` — smaller model, slightly lower quality, significantly faster
-- Fix path B (correct): split response on sentence boundaries in `finalize()`, translate each sentence in the thread executor, stream translated sentences to the TUI/WS as they complete — matches how TTS already works sentence-by-sentence
-- Fix path C (cache): add an in-memory LRU cache for translated butler stock phrases (greetings, error messages, capability descriptions) — these are short, high-frequency, and translate identically every time
-- Combining A + C gives measurable improvement without structural changes
+### ~~#422 — Async Streaming Translation to Reduce Turkish Response Latency from 18s to <10s~~ ✅ FIXED (PR #472, merged 2026-06-04)
+**Affected files**: `core/finalizer.py`, `i18n/bridge.py`, `interface/ws_server.py`
+**What was changed**:
+- **`i18n/bridge.py`**: Added `_cache: dict[str, str]` (maxsize=256, FIFO eviction) to `_Translator`; both `translate()` and `_chunk_translate()` check the cache before invoking the model — common butler stock phrases now translate in ~0 ms after the first call
+- **`core/finalizer.py`**: `finalize_stream()._stream()` now detects `bridge.is_enabled()` and buffers LLM tokens until sentence boundaries (`(?<=[.!?])\\s+`), then calls `bridge.to_turkish()` per sentence and yields immediately — translation overlaps LLM inference instead of running serially after it; no signature changes
+- **`interface/ws_server.py`**: Removed the `await _to_tr("".join(parts))` re-translation on the streaming path; `finalize_stream` already emits pre-translated tokens when the bridge is enabled
 
 ---
 
