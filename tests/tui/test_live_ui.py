@@ -709,7 +709,7 @@ class TestServicePollerAndUpdater:
             ui._running = False  # run one iteration only
             # Manually call the update logic (first iteration before sleep)
             try:
-                from bantz.core.memory import memory as _mem
+                pass
             except Exception:
                 pass
             with patch.dict("sys.modules", {"bantz.core.memory": type("m", (), {"memory": mock_mem})()}):

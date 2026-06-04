@@ -40,9 +40,11 @@ Usage:
     bantz --reflect --dry-run    # simulate
     bantz --reflections          # view past reflections
 """
+
 from __future__ import annotations
 
 import asyncio
+
 import json
 import logging
 import time
@@ -729,15 +731,15 @@ async def _send_report(result: ReflectionResult, dry_run: bool) -> None:
         if config.telegram_bot_token and config.telegram_allowed_users:
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
             client = _get_client()
-            for uid in users:
-                try:
-                    await client.post(
-                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        timeout=10.0,
-                    )
-                except Exception:
-                    pass
+            coros = [
+                client.post(
+                    f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                    json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                    timeout=10.0,
+                ) for uid in users
+            ]
+            # ⚡ Bolt Optimization: Group independent HTTP requests using asyncio.gather
+            await asyncio.gather(*coros, return_exceptions=True)
     except Exception:
         pass
 
