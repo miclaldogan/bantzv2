@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 Direction = Literal["tr2en", "en2tr"]
 
+_CACHE_MAXSIZE: int = 256  # per-direction translation cache (#422)
+
 # Model ID'leri
 _MODELS: dict[Direction, str] = {
     "tr2en": "Helsinki-NLP/opus-mt-tr-en",
@@ -34,6 +36,7 @@ class _Translator:
         self._tokenizer = None
         self._model = None
         self._torch = None
+        self._cache: dict[str, str] = {}
 
     def _load(self) -> None:
         if self._tokenizer is not None and self._model is not None:
@@ -57,6 +60,9 @@ class _Translator:
     def translate(self, text: str) -> str:
         if not text.strip():
             return text
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
         self._load()
         inputs = self._tokenizer(
             text,
@@ -70,7 +76,11 @@ class _Translator:
                 max_new_tokens=256,
                 max_length=None,   # override model's built-in limit to avoid conflict
             )
-        return self._tokenizer.batch_decode(generated, skip_special_tokens=True)[0]
+        result = self._tokenizer.batch_decode(generated, skip_special_tokens=True)[0]
+        if len(self._cache) >= _CACHE_MAXSIZE:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[text] = result
+        return result
 
     def _chunk_translate(self, text: str) -> str:
         """Translate long text by splitting into paragraph-sized chunks.
@@ -78,6 +88,9 @@ class _Translator:
         MarianMT has a 512-token input limit — this prevents silent
         truncation of longer butler responses.
         """
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
         import re
         paragraphs = [p.strip() for p in re.split(r"\n\n+", text)]
         result_parts: list[str] = []
@@ -101,7 +114,11 @@ class _Translator:
                 if buf:
                     translated_sentences.append(self.translate(buf.strip()))
                 result_parts.append(" ".join(translated_sentences))
-        return "\n\n".join(result_parts)
+        result = "\n\n".join(result_parts)
+        if len(self._cache) >= _CACHE_MAXSIZE:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[text] = result
+        return result
 
 
 # ── Global bridge ─────────────────────────────────────────────────────────────

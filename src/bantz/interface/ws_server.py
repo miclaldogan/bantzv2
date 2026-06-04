@@ -233,9 +233,10 @@ class WsBroadcastServer:
             _event_bus.off("planner_step",   _on_planner_step)
 
         if result.stream is not None:
-            # Accumulate all English tokens, then translate the full text
-            # at once.  Sending partial tokens to a Turkish user would be
-            # confusing; the butler narration above already gives live feedback.
+            # finalize_stream() now translates sentence-by-sentence when the
+            # language bridge is enabled (#422), so tokens arrive already in
+            # Turkish.  When the bridge is disabled the tokens are plain
+            # English and no translation is needed either way.
             parts: list[str] = []
             try:
                 async for token in result.stream:
@@ -243,7 +244,7 @@ class WsBroadcastServer:
             except Exception as exc:
                 await _send(ws, {"type": "error", "msg": f"stream error: {exc}"})
                 return
-            response = await _to_tr("".join(parts))
+            response = "".join(parts)
             if response.strip():
                 await _send(ws, {"type": "token", "text": response})
             await _send(ws, {"type": "done"})

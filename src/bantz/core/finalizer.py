@@ -56,6 +56,10 @@ express your persona through tone and word choice, NOT by renaming real data.{pe
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+# Sentence-boundary regex used when streaming with translation enabled (#422)
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
 def strip_markdown(text: str) -> str:
     """Remove common markdown syntax from LLM responses."""
     text = re.sub(r"```(?:\w+)?\s*\n?(.*?)```", r"\1", text, flags=re.DOTALL)
@@ -189,9 +193,28 @@ async def finalize_stream(
     async def _stream() -> AsyncIterator[str]:
         try:
             from bantz.llm.router import get_llm
+            from bantz.i18n.bridge import bridge as _bridge
             llm = get_llm()
-            async for token in llm.chat_stream(messages):
-                yield token
+            if _bridge.is_enabled():
+                # Sentence-boundary streaming: translate each complete sentence
+                # as soon as it arrives so translation overlaps LLM inference
+                # instead of running serially after it. (#422)
+                buf = ""
+                async for token in llm.chat_stream(messages):
+                    buf += token
+                    parts = _SENTENCE_END_RE.split(buf, maxsplit=1)
+                    while len(parts) > 1:
+                        sentence = parts[0].strip()
+                        if sentence:
+                            yield await _bridge.to_turkish(sentence)
+                            yield " "
+                        buf = parts[1]
+                        parts = _SENTENCE_END_RE.split(buf, maxsplit=1)
+                if buf.strip():
+                    yield await _bridge.to_turkish(buf.strip())
+            else:
+                async for token in llm.chat_stream(messages):
+                    yield token
         except Exception:
             yield output[:1500]
 
