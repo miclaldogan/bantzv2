@@ -210,8 +210,12 @@ class LiveUI:
         self._chat_lines: deque[tuple[str, str]] = deque(maxlen=self.CHAT_MAX)
 
         # ── service dots ──────────────────────────────────────────
+        _llm_svc = {
+            "ollama": "Ollama", "claude": "Claude",
+            "openai": "OpenAI", "gemini": "Gemini",
+        }.get((config.llm_provider or "ollama").lower(), "Ollama")
         self._services: dict[str, ServiceDot] = {
-            "Ollama": ServiceDot.UNCONFIGURED,
+            _llm_svc: ServiceDot.UNCONFIGURED,  # active LLM provider dot, #465
             "MemPalace": ServiceDot.UNCONFIGURED,  # #437
             "TTS": ServiceDot.UNCONFIGURED,         # #437
             "STT": ServiceDot.UNCONFIGURED,         # #437
@@ -584,16 +588,22 @@ class LiveUI:
         """One-shot health probes for all monitored services."""
         import httpx
 
+        _provider = (config.llm_provider or "ollama").lower()
+        _llm_key = {
+            "ollama": "Ollama", "claude": "Claude",
+            "openai": "OpenAI", "gemini": "Gemini",
+        }.get(_provider, "Ollama")
+
         async def check_ollama(client: httpx.AsyncClient) -> None:
             try:
                 r = await client.get(f"{config.ollama_base_url}/api/tags")
-                self._services["Ollama"] = (
+                self._services[_llm_key] = (
                     ServiceDot.UP if r.status_code == 200
                     else ServiceDot.DEGRADED
                 )
                 self.add_log(f"✓ Ollama connected → {config.ollama_model}")
             except Exception:
-                self._services["Ollama"] = ServiceDot.DOWN
+                self._services[_llm_key] = ServiceDot.DOWN
                 self.add_log(
                     f"✗ Ollama unreachable: {config.ollama_base_url}"
                 )
@@ -714,6 +724,38 @@ class LiveUI:
             except Exception:
                 self._services["Gemini"] = ServiceDot.DOWN
 
+        async def check_claude() -> None:
+            try:
+                if config.anthropic_api_key:
+                    from bantz.llm.anthropic_client import claude
+                    self._services[_llm_key] = (
+                        ServiceDot.UP if claude.is_enabled()
+                        else ServiceDot.DOWN
+                    )
+                    self.add_log(f"✓ Claude configured → {config.anthropic_model}")
+                else:
+                    self._services[_llm_key] = ServiceDot.UNCONFIGURED
+                    self.add_log("✗ Claude: BANTZ_ANTHROPIC_API_KEY not set")
+            except Exception:
+                self._services[_llm_key] = ServiceDot.DOWN
+                self.add_log("✗ Claude client error")
+
+        async def check_openai() -> None:
+            try:
+                if config.openai_api_key:
+                    from bantz.llm.openai_client import openai_client
+                    self._services[_llm_key] = (
+                        ServiceDot.UP if openai_client.is_enabled()
+                        else ServiceDot.DOWN
+                    )
+                    self.add_log(f"✓ OpenAI configured → {config.openai_model}")
+                else:
+                    self._services[_llm_key] = ServiceDot.UNCONFIGURED
+                    self.add_log("✗ OpenAI: BANTZ_OPENAI_API_KEY not set")
+            except Exception:
+                self._services[_llm_key] = ServiceDot.DOWN
+                self.add_log("✗ OpenAI client error")
+
         async def check_telegram(client: httpx.AsyncClient) -> None:
             try:
                 token = getattr(config, "telegram_bot_token", None)
@@ -731,8 +773,16 @@ class LiveUI:
                 self._services["Telegram"] = ServiceDot.DOWN
 
         async with httpx.AsyncClient(timeout=3.0) as client:
+            if _provider == "claude":
+                _llm_coro = check_claude()
+            elif _provider == "openai":
+                _llm_coro = check_openai()
+            elif _provider == "gemini":
+                _llm_coro = asyncio.sleep(0)  # check_gemini() covers the "Gemini" dot
+            else:
+                _llm_coro = check_ollama(client)
             await asyncio.gather(
-                check_ollama(client),
+                _llm_coro,
                 check_mempalace(),
                 check_tts(),
                 check_stt(),
