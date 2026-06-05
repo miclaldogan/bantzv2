@@ -1,0 +1,4 @@
+💡 What: Replaced sequential `await client.post(...)` calls with concurrent `asyncio.gather(*coros, return_exceptions=True)` in `_step_report` (`maintenance.py`) and `_send_report` (`reflection.py`).
+🎯 Why: Iterating over an array of users and sending a Telegram API request sequentially introduces an N+1 latency bottleneck. Concurrent execution eliminates this latency curve.
+📊 Impact: Expected to reduce Telegram broadcast latency linearly, e.g. broadcasting to 10 users takes the latency of 1 request instead of 10.
+🔬 Measurement: Verify using unit tests in `tests/workflows/test_maintenance.py` and `tests/workflows/test_reflection.py` which ensure Telegram functionality still executes correctly.
