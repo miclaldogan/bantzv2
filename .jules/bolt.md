@@ -12,3 +12,7 @@
 ## 2025-02-12 - Concurrent HTTP Fetching Optimization
 **Learning:** Sequential HTTP calls (N+1) using `await` inside a loop are a major bottleneck for network-bound tools in Bantz.
 **Action:** When performing multiple independent HTTP requests (like fetching API items), group them using `asyncio.gather` with `return_exceptions=True` instead of sequential `await` calls.
+
+## $(date +%Y-%m-%d) - Eliminate N+1 Network Latency in Telegram Broadcasts
+**Learning:** Sequential `await` calls in loops for independent HTTP requests (like sending notifications to multiple Telegram users) cause N+1 network latency, blocking the event loop and scaling poorly with the number of requests.
+**Action:** Always group independent I/O-bound async tasks using a list comprehension and execute them concurrently via `asyncio.gather(*coros, return_exceptions=True)`. This reduces execution time from O(N) to O(1) in terms of latency, while preserving the isolation of individual request failures.
