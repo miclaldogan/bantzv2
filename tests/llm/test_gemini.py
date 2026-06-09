@@ -1,9 +1,8 @@
 import pytest
-import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-from bantz.llm.gemini import GeminiClient, _notify_gemini_health
+from bantz.llm.gemini import GeminiClient
 
 
 # --- GeminiClient tests ---

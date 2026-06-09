@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 
 def _get_loop():
-    import asyncio
     try:
         return asyncio.get_event_loop()
     except RuntimeError:

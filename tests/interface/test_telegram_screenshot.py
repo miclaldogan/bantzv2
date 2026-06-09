@@ -124,8 +124,6 @@ class TestScreenshotTool:
 
     def test_daguerreotype_vocabulary_in_output(self):
         """The tool output must use butler vocabulary."""
-        from bantz.tools.screenshot_tool import ScreenshotTool
-        import asyncio
 
 def _get_loop():
     import asyncio
