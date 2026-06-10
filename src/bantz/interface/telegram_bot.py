@@ -226,11 +226,14 @@ async def send_system_notification(text: str) -> None:
         app: _TgApp | None = _current_app
         if app is None:
             return
-        for chat_id in _active_chats:
-            try:
-                await app.bot.send_message(chat_id=chat_id, text=filtered)
-            except Exception as exc:
-                log.debug("send_system_notification: failed for %d: %s", chat_id, exc)
+        # ⚡ Bolt Optimization: Broadcast messages concurrently to eliminate N+1 latency bottlenecks
+        chats = list(_active_chats)
+        coros = [app.bot.send_message(chat_id=chat_id, text=filtered) for chat_id in chats]
+        if coros:
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for chat_id, res in zip(chats, results):
+                if isinstance(res, Exception):
+                    log.debug("send_system_notification: failed for %d: %s", chat_id, res)
     except Exception as exc:
         log.debug("send_system_notification: %s", exc)
 
@@ -700,11 +703,14 @@ async def _daily_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.warning("Daily digest job failed: %s", exc)
         return
 
-    for chat_id in _active_chats:
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=text)
-        except Exception as exc:
-            log.debug("Failed to send daily digest to %d: %s", chat_id, exc)
+    # ⚡ Bolt Optimization: Broadcast messages concurrently to eliminate N+1 latency bottlenecks
+    chats = list(_active_chats)
+    coros = [context.bot.send_message(chat_id=chat_id, text=text) for chat_id in chats]
+    if coros:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for chat_id, res in zip(chats, results):
+            if isinstance(res, Exception):
+                log.debug("Failed to send daily digest to %d: %s", chat_id, res)
 
 
 async def _weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -729,11 +735,14 @@ async def _weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.warning("Weekly digest job failed: %s", exc)
         return
 
-    for chat_id in _active_chats:
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=text)
-        except Exception as exc:
-            log.debug("Failed to send weekly digest to %d: %s", chat_id, exc)
+    # ⚡ Bolt Optimization: Broadcast messages concurrently to eliminate N+1 latency bottlenecks
+    chats = list(_active_chats)
+    coros = [context.bot.send_message(chat_id=chat_id, text=text) for chat_id in chats]
+    if coros:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for chat_id, res in zip(chats, results):
+            if isinstance(res, Exception):
+                log.debug("Failed to send weekly digest to %d: %s", chat_id, res)
 
 
 # ── Proactive reminder notifications ─────────────────────────────────────────
@@ -771,11 +780,14 @@ async def _check_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         if filtered is None:
             continue
 
-        for chat_id in _active_chats:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=filtered)
-            except Exception as exc:
-                log.debug("Failed to send reminder to %d: %s", chat_id, exc)
+        # ⚡ Bolt Optimization: Broadcast messages concurrently to eliminate N+1 latency bottlenecks
+        chats = list(_active_chats)
+        coros = [context.bot.send_message(chat_id=chat_id, text=filtered) for chat_id in chats]
+        if coros:
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for chat_id, res in zip(chats, results):
+                if isinstance(res, Exception):
+                    log.debug("Failed to send reminder to %d: %s", chat_id, res)
 
 
 # ── Cognitive Wire: free-text → brain.process() (#178) ────────────────────────
