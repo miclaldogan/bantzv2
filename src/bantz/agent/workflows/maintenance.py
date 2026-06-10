@@ -454,15 +454,17 @@ async def _step_report(report: MaintenanceReport) -> StepResult:
         if config.telegram_bot_token and config.telegram_allowed_users:
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
             client = _get_client()
-            for uid in users:
-                try:
-                    await client.post(
-                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        timeout=10.0,
-                    )
-                except Exception:
-                    pass
+            import asyncio
+            coros = [
+                client.post(
+                    f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                    json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                    timeout=10.0,
+                )
+                for uid in users
+            ]
+            if coros:
+                await asyncio.gather(*coros, return_exceptions=True)
     except Exception:
         pass
 
