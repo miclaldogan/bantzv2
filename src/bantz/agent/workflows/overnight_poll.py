@@ -163,15 +163,22 @@ async def _poll_gmail(last_poll: Optional[str]) -> PollSourceResult:
         gmail = GmailTool()
         loop = asyncio.get_event_loop()
 
-        # Count total unread
-        count = await loop.run_in_executor(None, gmail._count_sync, creds)
-
         # Fetch recent unread messages with dedup timestamp (Rec #2)
         after_ts = _gmail_after_timestamp(last_poll)
         query = f"label:unread after:{after_ts}"
-        messages = await loop.run_in_executor(
-            None, gmail._fetch_messages_sync, creds, query, _MAX_EMAILS_FETCH,
+
+        # ⚡ Bolt Optimization: Execute sync API calls concurrently
+        results = await asyncio.gather(
+            loop.run_in_executor(None, gmail._count_sync, creds),
+            loop.run_in_executor(
+                None, gmail._fetch_messages_sync, creds, query, _MAX_EMAILS_FETCH,
+            ),
+            return_exceptions=True
         )
+        for r in results:
+            if isinstance(r, Exception):
+                raise r
+        count, messages = results
 
         # Classify urgent/normal (Rec #3: configurable keywords)
         keywords = _get_urgent_keywords()
@@ -229,15 +236,21 @@ async def _poll_calendar() -> PollSourceResult:
         tz_name = loc.timezone
 
         loop = asyncio.get_event_loop()
-        events = await loop.run_in_executor(
-            None, cal._fetch_events_sync, creds, tz_name, 1,  # today
+        # ⚡ Bolt Optimization: Execute sync API calls concurrently
+        results = await asyncio.gather(
+            loop.run_in_executor(
+                None, cal._fetch_events_sync, creds, tz_name, 1,  # today
+            ),
+            loop.run_in_executor(
+                None, cal._fetch_events_sync, creds, tz_name, 1,
+                (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            ),
+            return_exceptions=True
         )
-
-        # Also check tomorrow for early morning awareness
-        tomorrow_events = await loop.run_in_executor(
-            None, cal._fetch_events_sync, creds, tz_name, 1,
-            (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
-        )
+        for r in results:
+            if isinstance(r, Exception):
+                raise r
+        events, tomorrow_events = results
 
         event_summaries = []
         for ev in events[:_MAX_EVENTS_FETCH]:
