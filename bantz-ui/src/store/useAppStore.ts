@@ -106,6 +106,7 @@ interface AppState {
   logs: LogEntry[];
   alerts: AlertItem[];
   anomalies: Anomaly[];
+  dismissedIds: Set<string>;
   services: ServiceItem[];
   configValues: ConfigValues | null;
   wsSend: ((msg: Record<string, unknown>) => boolean) | null;
@@ -202,6 +203,7 @@ export const useAppStore = create<AppState>((set) => ({
   logs:         SEED_LOGS.map((l) => ({ ...l, id: nid() })),
   alerts:       [],
   anomalies:    [],
+  dismissedIds: new Set<string>(),
   services:     SEED_SERVICES,
   configValues: null,
   wsSend:       null,
@@ -234,10 +236,30 @@ export const useAppStore = create<AppState>((set) => ({
   dismissAllAlerts: () => set({ alerts: [] }),
 
   // Live anomalies arrive on each vitals push and replace the list wholesale.
-  setAnomalies: (anomalies) => set({ anomalies }),
-  // Local dismiss; the backend re-derives so it reappears next tick if still present.
+  // Dismissed ids stay hidden; one whose condition has cleared (no longer in
+  // the incoming push) is auto-undismissed so it can surface again later.
+  setAnomalies: (incoming) =>
+    set((s) => {
+      const incomingIds = new Set(incoming.map((a) => a.id));
+      const dismissedIds = new Set(
+        [...s.dismissedIds].filter((id) => incomingIds.has(id)),
+      );
+      return {
+        dismissedIds,
+        anomalies: incoming.filter((a) => !dismissedIds.has(a.id)),
+      };
+    }),
+  // Dismiss persists via dismissedIds (survives re-pushes); also drop it from
+  // the visible list now for immediate feedback.
   dismissAnomaly: (id) =>
-    set((s) => ({ anomalies: s.anomalies.filter((a) => a.id !== id) })),
+    set((s) => {
+      const dismissedIds = new Set(s.dismissedIds);
+      dismissedIds.add(id);
+      return {
+        dismissedIds,
+        anomalies: s.anomalies.filter((a) => a.id !== id),
+      };
+    }),
 
   setServices: (services) => set({ services }),
 
