@@ -64,6 +64,9 @@ def strip_markdown(text: str) -> str:
     """Remove common markdown syntax from LLM responses."""
     # Drop model reasoning blocks that leak into user-facing output.
     text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    # Drop internal [CONTEXT:...] metadata blobs (e.g. the JSON trailing a
+    # "Event added ✓ <title> <datetime> [CONTEXT:{...}]" confirmation).
+    text = re.sub(r"\[CONTEXT:.*?\]", "", text, flags=re.DOTALL)
     text = re.sub(r"```(?:\w+)?\s*\n?(.*?)```", r"\1", text, flags=re.DOTALL)
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)

@@ -304,19 +304,52 @@ class WsBroadcastServer:
         if not text:
             await _send(ws, {"type": "error", "msg": "empty text"})
             return
-        try:
-            from bantz.core.scheduler import scheduler
-            from datetime import datetime, timedelta
-            if scheduler._initialized:
-                fire_at = datetime.now() + timedelta(hours=1)
-                rid = scheduler.add(text, fire_at)
-                await _send(ws, {"type": "task_created", "id": rid, "title": text})
-            else:
-                await _send(ws, {"type": "error", "msg": "scheduler not initialized"})
+
+        rid: object = None
+        title = text
+
+        # Try to parse the directive into a proper scheduled job (cron/interval/once).
+        parsed = await _parse_directive(text)
+        if parsed:
+            try:
+                from bantz.agent.job_scheduler import job_scheduler
+                from datetime import datetime
+                st = parsed.get("schedule_type")
+                if job_scheduler.started and st in ("cron", "interval", "once"):
+                    title = parsed.get("title") or text
+                    fire_at = None
+                    if st == "once" and parsed.get("fire_at"):
+                        try:
+                            fire_at = datetime.fromisoformat(parsed["fire_at"])
+                        except (ValueError, TypeError):
+                            fire_at = None
+                    rid = job_scheduler.add_dynamic_job(
+                        title, st,
+                        cron_expr=str(parsed.get("cron_expr", "")),
+                        interval_seconds=int(parsed.get("interval_seconds") or 0),
+                        fire_at=fire_at,
+                        priority=str(parsed.get("priority", "medium")),
+                    )
+            except Exception as exc:
+                log.warning("directive scheduling failed, falling back: %s", exc)
+                rid = None
+
+        # Fallback: one-time reminder firing in 1 hour (legacy behavior).
+        if not rid:
+            try:
+                from bantz.core.scheduler import scheduler
+                from datetime import datetime, timedelta
+                if scheduler._initialized:
+                    rid = scheduler.add(text, datetime.now() + timedelta(hours=1))
+                    title = text
+                else:
+                    await _send(ws, {"type": "error", "msg": "scheduler not initialized"})
+                    return
+            except Exception as exc:
+                await _send(ws, {"type": "error", "msg": str(exc)})
                 return
-        except Exception as exc:
-            await _send(ws, {"type": "error", "msg": str(exc)})
-            return
+
+        await _send(ws, {"type": "task_created", "id": str(rid), "title": title})
         await _send(ws, await _collect_tasks())
 
     # ── config ─────────────────────────────────────────────────────────────
@@ -657,6 +690,39 @@ def _collect_vram() -> tuple[float, float]:
     except Exception:
         pass
     return 0.0, 0.0
+
+
+_DIRECTIVE_PROMPT = """Parse this directive into a scheduled job. Return JSON only:
+{{
+  "title": "short title",
+  "schedule_type": "cron" | "interval" | "once",
+  "cron_expr": "hour=7,minute=0" (if cron),
+  "interval_seconds": 1800 (if interval),
+  "fire_at": "ISO datetime" (if once),
+  "priority": "low" | "medium" | "high" | "critical"
+}}
+User said: "{user_text}"
+Today is {now}. If they say "every morning at 7am" -> cron hour=7,minute=0. \
+If they say "every 30 minutes" -> interval 1800. If they say "at 7am tomorrow" -> once with fire_at."""
+
+
+async def _parse_directive(text: str) -> dict | None:
+    """Ask the LLM to turn a natural-language directive into a schedule spec.
+    Returns the parsed dict, or None if anything fails (caller falls back)."""
+    from datetime import datetime
+    prompt = _DIRECTIVE_PROMPT.format(user_text=text, now=datetime.now().isoformat())
+    try:
+        from bantz.llm.router import get_llm
+        raw = await get_llm().chat([{"role": "user", "content": prompt}])
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return None
+        data = json.loads(m.group(0))
+        if isinstance(data, dict) and data.get("schedule_type"):
+            return data
+    except Exception as exc:
+        log.debug("directive parse failed: %s", exc)
+    return None
 
 
 async def _collect_tasks() -> dict:

@@ -694,6 +694,62 @@ class JobScheduler:
             log.error("Failed to add reminder '%s': %s", title, exc)
             return None
 
+    def add_dynamic_job(
+        self,
+        title: str,
+        schedule_type: str,
+        *,
+        cron_expr: str = "",
+        interval_seconds: int = 0,
+        fire_at: "datetime | None" = None,
+        priority: str = "medium",
+    ) -> str | None:
+        """Schedule a directive parsed from natural language.
+
+        schedule_type: "cron" | "interval" | "once".
+          cron_expr     — APScheduler cron fields as "hour=7,minute=0".
+          interval_seconds — for "interval".
+          fire_at       — datetime for "once".
+        Returns the job id, or None on error (caller falls back).
+        """
+        if not self._started:
+            log.warning("Cannot add dynamic job — scheduler not started")
+            return None
+
+        from datetime import datetime
+        job_id = f"directive_{int(datetime.now().timestamp())}_{hash(title) % 10000}"
+        try:
+            if schedule_type == "cron":
+                from apscheduler.triggers.cron import CronTrigger
+                kwargs: dict[str, str] = {}
+                for part in cron_expr.split(","):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        kwargs[k.strip()] = v.strip()
+                trigger = CronTrigger(**kwargs) if kwargs else CronTrigger(hour="0", minute="0")
+            elif schedule_type == "interval":
+                from apscheduler.triggers.interval import IntervalTrigger
+                trigger = IntervalTrigger(seconds=max(1, int(interval_seconds)))
+            else:  # "once"
+                from apscheduler.triggers.date import DateTrigger
+                trigger = DateTrigger(run_date=fire_at or datetime.now())
+
+            self._scheduler.add_job(
+                _fire_dynamic_reminder,
+                trigger,
+                args=[title, schedule_type],
+                id=job_id,
+                name=title,
+                replace_existing=True,
+                jobstore="persistent",
+            )
+            log.info("Dynamic directive scheduled: '%s' (%s, priority=%s)",
+                     title, schedule_type, priority)
+            return job_id
+        except Exception as exc:
+            log.error("Failed to add dynamic job '%s': %s", title, exc)
+            return None
+
     # ── Job listing / CLI ─────────────────────────────────────────────
 
     def list_jobs(self) -> list[dict]:
