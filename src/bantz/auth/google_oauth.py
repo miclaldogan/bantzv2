@@ -21,7 +21,7 @@ from bantz.auth.token_store import token_store, SERVICE_SCOPES
 
 logger = logging.getLogger(__name__)
 
-REDIRECT_PORT = 8765
+REDIRECT_PORT = 8766
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
 
 
