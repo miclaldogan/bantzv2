@@ -77,10 +77,15 @@ _WS_PORT = 8765
 # for ERROR/CRITICAL entries. Filled by _log_queue_loop as logs stream through.
 _recent_logs: deque[dict] = deque(maxlen=50)
 
-# Anomaly detection thresholds (percent).
-_CPU_CRIT = 85.0
-_RAM_CRIT = 90.0
-_DISK_CRIT = 90.0
+# Anomaly detection thresholds (percent). Tuned for a personal machine.
+_CPU_CRIT = 80.0
+_RAM_CRIT = 85.0
+_DISK_CRIT = 85.0
+_SWAP_WARN = 60.0
+_SWAP_CRIT = 85.0
+# Combined memory-pressure: RAM and swap both elevated at once.
+_MEM_PRESSURE_RAM = 80.0
+_MEM_PRESSURE_SWAP = 50.0
 
 # ── Config key → (env alias, python attr) map ────────────────────────────────
 
@@ -548,17 +553,56 @@ def _compute_anomalies(cpu: float, ram_pct: float) -> list[dict]:
     now_ms = int(time.time() * 1000)
     out: list[dict] = []
 
+    # Swap state (used by the swap + combined-pressure checks below).
+    try:
+        swap = psutil.swap_memory()
+        swap_pct = swap.percent
+        swap_used_gb = swap.used / (1024 ** 3)
+        swap_total_gb = swap.total / (1024 ** 3)
+    except Exception:
+        swap_pct = swap_used_gb = swap_total_gb = 0.0
+
+    # Debug: confirm what's actually being read each vitals push (debug level so
+    # it doesn't spam the live log stream every 2s).
+    log.debug("anomaly scan: ram=%.1f%% cpu=%.1f%% swap=%.1f%%", ram_pct, cpu, swap_pct)
+
     if cpu > _CPU_CRIT:
         out.append({
             "id": "cpu-high", "title": "CPU saturated", "severity": "critical",
-            "description": f"CPU usage at {cpu:.0f}% (threshold {_CPU_CRIT:.0f}%).",
+            "description": f"CPU at {cpu:.1f}% — threshold {_CPU_CRIT:.0f}%.",
             "source": "system", "timestamp": now_ms,
         })
     if ram_pct > _RAM_CRIT:
         out.append({
             "id": "ram-high", "title": "Memory pressure", "severity": "critical",
-            "description": f"RAM usage at {ram_pct:.0f}% (threshold {_RAM_CRIT:.0f}%).",
+            "description": f"RAM at {ram_pct:.1f}% — threshold {_RAM_CRIT:.0f}%.",
             "source": "system", "timestamp": now_ms,
+        })
+
+    # Swap pressure — high swap means the system is memory-starved even when
+    # RAM % looks only borderline.
+    if swap_total_gb > 0 and swap_pct > _SWAP_WARN:
+        crit = swap_pct > _SWAP_CRIT
+        out.append({
+            "id": "swap-high",
+            "title": "Swap saturated" if crit else "Swap in heavy use",
+            "severity": "critical" if crit else "warning",
+            "description": (
+                f"Swap {swap_used_gb:.1f} GB / {swap_total_gb:.0f} GB used "
+                f"({swap_pct:.0f}%) — system is paging heavily."
+            ),
+            "source": "memory-monitor", "timestamp": now_ms,
+        })
+
+    # Combined memory pressure — RAM and swap elevated simultaneously.
+    if ram_pct > _MEM_PRESSURE_RAM and swap_pct > _MEM_PRESSURE_SWAP:
+        out.append({
+            "id": "memory-pressure", "title": "MEMORY PRESSURE", "severity": "critical",
+            "description": (
+                f"RAM and swap both elevated (RAM {ram_pct:.0f}%, swap {swap_pct:.0f}%) "
+                "— system is under sustained memory stress."
+            ),
+            "source": "memory-monitor", "timestamp": now_ms,
         })
     # every mounted partition, not just "/"
     seen_mounts: set[str] = set()
