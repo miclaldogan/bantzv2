@@ -33,7 +33,9 @@ log = logging.getLogger("bantz.intent")
 # Compact routing hints — one line per tool keeps the prompt small for 8b models.
 # Full descriptions live on the tool classes; these are routing-only summaries.
 _ROUTING_HINTS: dict[str, str] = {
-    "web_search": "Search the internet for ANY factual/knowledge question or lookup",
+    "web_search": "Search the internet for SPECIFIC facts, prices, named entities, or the current status of a specific thing. 'search X', 'find X', 'look up X', 'ara' (search), 'bul' (find) → web_search. NOT for general news/headlines/'what happened today' — those go to the news tool.",
+    "web_research": "Deep, multi-source research that produces a long structured report (slow, minutes). 'research X', 'deep dive into Y', 'investigate Z', 'araştır' (research), 'write me a report on X' → web_research. Use web_search for quick lookups, NOT this.",
+    "web_news": "Live web news/headlines for a topic via bantz-web. 'news about X', 'latest on Y', 'what happened with Z', 'haberler' (news), 'gündem' (agenda/current affairs) → web_news.",
     "calendar": "Google Calendar: view, create, update, delete events and meetings. action=create for 'add/schedule/create event/dinner/meeting'. action=today for 'what's on my calendar'. action=delete for 'remove/cancel event'.",
     "gmail": "Gmail: read inbox, compose, send, search, reply, forward emails. Use for ANY mention of email/mail/inbox/mails. action=summary for 'check my mail'. NEVER answer email questions from memory.",
     "weather": "Current weather AND forecast — handles 'tomorrow', 'this week', 'will it rain', forecast queries. Single tool call, no planning needed. city param optional (auto-detects location).",
@@ -41,22 +43,24 @@ _ROUTING_HINTS: dict[str, str] = {
     "shell": "Run a bash command (ls, df, top, apt, etc.)",
     "system": (
         "Live system metrics: CPU, RAM, disk usage, uptime. "
-        "Turkish: 'cpu kullanımı', 'ram kullanımı', 'bellek kullanımı', 'disk kullanımı', "
-        "'sistem durumu', 'işlemci'. "
-        "MarianMT artifact: 'what is the use of cpu/ram/disk' = system metric query, NOT web_search."
+        "Raw Turkish that may pass through translation, all meaning a system-metric query: "
+        "'cpu kullanımı' (cpu usage), 'ram kullanımı' (ram usage), 'bellek kullanımı' (memory usage), "
+        "'disk kullanımı' (disk usage), 'sistem durumu' (system status), 'işlemci' (processor). "
+        "Translation artifact: 'what is the use of cpu/ram/disk' = system metric query, NOT web_search. "
+        "NOT for windows, apps, or UI elements — 'what windows are open', 'list interactive elements' go to accessibility/desktop."
     ),
     "filesystem": "Read, write, list files and folders under home directory",
-    "browser_control": "Launch apps AND control browser. Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
-    "visual_click": "Click any visible UI element on screen by describing it",
+    "browser_control": "Launch apps AND control the web browser ONLY (clicking links, filling web forms, navigating URLs, web page elements). Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. NOT for: clicking desktop buttons/dialogs (visual_click), native app windows (desktop), bare keyboard/mouse input (input_control), listing windows (accessibility). IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
+    "visual_click": "Click any visible UI element on screen by describing it ('click the submit button', 'click OK in the dialog'). Works on desktop and native app windows — first choice for clicking things that are NOT inside a web page.",
     "screenshot": "Capture screen image (action=capture) OR analyze what's visible on screen (action=analyze). 'what do you see/what's on my screen' = action=analyze. 'take a screenshot/ss al' = action=capture.",
-    "news": "Fetch and summarize latest news headlines",
+    "news": "News headlines and digests: 'what's in the news', 'today's headlines', 'tech news', 'what happened today'. ALWAYS news for headline browsing, never web_search.",
     "document": "Read and summarize documents: PDF, DOCX, TXT, MD, CSV",
-    "read_url": "Read full text content of a specific URL",
-    "contacts": "Search Google contacts (phone, email)",
+    "read_url": "READ the full text content of a specific URL: 'read <url>', 'fetch the text of <url>'. NOT browser_control (that is for interacting with pages, not reading them).",
+    "contacts": "Look up a person's phone number or email address in Google contacts. \"X's phone number\", 'find Y's email', 'do I have a contact named Z' → contacts, NOT chat.",
     "classroom": "Google Classroom: courses, assignments, announcements",
-    "summarizer": "Summarize, analyze, rewrite, or transform text",
-    "input_control": "Low-level mouse/keyboard with exact coordinates or key combos",
-    "accessibility": "Query OS accessibility tree to inspect running apps (read-only)",
+    "summarizer": "Transform text the user provides INLINE: 'summarize this text: …', 'rewrite this more formally: …', 'make this shorter: …', TL;DR. The text is already in the message — single tool call, NOT planner, NOT chat.",
+    "input_control": "Low-level mouse/keyboard: press keys/shortcuts ('press ctrl+shift+t'), move the mouse to exact coordinates, type text into the active window. NOT browser_control.",
+    "accessibility": "Inspect running apps via the OS accessibility tree (read-only): 'what windows are open', 'list running applications', 'inspect the UI tree of app X'.",
     "gui_action": "Interact with a specific labeled UI element in a desktop app",
     "computer_use": "Autonomous multi-step desktop automation using screen vision",
     "browser": "Advanced web page parsing: HTML, CSS selectors, image extraction",
@@ -65,6 +69,8 @@ _ROUTING_HINTS: dict[str, str] = {
     "run_workflow": "Execute a predefined YAML workflow by name, list available workflows, or create a new one. action=run name=<name> inputs={...} to execute, action=list to show available workflows, action=create name=<name> yaml_content=<yaml>. Use for repeated/deterministic multi-step pipelines.",
     "image": "Download, cache, and render images. action=render url=<image_url> for ANSI terminal art via chafa, action=download to cache only, action=raw for Telegram send_photo bytes.",
     "gui": "Desktop GUI automation via pyautogui + xdotool. action=click x=<int> y=<int>, action=click_image template=<path>, action=type text=<str>, action=focus_window title=<pattern> wm_class=<class>, action=screenshot region=<x,y,w,h>, action=scroll x=<int> y=<int> clicks=<int>, action=action_log to inspect recorded actions.",
+    "screen_query": "Answer questions about the CURRENT screen or click an element the user describes. Triggers (Turkish forms may pass through translation): 'what do you see' / 'ekranda ne var' (what's on the screen) = describe; 'ne yazıyor' (what does it say) = read; 'click the blue button' / 'şu ikona tıkla' (click that icon) = click. query=<user request>.",
+    "vision_execute": "Long multi-step desktop task guided by screen vision (screenshot → decide → act each step): 'play X on the music app', 'find Y in app Z and do W'. goal=<task>. For music: intent=play_music artist=<name> pulls favorites from profile.",
 }
 
 
@@ -94,7 +100,15 @@ TOOLS:
 RULES:
 - CASUAL GREETINGS (hey, hi, hello, hey bud, yo, sup, what's up, howdy, good morning, good evening, how are you, how's it going) → ALWAYS route="chat". NEVER run_workflow, NEVER briefing, NEVER any tool. These are conversational openers, not requests.
 - ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
-- Factual / knowledge questions about CURRENT EVENTS, recent news, prices, or live data → web_search.
+- Factual questions about SPECIFIC current things (a price, a named entity's status, a schedule) → web_search.
+- "search for X", "find X online", "look up X", "ara", "bul" → web_search (quick lookup).
+- "research X", "deep dive into X", "investigate X", "araştır", "write a report on X" → web_research (slow, in-depth report). NOT web_search, NOT planner.
+- "news about X", "latest on X", "what happened with X", "haberler", "gündem" → web_news.
+- "what's in the news", "today's headlines", "tech news", "what happened today" → news tool. ALWAYS news for headline/digest browsing — NEVER web_search, NEVER planner.
+- "summarize / rewrite / shorten / TL;DR this text: …" with the text pasted in the message → summarizer. The text is already provided: SINGLE tool call, NOT planner, NOT chat.
+- "X's phone number", "find Y's email address", "do I have a contact named Z" → contacts tool, NOT chat.
+- "reply to the email from X", "respond to X's email" → gmail action=reply.
+- "delegate this to the X agent", "have the X agent do Y", "ask the X agent to Z" → delegate_task role=X. This is ONE tool call even though it sounds multi-step — NEVER planner.
 - "what do you know about X", "tell me what you know about X", "what can you tell me about X" → route="chat". Answer from training knowledge — do NOT run a web search.
 - "who is X" → route="chat". Answer from your training knowledge. Only use web_search if the user explicitly says "search for" or "look up".
 - "do you remember X", "do you know me", "have I told you", "who am I", "do you know who I am" → route="chat". Use conversation context, never a tool.
@@ -107,6 +121,7 @@ RULES:
 - "open Gemini/ChatGPT/Claude" or any WEB APP → browser_control action=navigate url=<correct URL>. Known web apps: gemini=https://gemini.google.com, chatgpt=https://chatgpt.com, claude=https://claude.ai, perplexity=https://perplexity.ai, github=https://github.com, reddit=https://reddit.com
 - "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).
 - "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
+- ANY music-listening wish without "play" — "i want to listen (to) X", "put on some X", "can we hear X" → route="planner" too. NEVER web_search and NEVER news: music requests are ACTIONS to perform, not information lookups.
 - "search X, do research, give detailed summary" / "research X and write a report" → route="planner" (needs web_search + read_url + summarizer, possibly filesystem).
 - Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
 - Literal bash commands (ls, df, top) → shell.
@@ -118,6 +133,11 @@ RULES:
 - browser_control action names are EXACT: find_and_click (not 'click'), navigate (not 'navigate_to'), type_in_element (not 'type_in').
 - Tool name must be EXACT registry name in snake_case. Never invent tool names like "cancel_reminder" or "delete_event". Use the base tool with the right action param.
 - Clicking a UI element → visual_click with "target" param (e.g. visual_click: click a button or link). NOT shell, NOT browser_control.
+- "click the X button / the dialog / an icon" on the desktop or in a native app window → visual_click (or desktop), NOT browser_control. browser_control clicks ONLY inside web pages.
+- "what windows are open", "what apps are running", "list running applications" → accessibility, NOT browser_control.
+- "press <keys>", "keyboard shortcut", "move the mouse to X,Y", "type ... into the active window" → input_control, NOT browser_control.
+- Deictic screen requests, including raw Turkish that passed through translation — "şu ikona tıkla" (click that icon), "sağdaki butona bas" (press the button on the right), "bu ne yazıyor" (what does this say), "ekrana bak ve söyle" (look at the screen and tell me) → screen_query with query=<the request>. Plain English "click the X button" stays visual_click; "what do you see on my screen" stays screenshot action=analyze.
+- A goal that requires WATCHING the screen across many steps inside desktop apps ("find Y inside app Z and change W") → vision_execute goal=<task>. Play/music requests still go to route="planner" (the planner uses vision_execute).
 - Create folder + file in one step → filesystem action=create_folder_and_file with folder_path and file_name params.
 - Entity lookups ("what is the capital of X", "who founded X company") → web_search only when the answer is time-sensitive or obscure.
 
@@ -185,11 +205,75 @@ def _is_refusal(text: str) -> bool:
 
 _VALID_ROUTES = frozenset({"tool", "planner", "chat"})
 
-def _extract_json(text: str) -> dict:
+# Genuine multi-step structure: strong markers only. A naive "and" check
+# would break rescued single-tool cases like "move the mouse to 500,300 and
+# click" (inp02) — require "then"/"after that" or comma-joined clauses that
+# open a new "(and|ve) <verb> my/the …" segment.
+_MULTISTEP = re.compile(
+    r"\b(then|after that|ve sonra|followed by)\b"
+    r"|,\s*(and|ve)\s+\w+\s+(my|the)\b",
+    re.IGNORECASE,
+)
+
+# "play X on yt music / play some music" — the COT rules deliberately route
+# these to planner (open app → search → click); exempt them from the rescue.
+_PLAY_MUSIC = re.compile(
+    r"\b(play|çal|listen to|oyna)\b.{0,40}\b(music|müzik|song|şarkı|yt|youtube|spotify)\b",
+    re.IGNORECASE,
+)
+
+# Back-references that justify injecting conversation history into the
+# routing prompt. Turkish pronouns included because quick paths may see the
+# original text; "o/ona/ondan" = he/she/it forms.
+_ANAPHORA = re.compile(
+    r"\b(he|she|him|her|it|that one|those|again|earlier|last time|"
+    r"what (did|have) (we|you)|do you remember|remember (me|that|what)|"
+    r"o|ona|ondan|onu|tekrar|az önce|demin)\b",
+    re.IGNORECASE,
+)
+
+
+# Router-side invented-name aliases — mirrors agent/planner.py's
+# _PLANNER_ALIASES (the battle-tested set) plus browser_control ACTION
+# names the model promotes to tool names. Consulted only for tool names
+# that fail registry lookup.
+_ROUTER_TOOL_ALIASES: dict[str, str] = {
+    "firefox": "browser_control",
+    "chrome": "browser_control",
+    "chromium": "browser_control",
+    "browse": "browser_control",
+    "navigate": "browser_control",
+    "open": "browser_control",
+    "find_and_click": "browser_control",
+    "type_in_element": "browser_control",
+    "email": "gmail",
+    "mail": "gmail",
+    "bash": "shell",
+    "terminal": "shell",
+    "command": "shell",
+    "file": "filesystem",
+    "files": "filesystem",
+    "search": "web_search",
+    "google": "web_search",
+    "news_tool": "news",
+    "remind": "reminder",
+    "events": "calendar",
+    # Action names promoted to tool names (gemma4 shape)
+    "capture": "screenshot",
+    "render": "image",
+}
+
+
+def _extract_json(text: str, utterance: str = "") -> dict:
     """Extract the first JSON object from *text*, ignoring markdown fences and thinking blocks.
 
     Also normalises common llama3.1 mistakes:
     - route field contains a tool name instead of "tool"/"planner"/"chat"
+
+    *utterance* (the English routing input) is used only to guard the
+    planner→tool_name rescue: verdicts for genuinely multi-step requests
+    (``_MULTISTEP``) or play/music requests (``_PLAY_MUSIC``) keep their
+    planner route even when tool_name names a single tool.
     """
     text = strip_thinking(text)
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
@@ -199,11 +283,26 @@ def _extract_json(text: str) -> dict:
 
     # Fix: if 'route' is missing or not one of the valid values, the model likely
     # put the tool name there. Move it to tool_name and set route="tool".
+    # Gemma variant: route holds the REAL tool and tool_name holds an ACTION
+    # name ({"route": "screenshot", "tool_name": "capture"}) — when route is a
+    # registered tool and tool_name is not, the route value wins.
     if isinstance(data, dict) and data.get("route") not in _VALID_ROUTES:
         wrong_route = data.get("route")
         log.debug("_extract_json: normalising route=%r → route='tool'", wrong_route)
         if isinstance(wrong_route, str) and wrong_route:
-            data["tool_name"] = data.get("tool_name") or wrong_route
+            try:
+                from bantz.tools import registry as _registry
+                route_is_tool = _registry.get(wrong_route) is not None
+                tn = data.get("tool_name")
+                name_is_tool = (
+                    isinstance(tn, str) and tn and _registry.get(tn) is not None
+                )
+            except Exception:  # registry unavailable (bare unit tests)
+                route_is_tool = name_is_tool = False
+            if route_is_tool and not name_is_tool:
+                data["tool_name"] = wrong_route
+            else:
+                data["tool_name"] = data.get("tool_name") or wrong_route
         data["route"] = "tool"
 
     # Rescue: llama3.1 frequently answers a single-tool request with
@@ -215,12 +314,24 @@ def _extract_json(text: str) -> dict:
     # Known cost: a genuine multi-step request whose JSON also names its first
     # tool is demoted to one tool call — ~2/100 on the eval vs 35/100 rescued.
     if isinstance(data, dict) and data.get("route") == "planner":
+        if utterance and (
+            _MULTISTEP.search(utterance) or _PLAY_MUSIC.search(utterance)
+        ):
+            log.debug(
+                "rescue skipped: multi-step/play-music structure in %.60r",
+                utterance,
+            )
+            return data
         tool_name = data.get("tool_name")
         tool_args = data.get("tool_args")
         if (
             isinstance(tool_name, str)
             and tool_name
             and tool_name != "planner"
+            # delegate_task inside a planner verdict signals genuine
+            # multi-step intent (measured: pla01/pla04 on gemma4) — the
+            # planner will emit the delegate step itself if appropriate.
+            and tool_name != "delegate_task"
             and isinstance(tool_args, dict)
             and tool_args
         ):
@@ -234,6 +345,37 @@ def _extract_json(text: str) -> dict:
                     "route/tool_name mismatch rescued: planner → %s", tool_name
                 )
                 data["route"] = "tool"
+
+    # Invented-name repair: the model sometimes copies a hint's verb phrase
+    # ("read_and_summarize_document" for document) or an ACTION name
+    # ("navigate" for browser_control) into the tool name.  The planner has
+    # _PLANNER_ALIASES for this class; mirror it here for the single-tool
+    # path. Two deterministic steps, applied only when tool_name is unknown:
+    #   1. alias table (action/topic names → registry names)
+    #   2. unique token-substring match against registry names
+    if isinstance(data, dict) and data.get("route") == "tool":
+        tool_name = data.get("tool_name")
+        if isinstance(tool_name, str) and tool_name:
+            try:
+                from bantz.tools import registry as _registry
+                if _registry.get(tool_name) is None:
+                    norm = tool_name.strip().lower().replace(" ", "_").replace("-", "_")
+                    repaired = _ROUTER_TOOL_ALIASES.get(norm)
+                    if repaired is None:
+                        hits = [
+                            n for n in _registry.names()
+                            if n in norm.split("_") or (len(n) > 3 and n in norm)
+                        ]
+                        if len(set(hits)) == 1:
+                            repaired = hits[0]
+                    if repaired is not None and _registry.get(repaired) is not None:
+                        log.debug(
+                            "invented tool name repaired: %r → %r",
+                            tool_name, repaired,
+                        )
+                        data["tool_name"] = repaired
+            except Exception:  # registry unavailable (e.g. bare unit tests)
+                pass
 
     return data
 
@@ -267,7 +409,21 @@ _THINKING_MAX_TOKENS = 512
 # Ollama generation options for routing — cap output length for speed.
 # 768 tokens gives enough room for ~4-line <thinking> + JSON output.
 # Prevents llama3.1:8b from generating thousands of reasoning tokens.
-_ROUTING_OPTIONS: dict = {"num_predict": 768}
+# Model families with NATIVE thinking support in Ollama. Passing "think" to
+# a model without it returns a 400, so the flag is sent only to these.
+_NATIVE_THINK_FAMILIES = ("gemma4", "deepseek-r1", "qwen3", "gpt-oss", "magistral")
+
+
+def _supports_native_think(model: str) -> bool:
+    m = (model or "").lower()
+    return any(fam in m for fam in _NATIVE_THINK_FAMILIES)
+
+
+# Routing is a classification task: pin temperature to 0 so identical inputs
+# route identically. Measured: FULL (temp 0) 51/100 vs FULL_PROD (prod
+# sampling) 45/100 on the same cases; live tests 06/13 flip-flopped between
+# runs 30 minutes apart (eval/test_report_current.md).
+_ROUTING_OPTIONS: dict = {"num_predict": 768, "temperature": 0}
 
 
 async def _stream_and_collect(
@@ -277,6 +433,7 @@ async def _stream_and_collect(
     source: str = "cot_route",
     options: dict | None = None,
     model_override: str = "",
+    think: bool | None = False,
 ) -> str:
     """Stream an Ollama chat call, emitting ``thinking_*`` events.
 
@@ -308,7 +465,14 @@ async def _stream_and_collect(
         await bus.emit("thinking_start", source=source)
 
     try:
-        async for token in ollama.chat_stream(messages, options=options, model_override=model_override):
+        # think=False by default: routing is classification — NATIVE thinking
+        # (gemma4/deepseek-r1/qwen3) adds unbounded latency before the JSON
+        # verdict. The PROMPTED <thinking> in COT_SYSTEM still applies and is
+        # bounded by _THINKING_MAX_TOKENS. Models without native thinking
+        # ignore the flag... except Ollama 400s on unsupported models, so we
+        # only send it when the model is known to support native thinking.
+        _think = think if _supports_native_think(model_override or ollama.model) else None
+        async for token in ollama.chat_stream(messages, options=options, model_override=model_override, think=_think):
             buf += token
 
             if not emit_thinking or thinking_complete:
@@ -424,6 +588,30 @@ _CHAT_FAST = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Music-listening intent — unambiguous by construction, so it earns a
+# pre-LLM fast-path. Measured motivation: "i want to listen acdc" drew
+# four DIFFERENT LLM verdicts across four temp-0 runs (vision_execute,
+# web_search, vision_execute, browser_control) — Ollama's concurrent
+# batching makes boundary verdicts nondeterministic. Bare "play X" is NOT
+# matched (could be video/game/chess); "listen" wishes and explicit
+# music-service phrasings are.
+_MUSIC_FAST = re.compile(
+    r"(?i)"
+    r"\b(?:i (?:want|wanna|would like) to listen|wanna listen|let'?s listen|listen to)\b|"
+    r"\bput on some\b|"
+    r"\bplay\b.{1,40}\bon (?:yt|youtube) ?music\b|"
+    r"\bplay some music\b|"
+    r"\b(?:müzik|şarkı) (?:aç|çal)\b",
+)
+
+# Video-watching intent — same reasoning as _MUSIC_FAST.
+_VIDEO_FAST = re.compile(
+    r"(?i)"
+    r"\b(?:let'?s|let us|i (?:want|wanna|would like) to|wanna|can we)\s+watch\b|"
+    r"\bwatch\b.{1,50}\bon youtube\b|"
+    r"\bizleyelim\b|\bizlemek istiyorum\b"
+)
+
 
 async def cot_route(
     en_input: str,
@@ -470,15 +658,38 @@ async def cot_route(
         log.debug("cot_route fast-path: pre-route to chat for: %.80s", en_input)
         return {"route": "chat", "tool_name": None, "tool_args": {}, "confidence": 0.95, "reasoning": "pre-route: knowledge/emotional pattern"}, None
 
+    if _MUSIC_FAST.search(en_input):
+        log.debug("cot_route fast-path: pre-route to vision_execute (music) for: %.80s", en_input)
+        return {
+            "route": "tool", "tool_name": "vision_execute",
+            "tool_args": {"goal": en_input, "intent": "play_music"},
+            "risk_level": "moderate", "confidence": 0.95,
+            "reasoning": "pre-route: music-listening pattern",
+        }, None
+
+    if _VIDEO_FAST.search(en_input):
+        log.debug("cot_route fast-path: pre-route to vision_execute (video) for: %.80s", en_input)
+        return {
+            "route": "tool", "tool_name": "vision_execute",
+            "tool_args": {"goal": en_input, "intent": "watch_video"},
+            "risk_level": "moderate", "confidence": 0.95,
+            "reasoning": "pre-route: video-watching pattern",
+        }, None
+
     schema_str = _build_compact_schemas(tool_schemas)
 
-    # Build optional history block for coreference resolution
+    # Build optional history block for coreference resolution.
+    # Anaphora-gated: inject history ONLY when the input actually contains a
+    # back-reference. Unconditional injection caused chat answers to inherit
+    # the previous turn's topic (live re-run tests 19/20 both answered about
+    # Alan Turing when asked unrelated questions).
     history_block = ""
-    if recent_history:
+    if recent_history and _ANAPHORA.search(en_input):
         formatted = _format_recent_history(recent_history)
         history_block = (
-            f"\n\nRECENT CONVERSATION (use to resolve pronouns like "
-            f"'him', 'it', 'that file', 'yesterday\'s report'):\n{formatted}"
+            f"\n\nRECENT CONVERSATION — use ONLY to resolve references like "
+            f"'him', 'it', 'that file', 'again'. Do NOT answer about these "
+            f"topics unless the current message explicitly asks:\n{formatted}"
         )
 
     # Build optional dynamic tool context (#275)
@@ -505,7 +716,7 @@ async def cot_route(
             return None, None
 
         _log_thinking(raw)
-        plan = _extract_json(raw)
+        plan = _extract_json(raw, utterance=en_input)
 
         log.info("CoT parsed: route=%s tool=%s conf=%.2f",
                  plan.get("route"), plan.get("tool_name"), plan.get("confidence", 0))
@@ -534,7 +745,7 @@ async def cot_route(
                 )
                 if not _is_refusal(raw):
                     _log_thinking(raw)
-                    plan = _extract_json(raw)
+                    plan = _extract_json(raw, utterance=en_input)
                     log.info("CoT fallback parsed: route=%s tool=%s conf=%.2f",
                              plan.get("route"), plan.get("tool_name"),
                              plan.get("confidence", 0))
@@ -566,7 +777,7 @@ async def cot_route(
             options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
         )
         _log_thinking(raw2, tag="retry")
-        plan = _extract_json(raw2)
+        plan = _extract_json(raw2, utterance=en_input)
         return plan, None
 
     except Exception as exc:

@@ -1,0 +1,3 @@
+[submodule "vendor/bantz-web"]
+	path = vendor/bantz-web
+	url = https://github.com/miclaldogan/bantz-web
