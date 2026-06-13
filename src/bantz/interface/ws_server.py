@@ -139,6 +139,7 @@ class WsBroadcastServer:
         bus.bind_loop()
         bus.on("health_alert", self._on_health_alert)
         bus.on("observer_error", self._on_observer_error)
+        bus.on("chat_token", self._on_chat_token)
 
         self._tasks = [
             asyncio.create_task(self._vitals_loop(),        name="ws-vitals"),
@@ -215,6 +216,10 @@ class WsBroadcastServer:
 
         elif mtype == "dismiss_alert":
             await _send(ws, {"type": "alert_dismissed", "id": msg.get("id")})
+
+        elif mtype == "cancel_research":
+            self._handle_cancel_research()
+            await _send(ws, {"type": "research_cancelled"})
 
         else:
             await _send(ws, {"type": "error", "msg": f"unknown type: {mtype}"})
@@ -444,6 +449,23 @@ class WsBroadcastServer:
             "reason": str(event.data.get("message", event.data)),
         }
         asyncio.create_task(self._broadcast(payload))
+
+    def _on_chat_token(self, event: Event) -> None:
+        """Bridge a 'chat_token' bus event (e.g. web_research progress) to a
+        chat token frame so it streams into the Broadcast Channel."""
+        token = event.data.get("token", "")
+        if token:
+            asyncio.create_task(self._broadcast({"type": "token", "text": token}))
+
+    def _handle_cancel_research(self) -> None:
+        """Set the web_research tool's cancel flag (WS 'cancel_research')."""
+        try:
+            from bantz.tools import registry
+            tool = registry.get("web_research")
+            if tool is not None and hasattr(tool, "_research_cancelled"):
+                tool._research_cancelled.set()
+        except Exception as exc:
+            log.debug("cancel_research failed: %s", exc)
 
     # ── helpers ────────────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 import time
 from typing import Any
 
@@ -48,6 +49,18 @@ def _silence_bantz_web_git() -> None:
 
 # bantz-web's CLI default is 50 sources (≈hours). Capped for interactive tool use.
 DEFAULT_RESEARCH_RESULTS = 15
+
+
+def _emit_progress(message: str) -> None:
+    """Stream a research progress line to the Broadcast Channel (chat stream).
+
+    ws_server bridges the "chat_token" bus event to a {"type":"token"} frame.
+    """
+    try:
+        bus.emit_threadsafe("chat_token", token=f"\n⏳ {message}")
+    except Exception:
+        pass
+    log.info("[web_research] %s", message)
 
 
 # ── wrapped functions ───────────────────────────────────────────────────────
@@ -142,28 +155,36 @@ class WebResearchTool(BaseTool):
     )
     risk_level = "safe"
 
+    def __init__(self) -> None:
+        # Set via the WS "cancel_research" message to abort an in-flight run.
+        self._research_cancelled = threading.Event()
+
     async def execute(self, topic: str = "", query: str = "", **kwargs: Any) -> ToolResult:
         topic = (topic or query or kwargs.get("text", "")).strip()
         if not topic:
             return ToolResult(success=False, output="", error="No research topic provided")
 
+        self._research_cancelled.clear()
         fut = asyncio.ensure_future(asyncio.to_thread(execute_web_research, topic))
         start = time.time()
-        bus.emit_threadsafe("log", level="info", msg=f"[web_research] starting: {topic}")
-        log.info("[web_research] starting: %s", topic)
+        _emit_progress(f"Researching: {topic} — expanding query & searching…")
         try:
             while True:
                 try:
                     report = await asyncio.wait_for(asyncio.shield(fut), timeout=30)
                     break
                 except asyncio.TimeoutError:
+                    if self._research_cancelled.is_set():
+                        _emit_progress("Research cancelled.")
+                        # The worker thread can't be force-killed; it finishes
+                        # in the background but we stop waiting/reporting.
+                        return ToolResult(success=False, output="",
+                                          error="Research cancelled by user.")
                     elapsed = int(time.time() - start)
-                    bus.emit_threadsafe(
-                        "log", level="info",
-                        msg=f"[web_research] '{topic}' still running — {elapsed}s elapsed…")
-                    log.info("[web_research] '%s' still running — %ds elapsed", topic, elapsed)
+                    _emit_progress(f"still working on '{topic}' — {elapsed}s elapsed…")
         except Exception as exc:
             return ToolResult(success=False, output="", error=f"web research failed: {exc}")
+        _emit_progress("Writing report… done.")
         return ToolResult(success=True, output=report, data={"topic": topic})
 
 
