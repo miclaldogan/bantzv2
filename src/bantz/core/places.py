@@ -325,10 +325,11 @@ class PlaceService:
             self._store.save_all(self._data)
         else:
             PLACES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            PLACES_PATH.write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            import os
+            fd = os.open(str(PLACES_PATH), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(self._data, ensure_ascii=False, indent=2))
         self._loaded = True
 
     async def travel_hint(
