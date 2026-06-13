@@ -188,6 +188,51 @@ const SEED_SERVICES: ServiceItem[] = [
   { name: "Neo4j",    port: 7687,  status: "offline", uptime: "—", detail: "awaiting probe" },
 ];
 
+// ── Snooze persistence (survives reloads) ───────────────────────────────────
+// bantz.snoozed = { [anomalyId]: expiresAtEpochMs }
+const SNOOZE_LS_KEY = "bantz.snoozed";
+
+function readSnoozed(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(SNOOZE_LS_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === "object" ? (obj as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSnoozed(map: Record<string, number>): void {
+  try {
+    localStorage.setItem(SNOOZE_LS_KEY, JSON.stringify(map));
+  } catch {
+    /* storage unavailable — snooze just won't persist */
+  }
+}
+
+function removeSnoozed(id: string): void {
+  const map = readSnoozed();
+  if (id in map) {
+    delete map[id];
+    writeSnoozed(map);
+  }
+}
+
+// On module load: drop already-expired snoozes, persist the pruned map, and
+// return the survivors so the store can pre-populate dismissedIds + schedule
+// their remaining timers.
+function restoreSnoozes(): Record<string, number> {
+  const now = Date.now();
+  const survivors: Record<string, number> = {};
+  for (const [id, exp] of Object.entries(readSnoozed())) {
+    if (typeof exp === "number" && exp > now) survivors[id] = exp;
+  }
+  writeSnoozed(survivors);
+  return survivors;
+}
+
+const _SNOOZE_RESTORE = restoreSnoozes();
+
 export const useAppStore = create<AppState>((set) => ({
   chat: [
     {
@@ -209,7 +254,7 @@ export const useAppStore = create<AppState>((set) => ({
   logs:         SEED_LOGS.map((l) => ({ ...l, id: nid() })),
   alerts:       [],
   anomalies:    [],
-  dismissedIds: new Set<string>(),
+  dismissedIds: new Set<string>(Object.keys(_SNOOZE_RESTORE)),
   activePage:   "chat",
   services:     SEED_SERVICES,
   configValues: null,
@@ -270,6 +315,9 @@ export const useAppStore = create<AppState>((set) => ({
   // Snooze = dismiss that auto-expires after 1h, so the anomaly can resurface
   // if the condition still holds. Client-side only.
   snoozeAnomaly: (id) => {
+    const map = readSnoozed();
+    map[id] = Date.now() + 3_600_000;
+    writeSnoozed(map);
     set((s) => {
       const dismissedIds = new Set(s.dismissedIds);
       dismissedIds.add(id);
@@ -281,6 +329,7 @@ export const useAppStore = create<AppState>((set) => ({
         dismissedIds.delete(id);
         return { dismissedIds };
       });
+      removeSnoozed(id);
     }, 3_600_000);
   },
   setActivePage: (page) => set({ activePage: page }),
@@ -291,3 +340,16 @@ export const useAppStore = create<AppState>((set) => ({
 
   setWsSend: (fn) => set({ wsSend: fn }),
 }));
+
+// Re-arm timers for snoozes restored from localStorage, using each one's
+// *remaining* duration (not a fresh hour). On fire, un-snooze + clear storage.
+for (const [id, expiresAt] of Object.entries(_SNOOZE_RESTORE)) {
+  setTimeout(() => {
+    useAppStore.setState((s) => {
+      const dismissedIds = new Set(s.dismissedIds);
+      dismissedIds.delete(id);
+      return { dismissedIds };
+    });
+    removeSnoozed(id);
+  }, Math.max(0, expiresAt - Date.now()));
+}
