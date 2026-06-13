@@ -29,6 +29,13 @@ if [[ "$yn" =~ ^[Yy]$ ]]; then
   fi
 fi
 
+# Google integrations (optional — Gmail / Calendar / Classroom)
+read -p "Install Google integrations (Gmail / Calendar / Classroom)? [y/N] " yn
+if [[ "$yn" =~ ^[Yy]$ ]]; then
+  pip install -e ".[google]" --quiet
+  echo "✓ Google integrations installed"
+fi
+
 # .env
 if [ ! -f .env ]; then
   cp .env.example .env

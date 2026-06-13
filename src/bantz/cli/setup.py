@@ -1085,6 +1085,15 @@ async def _doctor() -> None:
     else:
         print(f"⚪ Translation: {'disabled' if not config.translation_enabled else f'not needed (lang={config.language})'}")
 
+    # Google integrations (Gmail / Calendar / Classroom)
+    try:
+        import google.auth  # noqa: F401
+        import google.auth.transport  # noqa: F401
+        import googleapiclient  # noqa: F401
+        print("✅ Google integrations: available")
+    except ImportError:
+        print("❌ Google integrations: NOT installed  → pip install -e '.[google]'")
+
     # Location
     from bantz.core.location import location_service
     loc = await location_service.get()

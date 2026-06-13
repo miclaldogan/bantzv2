@@ -53,6 +53,11 @@ automation = [
     "pyautogui>=0.9.54",
     "pynput>=1.8.1",
 ]
+google = [
+    "google-auth>=2.29.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.130.0",
+]
 
 [project.scripts]
 bantz = "bantz.__main__:main"
