@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bantz.core.secure_io import secure_write_text
+
 if TYPE_CHECKING:
     from bantz.data.store import SessionStore
 
@@ -104,9 +106,9 @@ class SessionTracker:
             return
         # JSON fallback
         _SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SESSION_PATH.write_text(
+        secure_write_text(
+            _SESSION_PATH,
             json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
 
     @property

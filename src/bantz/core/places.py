@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from bantz.core.location import location_service
+from bantz.core.secure_io import secure_write_text
 
 if TYPE_CHECKING:
     from bantz.data.store import PlaceStore
@@ -325,9 +326,9 @@ class PlaceService:
             self._store.save_all(self._data)
         else:
             PLACES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            PLACES_PATH.write_text(
+            secure_write_text(
+                PLACES_PATH,
                 json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
         self._loaded = True
 
