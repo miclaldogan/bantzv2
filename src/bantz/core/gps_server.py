@@ -746,9 +746,11 @@ class GPSServer:
         """Save received GPS data to memory and disk, feed place manager."""
         self._latest = data
         LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LOCATION_FILE.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        import os
+        fd = os.open(str(LOCATION_FILE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, ensure_ascii=False))
         log.info(
             "GPS updated: %.6f, %.6f (±%sm)",
             data.get("lat", 0), data.get("lon", 0),

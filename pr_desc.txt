@@ -1,0 +1,9 @@
+🚨 Severity: CRITICAL
+
+💡 Vulnerability: The application previously used `Path.write_text()` to create and update files containing highly sensitive user data including GPS coordinates (`gps_server.py`, `location.py`), saved places (`places.py`), profiles (`profile.py`), and session tracking data (`session.py`). This method creates files with default system `umask` permissions, which leaves the files world-readable (0644) by default, exposing private location tracking information to other users on the system. It also introduces a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where file permissions or ownership can be intercepted between checks.
+
+🎯 Impact: Malicious actors with access to the same system can potentially read user locations, routines, and identity information.
+
+🔧 Fix: Replaced `Path.write_text()` with a secure file creation mechanism. Files are now opened using `os.open` with `O_CREAT | O_WRONLY | O_TRUNC` and explicit `0o600` permissions. Additionally, an `os.fchmod` call secures existing files directly via their file descriptor, entirely eliminating the race condition.
+
+✅ Verification: Run the full test suite (`PYTHONPATH=src python3 -m pytest tests/`) and ensure all location, place, session, and profile unit tests continue to pass with no regressions.

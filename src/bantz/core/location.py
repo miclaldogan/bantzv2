@@ -258,11 +258,15 @@ class LocationService:
         try:
             import time
             GPS_CITY_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            GPS_CITY_CACHE.write_text(_json_mod.dumps({
-                "city": loc.city, "country": loc.country,
-                "timezone": loc.timezone, "region": loc.region,
-                "lat": loc.lat, "lon": loc.lon, "ts": time.time(),
-            }, ensure_ascii=False), encoding="utf-8")
+            import os
+            fd = os.open(str(GPS_CITY_CACHE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'w', encoding="utf-8") as f:
+                f.write(_json_mod.dumps({
+                    "city": loc.city, "country": loc.country,
+                    "timezone": loc.timezone, "region": loc.region,
+                    "lat": loc.lat, "lon": loc.lon, "ts": time.time(),
+                }, ensure_ascii=False))
         except Exception as exc:
             logger.debug(f"GPS city cache write failed: {exc}")
 

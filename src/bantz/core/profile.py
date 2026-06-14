@@ -91,10 +91,11 @@ class Profile:
             return
         # JSON fallback
         _PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PROFILE_PATH.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        import os
+        fd = os.open(str(_PROFILE_PATH), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding="utf-8") as f:
+            f.write(json.dumps(self._data, ensure_ascii=False, indent=2))
 
     def reload(self) -> None:
         self._load()
