@@ -17,9 +17,6 @@ Screenshots and screen recordings live in [`bantz-demo/`](bantz-demo/).
 **GIF walkthroughs:**
 
 <img src="bantz-demo/seg1.gif" width="100%">
-<img src="bantz-demo/seg2.gif" width="100%">
-<img src="bantz-demo/seg3.gif" width="100%">
-<img src="bantz-demo/seg4.gif" width="100%">
 <img src="bantz-demo/seg5.gif" width="100%">
 
 ---
