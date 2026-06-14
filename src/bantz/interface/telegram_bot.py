@@ -455,7 +455,9 @@ async def cmd_hava(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.tools.gmail import GmailTool
-        result = await GmailTool().execute(action="filter", full_text="is:unread", limit=10)
+        # action="search" honors full_text; the "filter" branch ignores it
+        # (it reads raw_query/intent), so is:unread was silently dropped.
+        result = await GmailTool().execute(action="search", full_text="is:unread", limit=10)
         if result.success:
             text = result.output.strip() or "No unread emails ✓"
         else:
@@ -489,7 +491,9 @@ async def cmd_takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_odev(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bantz.tools.classroom import ClassroomTool
-        result = await ClassroomTool().execute(action="upcoming")
+        # "assignments" is the valid action (overdue/urgent/upcoming, sorted);
+        # "upcoming" was not a real action and only worked via the else branch.
+        result = await ClassroomTool().execute(action="assignments")
         if result.success:
             text = result.output.strip() or "No upcoming assignments ✓"
         else:
@@ -1007,7 +1011,7 @@ def run_bot() -> None:
     async def _warm_up_ollama(context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send a throwaway prompt so the first real message hits a warm model."""
         try:
-            from bantz.llm.ollama_client import ollama
+            from bantz.llm.ollama import ollama
             await ollama.chat([{"role": "user", "content": "hi"}])
             log.info("   Ollama warm-up complete ✓")
         except Exception:
