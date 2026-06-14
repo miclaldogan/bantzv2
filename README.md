@@ -1,6 +1,6 @@
 # Bantz (It's Still in Early Development)
 
-Bantz is a local-first AI assistant that runs on your Linux machine and acts as a personal butler — it has a voice, remembers things across sessions, runs scheduled jobs overnight, controls your desktop, reads your email, and talks to you like a person who's known you long enough to be useful. The primary interface is a terminal. Everything is local by default. Nothing phones home unless you configure it to.
+Bantz is a local-first AI assistant that runs on your Linux machine and acts as a personal butler — it has a voice, remembers things across sessions, runs scheduled jobs overnight, controls your desktop, reads your email, and talks to you like a person who's known you long enough to be useful. The primary interface is the Operations Center desktop app (`bantz --ui`), with a `bantz` CLI alongside it. Everything is local by default. Nothing phones home unless you configure it to.
 
 ---
 
@@ -138,9 +138,25 @@ Supporting systems run alongside the main loop:
 - pydantic-settings config: ~70 env vars via `.env`, all aliased
 
 **Interfaces**
-- Rich Live TUI: 4fps refresh, CPU/RAM/VRAM/DISK stats every 2s, scrollable log panel, Markdown rendering for code responses
-- `bantz --once "query"` for scripted single-shot queries
-- Headless daemon mode (`bantz --daemon`) for systemd operation
+- **Operations Center** — Tauri + React desktop app, launched with `bantz --ui`. Six pages, all live over a local WebSocket (`:8765`):
+  - **Broadcast Channel** — chat with Bantz; streamed responses, including live progress from long jobs
+  - **Vitals** — CPU / RAM / VRAM / DISK, refreshed every 2s
+  - **Kernel Log** — live log stream from the daemon
+  - **Directives** — scheduled jobs and reminders (APScheduler), with a New Directive box that parses natural language ("every morning at 7am …")
+  - **Anomaly Watch** — real-time system anomalies (see below)
+  - **Settings** — provider/model, voice, language, behaviour dials, appearance — written back to the daemon live
+- `bantz` CLI as a secondary interface: `bantz --once "query"` for a single query, `bantz --daemon` for headless/systemd operation, `bantz --doctor` for health checks
+
+**Web intelligence** (via the bundled [bantz-web](https://github.com/miclaldogan/bantz-web) pipeline at `vendor/bantz-web`)
+- `web_search` — quick web lookup (under ~60s), tiered SearXNG → DuckDuckGo fallback
+- `web_research` — deep, multi-source research producing a structured report; runs async with live progress streamed to the Broadcast Channel and a cancel control
+- `web_news` — news pipeline: fetch + extract + summarize current headlines for a topic
+- Wired directly into the tool layer (no HTTP, no subprocess); routed by Chain-of-Thought ("research X", "search X", "news about X", plus Turkish: araştır / ara / haberler)
+
+**Anomaly Watch**
+- Real-time monitoring of CPU, RAM, disk, and **swap** pressure, plus recent ERROR/CRITICAL logs grouped by source
+- Thresholds tuned for a personal machine (CPU > 80%, RAM > 85%, disk > 85%, swap > 60% warn / > 85% critical), plus a combined memory-pressure signal
+- Per-anomaly **Investigate** (asks Bantz to analyze it in the Broadcast Channel) and **Snooze 1h** (client-side, persists across reloads, auto-expires)
 
 **Multi-step workflows**
 - Chain-of-Thought routing selects tools and builds multi-step plans
@@ -167,7 +183,9 @@ Supporting systems run alongside the main loop:
 
 **Proactive interventions**: implemented in `agent/interventions.py`, gated behind `BANTZ_RL_ENABLED`. Off by default. Not well-tested in the current build.
 
-**ollama.py stale import**: `llm/ollama.py` still imports from `bantz.interface.tui.panels.header` in a try/except block (leftover from before the Textual TUI was removed). The except swallows the ImportError so it doesn't break anything, but it's dead code.
+**Autonomy confirmation**: the Settings "Autonomy" dial is parsed into a `requires_confirm` flag on the routing decision (low = always confirm, absolute = never), but the executor does not yet *enforce* it — destructive shell commands still gate on their own `DESTRUCTIVE_COMMANDS` confirm, independent of this dial.
+
+**web_research is Ollama-bound**: deep research runs many local model calls, so on a memory-constrained machine the model can stall mid-run; it falls back gracefully but a full report needs a healthy Ollama.
 
 ---
 
@@ -232,9 +250,21 @@ BANTZ_OLLAMA_BASE_URL=http://localhost:11434
 # Optional: faster routing via a smaller model
 BANTZ_OLLAMA_ROUTING_MODEL=qwen2.5:3b
 
-# Optional: Gemini fallback when Ollama is unreachable
-BANTZ_GEMINI_ENABLED=true
+# Conversation provider: ollama (local, default) | claude | gemini | openai
+# Switchable live from Settings → Conversation Provider (persists to .env).
+BANTZ_LLM_PROVIDER=ollama
+
+# Claude / Anthropic
+BANTZ_ANTHROPIC_API_KEY=your_key_here
+BANTZ_ANTHROPIC_MODEL=claude-sonnet-4-6
+
+# Gemini
 BANTZ_GEMINI_API_KEY=your_key_here
+BANTZ_GEMINI_MODEL=gemini-2.0-flash
+
+# OpenAI
+BANTZ_OPENAI_API_KEY=your_key_here
+BANTZ_OPENAI_MODEL=gpt-4o-mini
 
 # Voice (wake word)
 BANTZ_PORCUPINE_ACCESS_KEY=your_picovoice_key
@@ -268,13 +298,13 @@ bantz --setup systemd --check  # show service status, PID, memory, uptime
 ## Running
 
 ```bash
-# Interactive TUI (default)
-bantz
+# Operations Center — the Tauri desktop UI (starts the daemon if not running)
+bantz --ui
 
-# Headless daemon — APScheduler drives all background jobs
+# Headless daemon — APScheduler drives all background jobs (UI connects to this)
 bantz --daemon
 
-# Single query, no TUI
+# Single query from the CLI, no UI
 bantz --once "what's on my calendar today?"
 
 # System health check
@@ -346,13 +376,17 @@ src/bantz/
 │   ├── sqlite_store.py  profile, places, schedule, session, KV stores
 │   └── connection_pool.py WAL-mode thread-safe SQLite pool
 ├── interface/
-│   └── live_ui.py       Rich Live TUI (4fps, stats + chat)
+│   ├── ws_server.py     WebSocket server (:8765) — backend for the desktop UI
+│   └── live_ui.py       legacy CLI status view
 ├── integrations/
 │   └── telegram_bot.py  Telegram remote access bot
 ├── tools/               31 registered tools (shell, gmail, calendar, ...)
 ├── llm/
-│   ├── ollama.py        local Ollama client
-│   └── gemini.py        Gemini fallback client
+│   ├── router.py        provider selector (ollama | claude | gemini | openai)
+│   ├── ollama.py        local Ollama client (default)
+│   ├── anthropic_client.py  Claude / Anthropic client
+│   ├── gemini.py        Gemini client
+│   └── openai_client.py OpenAI client
 ├── personality/
 │   ├── persona.py       system prompt persona layer
 │   ├── bonding.py       interaction scoring
