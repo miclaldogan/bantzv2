@@ -36,11 +36,60 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("bantz.memory.bridge")
+
+
+# ── Knowledge-graph scoring helpers (pure, unit-testable) ────────────────────
+# Score multipliers for smarter KG traversal. Kept as pure functions so they
+# can be tested without a live database. Applied while assembling traversal
+# results (where the per-triple SQLite metadata — extracted_at, access_count —
+# actually lives). All multipliers are >= a sensible floor so a fact is never
+# zeroed out (old-but-important facts still surface).
+
+def _recency_multiplier(extracted_at: str | None, now: datetime | None = None) -> float:
+    """Recency boost from a triple's ``extracted_at`` timestamp.
+
+    <=7 days → 1.5x, <=30 days → 1.2x, older (or unknown) → 0.8x. This is a
+    multiplier, not a filter, so stale facts are demoted but never dropped.
+    """
+    if not extracted_at:
+        return 0.8
+    now = now or datetime.now(timezone.utc)
+    dt = None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(extracted_at[:19], fmt)
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        try:
+            dt = datetime.fromisoformat(extracted_at.replace("Z", "+00:00"))
+        except Exception:
+            return 0.8
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    age_days = (now - dt).total_seconds() / 86400.0
+    if age_days <= 7:
+        return 1.5
+    if age_days <= 30:
+        return 1.2
+    return 0.8
+
+
+def _importance_multiplier(access_count: int) -> float:
+    """Importance boost from how often an entity has been recalled.
+
+    ``1 + log(1 + access_count)`` — monotonically increasing, floored at 1.0
+    so never-accessed entities keep their base score (plain ``log(1+0)=0``
+    would wrongly zero them out).
+    """
+    return 1.0 + math.log1p(max(0, int(access_count)))
 
 
 # ── Lazy imports to avoid circular dependencies ──────────────────────────
@@ -295,16 +344,145 @@ class MemPalaceBridge:
     def graph_context(self, user_msg: str) -> str:
         """Return knowledge graph context for a user message.
 
-        Replaces graph_memory.context_for().
-        Queries KG entities mentioned in the message.
+        Replaces graph_memory.context_for(). Now does 2-hop relation
+        traversal with recency + importance scoring (see :meth:`graph_search`).
+        Falls back to the flat single-hop entity lookup if traversal yields
+        nothing or errors.
         """
         if not self.enabled or not self._kg:
             return ""
         try:
+            res = self.graph_search(user_msg)
+            facts = res.get("facts", [])
+            if facts:
+                lines = ["=== Knowledge Graph ==="]
+                lines.extend(f"  {f['text']}" for f in facts)
+                return "\n".join(lines)
             return self._kg_context_for(user_msg)
         except Exception as exc:
-            log.debug("graph_context failed: %s", exc)
-            return ""
+            log.debug("graph_context traversal failed: %s", exc)
+            try:
+                return self._kg_context_for(user_msg)
+            except Exception:
+                return ""
+
+    def graph_search(self, user_msg: str, *, max_facts: int = 12) -> dict:
+        """2-hop KG traversal with recency + importance scoring.
+
+        Given a query, find the entities it names, follow their triples two
+        hops deep (entity → neighbour → neighbour's facts), score each fact by
+        ``base(hop) × recency × importance`` and return them ranked. Also bumps
+        each seed entity's ``access_count`` (the importance signal) so
+        frequently-recalled entities surface more easily next time.
+
+        Returns ``{"entities": set[str], "facts": [{text, score, hop, ...}]}``.
+        ``entities`` (lowercased names of everything surfaced) lets the caller
+        do topic clustering against vector results.
+        """
+        empty: dict = {"entities": set(), "facts": []}
+        if not self._kg:
+            return empty
+
+        # ── Detect seed entities named in the query ───────────────────────
+        words = [w for w in user_msg.split() if len(w) > 2 and w[0].isupper()]
+        if self._registry:
+            try:
+                words.extend(self._registry.extract_people_from_query(user_msg))
+            except Exception:
+                pass
+        seeds, seen = [], set()
+        for w in words:
+            if w.lower() not in seen:
+                seen.add(w.lower())
+                seeds.append(w.lower())
+        if not seeds:
+            return empty
+
+        import sqlite3
+        conn = sqlite3.connect(self._kg.db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            self._ensure_access_count_column(conn)
+
+            ph = ",".join("?" * len(seeds))
+            seed_rows = conn.execute(
+                f"SELECT id, name FROM entities WHERE lower(name) IN ({ph})",
+                seeds,
+            ).fetchall()
+            seed_ids = {r["id"] for r in seed_rows}
+            if not seed_ids:
+                return empty
+            seed_names = {r["name"].lower() for r in seed_rows}
+
+            # Importance decay: every recall of an entity increments its count.
+            iph = ",".join("?" * len(seed_ids))
+            conn.execute(
+                f"UPDATE entities SET access_count = COALESCE(access_count, 0) + 1 "
+                f"WHERE id IN ({iph})",
+                list(seed_ids),
+            )
+            conn.commit()
+
+            def facts_for(ids: set[str]) -> list:
+                if not ids:
+                    return []
+                p = ",".join("?" * len(ids))
+                return conn.execute(
+                    f"""SELECT t.subject sid, t.object oid,
+                               s.name subject, o.name object, t.predicate,
+                               t.extracted_at,
+                               COALESCE(s.access_count, 0) sac,
+                               COALESCE(o.access_count, 0) oac
+                        FROM triples t
+                        JOIN entities s ON t.subject = s.id
+                        JOIN entities o ON t.object = o.id
+                        WHERE (t.subject IN ({p}) OR t.object IN ({p}))
+                          AND t.valid_to IS NULL""",
+                    list(ids) + list(ids),
+                ).fetchall()
+
+            hop1 = facts_for(seed_ids)
+            # Hop 2: facts of the direct neighbours (bounded fan-out).
+            neighbours = {r["sid"] for r in hop1} | {r["oid"] for r in hop1}
+            neighbours -= seed_ids
+            neighbours = set(list(neighbours)[:8])
+            hop2 = facts_for(neighbours) if neighbours else []
+
+            facts: list[dict] = []
+            entities: set[str] = set(seed_names)
+            seen_triples: set[tuple] = set()
+            for hop, rows in ((1, hop1), (2, hop2)):
+                base = 1.0 if hop == 1 else 0.55  # direct facts outrank indirect
+                for r in rows:
+                    key = (r["subject"], r["predicate"], r["object"])
+                    if key in seen_triples:
+                        continue
+                    seen_triples.add(key)
+                    rec = _recency_multiplier(r["extracted_at"])
+                    imp = _importance_multiplier(max(r["sac"], r["oac"]))
+                    facts.append({
+                        "text": f"{r['subject']} → {r['predicate']} → {r['object']}",
+                        "score": round(base * rec * imp, 4),
+                        "hop": hop,
+                        "subject": r["subject"], "object": r["object"],
+                    })
+                    entities.add(str(r["subject"]).lower())
+                    entities.add(str(r["object"]).lower())
+
+            facts.sort(key=lambda f: -f["score"])
+            return {"entities": entities, "facts": facts[:max_facts]}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _ensure_access_count_column(conn) -> None:
+        """Add entities.access_count if missing (pure-SQLite migration)."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+        if "access_count" not in cols:
+            conn.execute(
+                "ALTER TABLE entities ADD COLUMN access_count INTEGER DEFAULT 0"
+            )
+            conn.commit()
 
     def vector_context(self, user_msg: str, limit: int = 5) -> str:
         """Semantic search via MemPalace L3. Replaces vector_store + embedder.

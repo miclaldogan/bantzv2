@@ -111,12 +111,12 @@ class OmniMemoryManager:
         vector_text = vector_raw if isinstance(vector_raw, str) else ""
         deep_text = deep_raw if isinstance(deep_raw, str) else ""
 
-        # ── Re-rank: if Graph found entities, note it for vector ──────
+        # ── Topic clustering: boost vector chunks that share KG entities ──
+        # Done BEFORE the budget trim so boosted (doubly-relevant) chunks
+        # survive truncation. Entities come from the traversed graph context.
         graph_entities = self._extract_entity_names(graph_text)
         if graph_entities and vector_text:
-            vector_text = self._rerank_vector_with_graph(
-                vector_text, graph_entities
-            )
+            vector_text = self._apply_topic_boost(vector_text, graph_entities)
 
         # ── Apply per-section token budgets ───────────────────────────
         graph_chars = int(self._max_chars * self._graph_pct)
@@ -151,8 +151,8 @@ class OmniMemoryManager:
                     if slack <= 100:
                         break
 
-        # ── Build combined block ──────────────────────────────────────
-        combined = self._merge_sections(
+        # ── Build combined block (topic boost already applied above) ──
+        combined = self._merge_results(
             graph_trimmed, vector_trimmed, deep_trimmed
         )
 
@@ -389,6 +389,13 @@ class OmniMemoryManager:
                     val = val[:paren]
                 if val and len(val) < 60:
                     names.add(val.lower())
+            # KG triple line "Subject → predicate → Object" — pull the two
+            # entity ends so traversed entities feed topic clustering.
+            elif "→" in line:
+                parts = [p.strip(" ·") for p in line.split("→")]
+                for end in (parts[0], parts[-1]):
+                    if end and len(end) < 60:
+                        names.add(end.lower())
         return names
 
     @staticmethod
@@ -431,6 +438,52 @@ class OmniMemoryManager:
             return header + "\n" + "\n".join(result_lines)
         return "\n".join(result_lines)
 
+    # ── Topic clustering (cross-section boost, applied at merge) ──────
+
+    # Vector chunks that ALSO share a KG entity with the query are doubly
+    # relevant (semantically similar AND entity-linked) → boost ×_TOPIC_BOOST.
+    _TOPIC_BOOST: float = 1.3
+
+    @classmethod
+    def _apply_topic_boost(
+        cls, vector_text: str, graph_entities: set[str]
+    ) -> str:
+        """Re-rank vector lines by topic-cluster score (req 4).
+
+        Each data line scores 1.0; lines that mention a KG entity from the
+        query score ×1.3 and rise to the top (stable sort preserves the
+        original semantic order within each tier). Done before the budget trim
+        so boosted chunks survive truncation.
+        """
+        if not vector_text or not graph_entities:
+            return vector_text
+
+        lines = vector_text.splitlines()
+        header = ""
+        data_lines: list[str] = []
+        for line in lines:
+            if line.startswith("Relevant past") or line.startswith("==="):
+                header = line
+            else:
+                data_lines.append(line)
+        if not data_lines:
+            return vector_text
+
+        scored: list[tuple[float, int, str]] = []
+        for idx, line in enumerate(data_lines):
+            low = line.lower()
+            score = cls._TOPIC_BOOST if any(
+                ent in low for ent in graph_entities
+            ) else 1.0
+            scored.append((score, idx, line))
+        # Sort by score desc, original index asc (stable within tiers).
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        result_lines = [s[2] for s in scored]
+
+        if header:
+            return header + "\n" + "\n".join(result_lines)
+        return "\n".join(result_lines)
+
     # ── Merge into final block ────────────────────────────────────────
 
     @staticmethod
@@ -446,6 +499,22 @@ class OmniMemoryManager:
         if deep:
             parts.append(deep)
         return "\n".join(parts)
+
+    @classmethod
+    def _merge_results(
+        cls, graph: str, vector: str, deep: str,
+        graph_entities: set[str] | None = None,
+    ) -> str:
+        """Assemble the final context block, applying topic-cluster boost.
+
+        The single merge entry point used by :meth:`recall`. If
+        ``graph_entities`` is supplied, vector lines sharing those entities are
+        boosted (×1.3) and re-ranked before assembly. (``_merge_sections`` is
+        retained for the plain no-boost concatenation.)
+        """
+        if graph_entities:
+            vector = cls._apply_topic_boost(vector, graph_entities)
+        return cls._merge_sections(graph, vector, deep)
 
 
 class MemoryRecallResult:
