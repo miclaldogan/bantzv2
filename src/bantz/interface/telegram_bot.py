@@ -33,6 +33,7 @@ import random
 import time
 from collections import defaultdict
 from io import BytesIO
+from pathlib import Path
 from typing import Callable, Coroutine
 
 from telegram import Update
@@ -416,7 +417,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/hatirlatici — list reminders\n"
         "/digest — evening daily digest\n"
         "/weekly — weekly summary\n"
-        "/ekran — desktop daguerreotype 📷"
+        "/ekran — desktop daguerreotype 📷\n"
+        "\nRemote control:\n"
+        "/screenshot — capture the desktop\n"
+        "/click X Y — click at coordinates\n"
+        "/type text — type text\n"
+        "/key combo — press keys (e.g. ctrl+c)\n"
+        "\nResearch:\n"
+        "/research topic — deep research report\n"
+        "/news topic — latest news"
         + llm_hint
     )
 
@@ -616,6 +625,171 @@ async def cmd_ekran(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             placeholder,
             "I'm afraid the daguerreotype apparatus has encountered a difficulty, ma'am.",
         )
+
+
+# ── Desktop remote control (merged from bantz-web/bot.py) ─────────────────────
+# Uses vendor/bantz-web/control.py (grim / hyprctl / ydotool / wl-copy). The
+# Wayland env vars (WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE,
+# XDG_RUNTIME_DIR) are inherited from the systemd --user session.
+
+def _control():
+    """Import bantz-web's control module (append vendor/bantz-web to sys.path).
+
+    Appended (not inserted) so it can't shadow stdlib/site-packages — mirrors
+    how tools/web_search.py wires in the same vendored package.
+    """
+    import sys
+    vendor = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../vendor/bantz-web")
+    )
+    if vendor not in sys.path:
+        sys.path.append(vendor)
+    import control  # noqa: E402  — vendored bantz-web module
+    return control
+
+
+@_authorized
+async def cmd_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/screenshot — capture the desktop via control.py and send it."""
+    _active_chats.add(update.effective_chat.id)
+    user_id = update.effective_user.id if update.effective_user else 0
+    if not _screenshot_rate_ok(user_id):
+        await update.message.reply_text(
+            "⏳ A brief interval between exposures, ma'am — the silver plates need a moment."
+        )
+        return
+    try:
+        control = _control()
+        path = await asyncio.to_thread(control.screenshot)
+        w, h = await asyncio.to_thread(control.screen_size)
+        try:
+            data = Path(path).read_bytes()
+        finally:
+            Path(path).unlink(missing_ok=True)
+        await _send_photo(
+            update, data,
+            f"📐 {w}×{h} px — to click, /click X Y  (centre: /click {w // 2} {h // 2})",
+        )
+    except Exception as exc:
+        log.exception("screenshot error")
+        await update.message.reply_text(f"⚠️ Screenshot error, ma'am: {exc}")
+
+
+@_authorized
+async def cmd_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/click X Y [left|right|middle] — click at coordinates, then show the result."""
+    _active_chats.add(update.effective_chat.id)
+    try:
+        x, y = int(context.args[0]), int(context.args[1])
+        kind = context.args[2].lower() if len(context.args) > 2 else "left"
+    except (IndexError, ValueError):
+        await update.message.reply_text(
+            "❌ Format: /click X Y  — e.g. /click 960 540"
+        )
+        return
+    try:
+        control = _control()
+        action = await asyncio.to_thread(control.click, x, y, kind)
+        await asyncio.sleep(0.4)  # let the UI settle
+        after = await asyncio.to_thread(control.screenshot)
+        try:
+            data = Path(after).read_bytes()
+        finally:
+            Path(after).unlink(missing_ok=True)
+        await _send_photo(update, data, f"✅ {action} at ({x}, {y})")
+    except Exception as exc:
+        log.exception("click error")
+        await update.message.reply_text(f"⚠️ Click error, ma'am: {exc}")
+
+
+@_authorized
+async def cmd_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/type text — type text into the focused window."""
+    _active_chats.add(update.effective_chat.id)
+    content = " ".join(context.args).strip()
+    if not content:
+        await update.message.reply_text("❌ Format: /type text")
+        return
+    try:
+        control = _control()
+        await asyncio.to_thread(control.type_text, content)
+        await update.message.reply_text(f"⌨️ typed: {content[:100]}")
+    except Exception as exc:
+        log.exception("type error")
+        await update.message.reply_text(f"⚠️ Type error, ma'am: {exc}")
+
+
+@_authorized
+async def cmd_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/key combo — press a key combination, e.g. /key ctrl+c."""
+    _active_chats.add(update.effective_chat.id)
+    combo = " ".join(context.args).strip()
+    if not combo:
+        await update.message.reply_text("❌ Format: /key combo  — e.g. /key ctrl+c")
+        return
+    try:
+        control = _control()
+        pressed = await asyncio.to_thread(control.press_key, combo)
+        await update.message.reply_text(f"⌨️ key: {pressed}")
+    except Exception as exc:
+        log.exception("key error")
+        await update.message.reply_text(f"⚠️ Key error, ma'am: {exc}")
+
+
+# ── Web research / news (merged from bantz-web/bot.py) ────────────────────────
+
+async def _send_long(update: Update, placeholder, text: str) -> None:
+    """Edit *placeholder* with the first chunk, send the rest as new messages."""
+    text = (text or "").strip()
+    if not text:
+        text = "I'm afraid that yielded nothing, ma'am."
+    chunks = _chunk_text(text)
+    if not await _safe_edit(placeholder, chunks[0]):
+        try:
+            await placeholder.delete()
+        except Exception:
+            pass
+        await _safe_reply(update, text)
+    else:
+        for extra in chunks[1:]:
+            await update.message.reply_text(extra)
+
+
+@_authorized
+async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/research topic — deep multi-source research report (slow, minutes)."""
+    _active_chats.add(update.effective_chat.id)
+    topic = " ".join(context.args).strip()
+    if not topic:
+        await update.message.reply_text("❌ Format: /research topic")
+        return
+    placeholder = await update.message.reply_text(
+        f"🔬 Researching “{topic}”, ma'am — this may take a few minutes…"
+    )
+    try:
+        from bantz.tools.web_search import execute_web_research
+        report = await asyncio.to_thread(execute_web_research, topic)
+        await _send_long(update, placeholder, report)
+    except Exception as exc:
+        log.exception("research error")
+        await _safe_edit(placeholder, f"⚠️ Research error, ma'am: {exc}")
+
+
+@_authorized
+async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/news [topic] — latest news / headlines for a topic."""
+    _active_chats.add(update.effective_chat.id)
+    topic = " ".join(context.args).strip() or "general"
+    placeholder = await update.message.reply_text(
+        f"📰 Fetching the latest on “{topic}”, ma'am…"
+    )
+    try:
+        from bantz.tools.web_search import execute_web_news
+        out = await asyncio.to_thread(execute_web_news, topic)
+        await _send_long(update, placeholder, out)
+    except Exception as exc:
+        log.exception("news error")
+        await _safe_edit(placeholder, f"⚠️ News error, ma'am: {exc}")
 
 
 @_authorized
@@ -969,6 +1143,14 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("weekly", cmd_weekly))
     app.add_handler(CommandHandler("ekran", cmd_ekran))          # daguerreotype (#189)
+
+    # Desktop remote control + web research/news (merged from bantz-web/bot.py)
+    app.add_handler(CommandHandler("screenshot", cmd_screenshot))
+    app.add_handler(CommandHandler("click", cmd_click))
+    app.add_handler(CommandHandler("type", cmd_type))
+    app.add_handler(CommandHandler("key", cmd_key))
+    app.add_handler(CommandHandler("research", cmd_research))
+    app.add_handler(CommandHandler("news", cmd_news))
 
     # Cognitive Wire — free text → LLM (#178)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
