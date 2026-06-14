@@ -290,7 +290,12 @@ class TestHandleMessageAttachments:
         update = MagicMock()
         update.effective_user.id = 42
         update.effective_chat.id = 1
-        update.message.text = "take a screenshot"
+        # A full-sentence request, NOT an exact screenshot shorthand ("ss",
+        # "take a screenshot"), so it routes through brain.process — which is
+        # what exercises the attachment-dispatch path under test. Exact
+        # shorthands are intercepted earlier and sent to the control.py
+        # /screenshot fast-path instead.
+        update.message.text = "can you grab my screen for me, please"
         update.message.reply_text = AsyncMock(return_value=MagicMock(
             edit_text=AsyncMock(return_value=True),
             delete=AsyncMock(),
