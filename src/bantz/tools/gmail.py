@@ -57,6 +57,37 @@ if os.path.isdir(_VENDOR) and _VENDOR not in sys.path:
 _SUMMARY_MAIL_CAP = 5
 
 
+def categorize(sender: str, subject: str) -> str:
+    """Bucket a mail by sender/subject: notifications | payments |
+    institutional | services | personal."""
+    s = (sender or "").lower() + (subject or "").lower()
+    if "github" in s:
+        return "notifications"
+    if "linkedin" in s:
+        return "notifications"
+    if "noreply" in s or "no-reply" in s:
+        return "notifications"
+    if any(x in s for x in ["payment", "invoice", "fatura", "odeme", "ödeme"]):
+        return "payments"
+    if any(x in s for x in ["erasmus", "university", "okul", "edu"]):
+        return "institutional"
+    if any(x in s for x in ["google", "apple", "microsoft", "amazon"]):
+        return "services"
+    return "personal"
+
+
+# Display order + emoji headers. Payments folds into the Services bucket.
+_CATEGORY_DISPLAY = [
+    ("personal",      "🔴 Personal"),
+    ("institutional", "🟡 Institutional"),
+    ("services",      "🟠 Services"),
+    ("payments",      "🟠 Payments"),
+    ("notifications", "⚫ Notifications"),
+]
+# Categories surfaced in the morning briefing (notifications skipped).
+_BRIEFING_CATEGORIES = {"personal", "institutional"}
+
+
 def _summarize_mail_body(body: str) -> str:
     """Summarize one mail body via bantz-web's chunker + summarizer.
 
@@ -130,6 +161,9 @@ def build_query(
     if days_ago > 0:
         after_date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y/%m/%d")
         parts.append(f"after:{after_date}")
+    elif unread_only and not from_sender and not full_text:
+        # Default recency cap: don't dredge up every unread mail ever.
+        parts.append("newer_than:7d")
     if starred:
         parts.append("is:starred")
     if label:
@@ -248,44 +282,48 @@ class GmailTool(BaseTool):
 
     # ── Summary ───────────────────────────────────────────────────────────
 
-    async def _summary(self, creds, limit: int = 10) -> ToolResult:
-        loop = asyncio.get_event_loop()
-        messages = await loop.run_in_executor(
+    async def _summary(self, creds, limit: int = 30, briefing: bool = False) -> ToolResult:
+        # build_query() now caps to last 7 days of unread inbox mail.
+        messages = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_messages_sync, creds, build_query(), limit
         )
         if not messages:
             return ToolResult(
                 success=True,
-                output="Your inbox is clean — no unread emails. ✓",
+                output="Your inbox is clean — no unread mail in the last 7 days. ✓",
                 data={"count": 0},
             )
 
-        # Read + summarize the actual body of the most recent mails (capped
-        # for speed). Each body goes through bantz-web's chunk+summarize;
-        # falls back to the snippet if the body can't be fetched/summarized.
-        recent = messages[:_SUMMARY_MAIL_CAP]
-        blocks: list[str] = []
-        for m in recent:
-            summary = ""
-            try:
-                content = await loop.run_in_executor(
-                    None, self._fetch_content_sync, creds, m["id"]
-                )
-                body = (content or {}).get("body", "")
-                if body:
-                    summary = await loop.run_in_executor(None, _summarize_mail_body, body)
-            except Exception as exc:
-                _log.debug("body fetch failed for %s: %s", m.get("id"), exc)
-            if not summary:
-                summary = (m.get("snippet", "") or "(no preview available)")[:200]
-            blocks.append(
-                f"From: {m['from']}\nSubject: {m['subject']}\nSummary: {summary}"
+        # Group by category. Briefing view shows only personal + institutional.
+        groups: dict[str, list[dict]] = {}
+        for m in messages:
+            cat = categorize(m.get("from", ""), m.get("subject", ""))
+            if briefing and cat not in _BRIEFING_CATEGORIES:
+                continue
+            groups.setdefault(cat, []).append(m)
+
+        if not groups:
+            return ToolResult(
+                success=True,
+                output="No personal or institutional mail in the last 7 days. ✓",
+                data={"count": 0},
             )
 
+        lines: list[str] = []
+        shown = 0
+        for cat, header in _CATEGORY_DISPLAY:
+            mails = groups.get(cat)
+            if not mails:
+                continue
+            lines.append(f"\n{header} ({len(mails)})")
+            for m in mails:
+                lines.append(f"  • {m['from']} — {m['subject']}")
+                shown += 1
         return ToolResult(
             success=True,
-            output="\n\n".join(blocks),
-            data={"count": len(recent), "messages": recent},
+            output="\n".join(lines).strip(),
+            data={"count": shown, "messages": messages,
+                  "groups": {c: len(v) for c, v in groups.items()}},
         )
 
     # ── Read ──────────────────────────────────────────────────────────────

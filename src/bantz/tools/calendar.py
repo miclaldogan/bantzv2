@@ -18,6 +18,7 @@ Scopes: calendar.readonly + calendar.events (already in token_store)
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -26,6 +27,8 @@ from bantz.auth.token_store import token_store, TokenNotFoundError
 from bantz.core.location import location_service
 from bantz.core.time_parser import normalize_time
 from bantz.tools import BaseTool, ToolResult, registry
+
+log = logging.getLogger("bantz.calendar")
 
 
 # ── Recurrence helpers ────────────────────────────────────────────────────────
@@ -213,10 +216,15 @@ class CalendarTool(BaseTool):
             None, self._find_conflicts_sync, creds, tz_name, date, time, duration
         )
 
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, self._create_sync, creds, tz_name, title, date, time,
-            duration, recurrence, attendees,
-        )
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, self._create_sync, creds, tz_name, title, date, time,
+                duration, recurrence, attendees,
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False, output="", error=f"Calendar create failed: {e}",
+            )
         if not result:
             return ToolResult(
                 success=False, output="", error="Could not create event.",
@@ -494,8 +502,9 @@ class CalendarTool(BaseTool):
                 calendarId="primary", body=body,
             ).execute()
             return result.get("id", "")
-        except Exception:
-            return ""
+        except Exception as e:
+            log.error("Calendar create failed: %s", e)
+            raise
 
     def _delete_sync(self, creds, event_id: str) -> bool:
         try:
