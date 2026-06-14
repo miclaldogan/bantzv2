@@ -32,6 +32,7 @@ from typing import Optional
 import httpx
 
 from bantz.config import config
+from bantz.core.secure_io import secure_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -258,11 +259,11 @@ class LocationService:
         try:
             import time
             GPS_CITY_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            GPS_CITY_CACHE.write_text(_json_mod.dumps({
+            secure_write_text(GPS_CITY_CACHE, _json_mod.dumps({
                 "city": loc.city, "country": loc.country,
                 "timezone": loc.timezone, "region": loc.region,
                 "lat": loc.lat, "lon": loc.lon, "ts": time.time(),
-            }, ensure_ascii=False), encoding="utf-8")
+            }, ensure_ascii=False))
         except Exception as exc:
             logger.debug(f"GPS city cache write failed: {exc}")
 

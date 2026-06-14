@@ -30,6 +30,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 
+from bantz.core.secure_io import secure_write_text
+
 log = logging.getLogger("bantz.gps")
 
 GPS_PORT = 9777
@@ -746,8 +748,8 @@ class GPSServer:
         """Save received GPS data to memory and disk, feed place manager."""
         self._latest = data
         LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LOCATION_FILE.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        secure_write_text(
+            LOCATION_FILE, json.dumps(data, indent=2, ensure_ascii=False)
         )
         log.info(
             "GPS updated: %.6f, %.6f (±%sm)",
