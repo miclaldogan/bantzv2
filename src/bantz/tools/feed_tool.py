@@ -273,6 +273,8 @@ def parse_feed(xml_text: str, source_name: str = "") -> list[FeedItem]:
 
 def _fetch_raw(url: str, timeout: int = 12) -> str:
     """Fetch raw XML from a feed URL using curl."""
+    if not url.startswith(("http://", "https://")):
+        raise FeedToolError(f"Invalid feed URL (must be http/https): {url}")
     try:
         result = subprocess.run(
             ["curl", "-sL", "--max-time", str(timeout), url],
