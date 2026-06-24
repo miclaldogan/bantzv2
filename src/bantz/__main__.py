@@ -56,6 +56,8 @@ def main() -> None:
                         help="Show current configuration (secrets masked)")
     parser.add_argument("--ui", action="store_true",
                         help="Launch the Bantz desktop UI (Tauri)")
+    parser.add_argument("--telegram", action="store_true",
+                        help="Run the Telegram bot (brain-routed, polling)")
     args = parser.parse_args()
 
     if args.doctor:
@@ -112,6 +114,11 @@ def main() -> None:
 
     if args.daemon:
         asyncio.run(_daemon())
+        return
+
+    if args.telegram:
+        from bantz.interface.telegram_bot import run_bot
+        run_bot()
         return
 
     from bantz.interface.live_ui import run

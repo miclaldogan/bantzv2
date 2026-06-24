@@ -1151,6 +1151,15 @@ def run_bot() -> None:
         print("   → or run: bantz --setup telegram")
         return
 
+    # Self-heal the Wayland/Hyprland env so /screenshot (grim) and workspace
+    # (hyprctl) work when this bot runs as a systemd user service that may
+    # have started before the compositor exported its environment.
+    try:
+        from bantz.core.desktop_env import ensure_wayland_env
+        ensure_wayland_env()
+    except Exception:
+        pass
+
     global _current_app
     app = Application.builder().token(token).build()
     _current_app = app
