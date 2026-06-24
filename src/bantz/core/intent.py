@@ -653,6 +653,21 @@ _WORKSPACE_REL = re.compile(
     re.IGNORECASE,
 )
 
+# Click-by-description — "click on X", "click the X button", "double click X",
+# Turkish "X'e tıkla". Deterministic so a one-word or unfamiliar target (e.g.
+# "click on deneme") isn't second-guessed into chat by the router — which then
+# leaks a fake "visual_click(deneme)" string back to the user instead of
+# actually clicking.
+_CLICK_FAST = re.compile(
+    r"^\s*(?P<act>double[ -]?click|right[ -]?click|left[ -]?click|click)"
+    r"(?:\s+(?:on|the|upon))?\s+(?P<target>.{1,60}?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+_CLICK_FAST_TR = re.compile(
+    r"^\s*(?P<target>.{1,50}?)['’]?\s*[a-zçğıöşü]{0,3}\s+(?:tıkla|tikla)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+
 
 async def cot_route(
     en_input: str,
@@ -742,6 +757,28 @@ async def cot_route(
             "tool_args": {"action": "workspace", "target": target},
             "risk_level": "moderate", "confidence": 0.95,
             "reasoning": "pre-route: workspace switch (relative)",
+        }, None
+
+    _clk = _CLICK_FAST.match(en_input)
+    _clk_target = _clk.group("target").strip() if _clk else ""
+    _clk_act = (_clk.group("act").lower().replace(" ", "").replace("-", "")
+                if _clk else "")
+    if not _clk:
+        _clk_tr = _CLICK_FAST_TR.match(en_input)
+        if _clk_tr:
+            _clk_target, _clk_act = _clk_tr.group("target").strip(), "click"
+    # Skip pure-coordinate clicks ("click 960 540") — those use /click; and
+    # skip empty targets.
+    if _clk_target and not re.fullmatch(r"[\d ,]+", _clk_target):
+        action = {"doubleclick": "double_click", "rightclick": "right_click",
+                  "leftclick": "click", "click": "click"}.get(_clk_act, "click")
+        log.debug("cot_route fast-path: pre-route to visual_click(%r, %s)",
+                  _clk_target, action)
+        return {
+            "route": "tool", "tool_name": "visual_click",
+            "tool_args": {"target": _clk_target, "action": action},
+            "risk_level": "moderate", "confidence": 0.95,
+            "reasoning": "pre-route: click-by-description",
         }, None
 
     schema_str = _build_compact_schemas(tool_schemas)
