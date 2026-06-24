@@ -251,6 +251,13 @@ async def capture_raw() -> Optional[bytes]:
     Capture a full-screen screenshot as raw PNG bytes.
     Tries multiple backends in order of preference.
     """
+    # grim needs WAYLAND_DISPLAY; the daemon may lack it ("failed to create
+    # display"). Repair from the runtime dir before capturing.
+    try:
+        from bantz.core.desktop_env import ensure_wayland_env
+        ensure_wayland_env()
+    except Exception:
+        pass
     display = _detect_display()
 
     if display == "wayland":

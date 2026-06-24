@@ -399,6 +399,12 @@ async def _daemon() -> None:
     log = logging.getLogger("bantz.daemon")
     log.info("Bantz daemon starting (APScheduler)...")
 
+    # Self-heal the Wayland/Hyprland env: a systemd user service started
+    # before the compositor imports its environment has no WAYLAND_DISPLAY /
+    # HYPRLAND_INSTANCE_SIGNATURE, which breaks grim + hyprctl.
+    from bantz.core.desktop_env import ensure_wayland_env
+    ensure_wayland_env()
+
     from bantz.config import config
     config.ensure_dirs()
 

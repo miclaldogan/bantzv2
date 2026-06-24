@@ -628,6 +628,13 @@ class DesktopTool(BaseTool):
                 success=False, output="",
                 error="Specify a workspace target: a number (e.g. 3) or 'next'/'prev'.")
 
+        # hyprctl needs HYPRLAND_INSTANCE_SIGNATURE; the daemon may lack it.
+        try:
+            from bantz.core.desktop_env import ensure_wayland_env
+            ensure_wayland_env()
+        except Exception:
+            pass
+
         rel = target in ("next", "+1", "+", "prev", "previous", "-1", "-")
         forward = target in ("next", "+1", "+")
 
