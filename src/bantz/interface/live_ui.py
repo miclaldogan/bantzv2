@@ -229,6 +229,11 @@ class LiveUI:
         self._memory_count: int = -1      # -1 = not yet fetched
         self._persona_state: str = ""     # from AffinityEngine
 
+        # ── live plan checklist (planner_step events) ──────────────
+        # step → (tool, description, status); status ∈ start|done|failed
+        self._plan_steps: dict[int, tuple[str, str, str]] = {}
+        self._plan_total: int = 0
+
         # ── system stats ──────────────────────────────────────────
         self._cpu: float = 0.0
         self._ram_pct: float = 0.0
@@ -273,6 +278,7 @@ class LiveUI:
         )
         layout["bottom"].split_row(
             Layout(name="stats", size=28),
+            Layout(name="plan", size=42, visible=False),  # live plan checklist
             Layout(name="logs", ratio=1),
         )
         return layout
@@ -299,10 +305,14 @@ class LiveUI:
             f"{_DOT_STYLE[s]} {n}" for n, s in self._services.items()
         )
         now = datetime.now().strftime("%H:%M:%S")
-        # ── info line: model name, persona state, memory drawer count (#437) ──
+        # ── info line: models, persona state, memory drawer count (#437) ──
         info_parts: list[str] = [
-            f"[dim]model:[/][bold cyan]{_active_model_label()}[/]",
+            f"[dim]chat:[/][bold cyan]{_active_model_label()}[/]",
         ]
+        if config.ollama_routing_model:
+            info_parts.append(
+                f"[dim]route:[/][bold magenta]{config.ollama_routing_model}[/]"
+            )
         if self._memory_count >= 0:
             info_parts.append(
                 f"[dim]mem:[/][bold]{self._memory_count}[/]"
@@ -438,9 +448,33 @@ class LiveUI:
         """One-line prompt row shown at the bottom of the Live layout. (#464)"""
         return Text.from_markup(self._prompt_text)
 
+    def _render_plan(self) -> Panel:
+        """Live checklist of the executing plan (planner_step events)."""
+        icons = {"start": "[cyan]⚙[/]", "done": "[green]✓[/]",
+                 "failed": "[red]✗[/]"}
+        lines: list[str] = []
+        for n in sorted(self._plan_steps):
+            tool, desc, status = self._plan_steps[n]
+            style = ("dim" if status == "done"
+                     else "bold red" if status == "failed" else "bold")
+            lines.append(
+                f" {icons.get(status, '·')} [{style}]{n}.[/] "
+                f"[cyan]{escape(tool[:14])}[/] [dim]{escape(desc[:20])}[/]"
+            )
+        done = sum(1 for _, _, s in self._plan_steps.values() if s == "done")
+        title = f"[bold magenta]PLAN {done}/{self._plan_total or len(self._plan_steps)}[/]"
+        return Panel(
+            Text.from_markup("\n".join(lines) or " [dim](drafting…)[/]"),
+            title=title, border_style="magenta",
+        )
+
     def _update_panels(self, layout: Layout) -> None:
         layout["header"].update(self._render_header())
         layout["bottom"]["stats"].update(self._render_stats())
+        plan_layout = layout["bottom"]["plan"]
+        plan_layout.visible = bool(self._plan_steps)
+        if self._plan_steps:
+            plan_layout.update(self._render_plan())
         layout["bottom"]["logs"].update(self._render_logs())
         layout["chat"].update(self._render_chat())
         layout["prompt"].update(self._render_prompt())
@@ -930,8 +964,14 @@ class LiveUI:
     def _on_bus_planner_step(self, event: Event) -> None:
         step = event.data.get("step", 0)
         total = event.data.get("total", 0)
+        tool = event.data.get("tool", "")
         desc = event.data.get("description", "")[:60]
         status = event.data.get("status", "start")
+        # A fresh plan starts: clear the previous checklist
+        if status == "start" and step == 1:
+            self._plan_steps.clear()
+        self._plan_total = total or self._plan_total
+        self._plan_steps[step] = (tool, desc, status)
         if status == "done":
             self.add_log(f"✓ Step {step}/{total}: {desc}")
         elif status == "failed":

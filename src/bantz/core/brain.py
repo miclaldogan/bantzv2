@@ -150,6 +150,14 @@ class Brain:
         except (ImportError, ModuleNotFoundError):
             pass
         try:
+            # Without this the InputControlTool only registers as a side
+            # effect of a lazy import inside desktop/visual_click/browser —
+            # so the router advertised "input_control" but the registry
+            # never held it, and routing there failed ("unknown tool").
+            import bantz.tools.input_control  # noqa: F401  (#122)
+        except (ImportError, ModuleNotFoundError):
+            pass
+        try:
             import bantz.tools.browser_control  # noqa: F401
         except (ImportError, ModuleNotFoundError):
             pass

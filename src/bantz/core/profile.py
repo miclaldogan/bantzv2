@@ -38,6 +38,23 @@ _DEFAULT_PREFERENCES: dict[str, Any] = {
     "briefing_sections": ["schedule", "weather", "mail", "calendar", "classroom"],
     "news_sources": ["hn", "google"],
     "response_style": "casual",
+    # Personal-preference schema consumed by the vision executor handoff
+    # ("bana biraz AC/DC aç" = play me some AC/DC → favorite song,
+    # preferred service, browser).
+    "music": {
+        "favorite_artists": [],          # e.g. ["AC/DC", "Metallica"]
+        "artist_favorites": {},          # e.g. {"AC/DC": "Thunderstruck"}
+        "preferred_service": "yt_music",  # "yt_music" | "spotify"
+    },
+    "apps": {
+        "browser": "firefox",
+        "music_player": "yt_music",
+    },
+}
+
+_SERVICE_URLS: dict[str, str] = {
+    "yt_music": "https://music.youtube.com",
+    "spotify": "https://open.spotify.com",
 }
 
 _DEFAULTS: dict[str, Any] = {
@@ -128,6 +145,45 @@ class Profile:
     @property
     def news_sources(self) -> list[str]:
         return self.preferences.get("news_sources", ALL_NEWS_SOURCES)
+
+    def get_relevant(self, intent: str, **kwargs: Any) -> dict[str, Any]:
+        """Pre-fetch the preference slice relevant to *intent*.
+
+        Used by the routing layer before handing a goal to the vision
+        executor, so goal strings carry resolved values, never placeholders.
+
+        >>> profile.get_relevant("play_music", artist="AC/DC")
+        {'artist': 'AC/DC', 'song': 'Thunderstruck',
+         'service': 'yt_music', 'service_url': 'https://music.youtube.com',
+         'browser': 'firefox'}
+        """
+        prefs = self.preferences
+        music = {**_DEFAULT_PREFERENCES["music"], **prefs.get("music", {})}
+        apps = {**_DEFAULT_PREFERENCES["apps"], **prefs.get("apps", {})}
+
+        if intent == "play_music":
+            artist = kwargs.get("artist") or ""
+            favorites = music.get("artist_favorites", {})
+            # Normalized artist match: case- and punctuation-insensitive,
+            # so "acdc" and "ac dc" both resolve "AC/DC".
+            def _norm(s: str) -> str:
+                return "".join(c for c in s.lower() if c.isalnum())
+            song = ""
+            for known, fav in favorites.items():
+                if _norm(known) == _norm(artist):
+                    artist, song = known, fav
+                    break
+            service = music.get("preferred_service", "yt_music")
+            return {
+                "artist": artist,
+                "song": song,
+                "service": service,
+                "service_url": _SERVICE_URLS.get(service, _SERVICE_URLS["yt_music"]),
+                "browser": apps.get("browser", "firefox"),
+            }
+        if intent == "open_app":
+            return {"browser": apps.get("browser", "firefox"), **apps}
+        return {}
 
     @property
     def path(self) -> Path:

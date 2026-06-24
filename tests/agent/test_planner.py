@@ -1379,7 +1379,7 @@ class TestCoreferenceResolution:
 
         captured_messages: list = []
 
-        async def capture_stream(messages, *, emit_thinking=True, source=""):
+        async def capture_stream(messages, *, emit_thinking=True, source="", **kwargs):
             captured_messages.extend(messages)
             return json.dumps([
                 {"step": 1, "tool": "gmail",
@@ -1414,7 +1414,7 @@ class TestCoreferenceResolution:
 
         captured_messages: list = []
 
-        async def capture_stream(messages, *, emit_thinking=True, source=""):
+        async def capture_stream(messages, *, emit_thinking=True, source="", **kwargs):
             captured_messages.extend(messages)
             return json.dumps([
                 {"step": 1, "tool": "weather",

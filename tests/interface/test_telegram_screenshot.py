@@ -96,7 +96,8 @@ class TestScreenshotTool:
     async def test_disabled_config_returns_error(self):
         from bantz.tools.screenshot_tool import ScreenshotTool
 
-        with patch("bantz.config.config.telegram_screenshot_enabled", False):
+        with patch("bantz.config.config.telegram_screenshot_enabled", False), \
+             patch("bantz.config.config.input_control_enabled", False):
             result = await ScreenshotTool().execute()
 
         assert not result.success

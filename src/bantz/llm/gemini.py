@@ -64,7 +64,17 @@ class GeminiClient:
             if role == "system":
                 system_instruction += content + "\n"
             elif role == "user":
-                contents.append({"role": "user", "parts": [{"text": content}]})
+                parts: list[dict] = [{"text": content}]
+                # Vision passthrough: Ollama-style base64 images on the
+                # message dict become Gemini inline_data parts.
+                for img_b64 in msg.get("images") or []:
+                    parts.append({
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": img_b64,
+                        }
+                    })
+                contents.append({"role": "user", "parts": parts})
             elif role == "assistant":
                 contents.append({"role": "model", "parts": [{"text": content}]})
 

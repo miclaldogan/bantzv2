@@ -28,9 +28,27 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from typing import Any, Optional
+
+
+def _resolve_bin(name: str) -> str | None:
+    """Locate a binary PATH-independently.
+
+    Daemon contexts (desktop launchers, Tauri spawn) can carry a stripped
+    PATH without /usr/sbin — `which ydotool` then fails even though the
+    tool exists, and the backend silently degrades to "none".
+    """
+    p = shutil.which(name)
+    if p:
+        return p
+    for d in ("/usr/bin", "/usr/sbin", "/usr/local/bin"):
+        cand = os.path.join(d, name)
+        if os.path.exists(cand):
+            return cand
+    return None
 
 from bantz.config import config
 from bantz.tools import BaseTool, ToolResult, registry
@@ -48,9 +66,15 @@ _pynput_keyboard_controller = None
 
 
 def _detect_backend() -> str:
-    """Detect best input backend for the current display server."""
+    """Detect best input backend for the current display server.
+
+    A "none" result is NEVER cached: detection can fail transiently (the
+    ydotool probe times out while the GPU/system is busy warming models at
+    daemon startup) and a permanent cache turned that blip into "every
+    desktop action fails until restart".
+    """
     global _backend
-    if _backend is not None:
+    if _backend is not None and _backend != "none":
         return _backend
 
     session = os.environ.get("XDG_SESSION_TYPE", "").lower()
@@ -68,19 +92,24 @@ def _detect_backend() -> str:
 
         # ydotool: Wayland-native xdotool replacement (needs ydotoold daemon)
         try:
-            r = subprocess.run(["which", "ydotool"], capture_output=True, timeout=2)
-            if r.returncode == 0:
+            ydo = _resolve_bin("ydotool")
+            if ydo:
                 # Verify ydotoold daemon is reachable
                 r2 = subprocess.run(
-                    ["ydotool", "mousemove", "--", "0", "0"],
-                    capture_output=True, timeout=2,
+                    [ydo, "mousemove", "--", "0", "0"],
+                    capture_output=True, timeout=5,
                 )
                 if r2.returncode == 0:
                     _backend = "ydotool"
                     log.debug("Input backend: ydotool (Wayland)")
                     return _backend
-        except Exception:
-            pass
+                log.warning(
+                    "ydotool present but probe failed (rc=%s): %s",
+                    r2.returncode,
+                    r2.stderr.decode(errors="replace").strip()[:120],
+                )
+        except Exception as exc:
+            log.warning("ydotool probe error: %s", exc)
 
     # X11 / XWayland
     try:
@@ -100,10 +129,9 @@ def _detect_backend() -> str:
     except ImportError:
         pass
 
-    # xdotool (X11 only)
+    # xdotool (X11 / XWayland windows)
     try:
-        r = subprocess.run(["which", "xdotool"], capture_output=True)
-        if r.returncode == 0:
+        if _resolve_bin("xdotool"):
             _backend = "xdotool"
             log.debug("Input backend: xdotool (X11 fallback)")
             return _backend
@@ -263,15 +291,13 @@ async def click(x: int, y: int) -> dict:
         mc.position = (x, y)
         mc.click(Button.left, 1)
     elif backend == "ydotool":
-        proc = await asyncio.create_subprocess_exec(
-            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
         )
         await proc.wait()
-        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "click", "0xC0")
         await proc.wait()
     elif backend == "xdotool":
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", str(x), str(y), "click", "1",
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", str(x), str(y), "click", "1",
         )
         await proc.wait()
     else:
@@ -295,17 +321,15 @@ async def double_click(x: int, y: int) -> dict:
         mc.position = (x, y)
         mc.click(Button.left, 2)
     elif backend == "ydotool":
-        proc = await asyncio.create_subprocess_exec(
-            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
         )
         await proc.wait()
-        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "click", "0xC0")
         await proc.wait()
-        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC0")
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "click", "0xC0")
         await proc.wait()
     elif backend == "xdotool":
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", str(x), str(y),
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", str(x), str(y),
             "click", "--repeat", "2", "--delay", "50", "1",
         )
         await proc.wait()
@@ -330,15 +354,13 @@ async def right_click(x: int, y: int) -> dict:
         mc.position = (x, y)
         mc.click(Button.right, 1)
     elif backend == "ydotool":
-        proc = await asyncio.create_subprocess_exec(
-            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
         )
         await proc.wait()
-        proc = await asyncio.create_subprocess_exec("ydotool", "click", "0xC1")
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "click", "0xC1")
         await proc.wait()
     elif backend == "xdotool":
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", str(x), str(y), "click", "3",
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", str(x), str(y), "click", "3",
         )
         await proc.wait()
     else:
@@ -360,12 +382,11 @@ async def move_to(x: int, y: int) -> dict:
         mc, _ = _get_pynput()
         mc.position = (x, y)
     elif backend == "ydotool":
-        proc = await asyncio.create_subprocess_exec(
-            "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("ydotool") or "ydotool", "mousemove", "--absolute", "--", str(x), str(y),
         )
         await proc.wait()
     elif backend == "xdotool":
-        proc = await asyncio.create_subprocess_exec("xdotool", "mousemove", str(x), str(y))
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", str(x), str(y))
         await proc.wait()
     else:
         raise RuntimeError("No input backend available")
@@ -388,8 +409,7 @@ async def get_position() -> dict:
         pos = mc.position
         return {"x": pos[0], "y": pos[1]}
     elif backend == "xdotool":
-        proc = await asyncio.create_subprocess_exec(
-            "xdotool", "getmouselocation",
+        proc = await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "getmouselocation",
             stdout=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
@@ -400,6 +420,32 @@ async def get_position() -> dict:
         return {"x": 0, "y": 0}
 
     return {"x": 0, "y": 0}
+
+
+# Linux input-event key codes for ydotool's `key` subcommand
+# (it takes "code:1" press / "code:0" release pairs, no symbolic names).
+_YDOTOOL_KEYCODES: dict[str, int] = {
+    "esc": 1, "escape": 1,
+    "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9,
+    "9": 10, "0": 11, "minus": 12, "equal": 13,
+    "backspace": 14, "tab": 15,
+    "q": 16, "w": 17, "e": 18, "r": 19, "t": 20, "y": 21, "u": 22,
+    "i": 23, "o": 24, "p": 25,
+    "enter": 28, "return": 28,
+    "ctrl": 29, "control": 29,
+    "a": 30, "s": 31, "d": 32, "f": 33, "g": 34, "h": 35, "j": 36,
+    "k": 37, "l": 38,
+    "shift": 42,
+    "z": 44, "x": 45, "c": 46, "v": 47, "b": 48, "n": 49, "m": 50,
+    "alt": 56, "space": 57,
+    "f1": 59, "f2": 60, "f3": 61, "f4": 62, "f5": 63, "f6": 64,
+    "f7": 65, "f8": 66, "f9": 67, "f10": 68, "f11": 87, "f12": 88,
+    "home": 102, "up": 103, "pageup": 104, "page_up": 104,
+    "left": 105, "right": 106, "end": 107, "down": 108,
+    "pagedown": 109, "page_down": 109,
+    "delete": 111, "del": 111,
+    "super": 125, "win": 125, "meta": 125,
+}
 
 
 async def type_text(text: str, interval: float = 0.05) -> dict:
@@ -416,9 +462,14 @@ async def type_text(text: str, interval: float = 0.05) -> dict:
         for char in text:
             kc.type(char)
             await asyncio.sleep(interval)
+    elif backend == "ydotool":
+        proc = await asyncio.create_subprocess_exec(
+            _resolve_bin("ydotool") or "ydotool", "type",
+            "--key-delay", str(int(interval * 1000)), "--", text,
+        )
+        await proc.wait()
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec(
-            "xdotool", "type", "--delay", str(int(interval * 1000)), text,
+        await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "type", "--delay", str(int(interval * 1000)), text,
         )
     else:
         raise RuntimeError("No input backend available")
@@ -450,11 +501,20 @@ async def scroll(direction: str = "down", amount: int = 3) -> dict:
         else:
             dx = amount if direction == "right" else -amount
             mc.scroll(dx, 0)
+    elif backend == "ydotool":
+        # ydotool has no scroll subcommand. Arrow keys via `key` work in
+        # most scrollable views; use PageUp/PageDown for larger jumps.
+        code = {"up": 103, "down": 108, "left": 105, "right": 106}.get(direction, 108)
+        ydo = _resolve_bin("ydotool") or "ydotool"
+        for _ in range(amount):
+            proc = await asyncio.create_subprocess_exec(
+                ydo, "key", f"{code}:1", f"{code}:0",
+            )
+            await proc.wait()
     elif backend == "xdotool":
         button = "4" if direction == "up" else "5"
         for _ in range(amount):
-            await asyncio.create_subprocess_exec(
-                "xdotool", "click", button,
+            await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "click", button,
             )
     else:
         raise RuntimeError("No input backend available")
@@ -485,14 +545,24 @@ async def drag(from_x: int, from_y: int, to_x: int, to_y: int, duration: float =
             mc.position = (int(from_x + dx * (i + 1)), int(from_y + dy * (i + 1)))
             await asyncio.sleep(duration / steps)
         mc.release(Button.left)
+    elif backend == "ydotool":
+        # 0x40 = left button press, 0x80 = release (ydotool click bitmask)
+        ydo = _resolve_bin("ydotool") or "ydotool"
+        for argv in (
+            (ydo, "mousemove", "--absolute", "--", str(from_x), str(from_y)),
+            (ydo, "click", "0x40"),
+            (ydo, "mousemove", "--absolute", "--", str(to_x), str(to_y)),
+            (ydo, "click", "0x80"),
+        ):
+            proc = await asyncio.create_subprocess_exec(*argv)
+            await proc.wait()
+            await asyncio.sleep(duration / 4)
     elif backend == "xdotool":
-        await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", str(from_x), str(from_y),
+        await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", str(from_x), str(from_y),
             "mousedown", "1",
         )
         await asyncio.sleep(0.05)
-        await asyncio.create_subprocess_exec(
-            "xdotool", "mousemove", "--sync", str(to_x), str(to_y),
+        await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "mousemove", "--sync", str(to_x), str(to_y),
             "mouseup", "1",
         )
     else:
@@ -556,9 +626,25 @@ async def hotkey(*keys: str) -> dict:
             kc.release(mapped[-1])
         for mk in reversed(mapped[:-1]):
             kc.release(mk)
+    elif backend == "ydotool":
+        # ydotool key takes raw Linux event codes as "code:1"/"code:0"
+        # (press/release) pairs — no symbolic names.
+        codes: list[int] = []
+        for k in key_list:
+            code = _YDOTOOL_KEYCODES.get(k)
+            if code is None and len(k) == 1:
+                code = _YDOTOOL_KEYCODES.get(k.lower())
+            if code is None:
+                raise RuntimeError(f"ydotool: no key code for {k!r}")
+            codes.append(code)
+        seq = [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
+        proc = await asyncio.create_subprocess_exec(
+            _resolve_bin("ydotool") or "ydotool", "key", *seq,
+        )
+        await proc.wait()
     elif backend == "xdotool":
         xdo_keys = "+".join(key_list)
-        await asyncio.create_subprocess_exec("xdotool", "key", xdo_keys)
+        await asyncio.create_subprocess_exec(_resolve_bin("xdotool") or "xdotool", "key", xdo_keys)
     else:
         raise RuntimeError("No input backend available")
 

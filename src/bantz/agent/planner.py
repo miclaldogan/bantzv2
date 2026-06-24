@@ -68,6 +68,9 @@ TOOL REFERENCE:
   • action=run name=<name> inputs={{...}} → execute a deterministic multi-step pipeline
   • action=list → show available workflows
   Use for: known repeatable pipelines (morning briefing, system health, research-and-save).
+- vision_execute: complete a goal by LOOKING at the screen each step (screenshot → decide → act loop). Params: {{"goal": "...", "intent": "play_music", "artist": "...", "max_steps": 12}}
+  • For "play X / listen to X" music requests, prefer ONE vision_execute step over a chain of browser_control steps: {{"goal": "play <song/artist> on the music service", "intent": "play_music", "artist": "<artist>"}}. It pulls the user's favorite song, service, and browser from their profile automatically.
+  • Use for: in-app interactions that need visual feedback (media sites, dialogs, dynamic pages) where fixed selectors fail.
 
 CRITICAL TOOL RULES:
 - NEVER use `web_search` or `news` to summarize, rewrite, translate, or analyze text. Those tools are STRICTLY for fetching new external information.
@@ -246,6 +249,15 @@ Example output:
 """
 
 
+_PLANNER_LLM_OPTIONS: dict = {
+    # PLANNER_SYSTEM is ~16K chars (~4-5K tokens) — Ollama's default
+    # num_ctx of 4096 silently TRUNCATES it, producing degenerate output
+    # (measured: gemma4 emitted a single '<' and stopped; llama3.1's May
+    # "planner rejection" flakiness is the same failure). Pin the window.
+    "num_ctx": 8192,
+}
+
+
 @dataclass
 class PlanStep:
     """A single step in the butler's itinerary."""
@@ -321,6 +333,7 @@ class PlannerAgent:
 
         raw = await _stream_and_collect(
             messages, emit_thinking=True, source="planner",
+            options=_PLANNER_LLM_OPTIONS,
         )
 
         try:
@@ -336,6 +349,7 @@ class PlannerAgent:
                 )})
                 raw2 = await _stream_and_collect(
                     messages, emit_thinking=False, source="planner_retry",
+                    options=_PLANNER_LLM_OPTIONS,
                 )
                 steps_data = self._parse_steps(raw2)
             except Exception as exc2:
@@ -482,6 +496,7 @@ class PlannerAgent:
         try:
             raw = await _stream_and_collect(
                 messages, emit_thinking=True, source="replanner",
+                options=_PLANNER_LLM_OPTIONS,
             )
             steps_data = self._parse_steps(raw)
         except Exception as exc:
