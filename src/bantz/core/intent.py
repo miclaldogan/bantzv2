@@ -638,6 +638,21 @@ _VIDEO_FAST = re.compile(
     r"\bvideo (?:aç|izle)\b"
 )
 
+# Workspace / virtual-desktop switching — unambiguous, so it gets a
+# deterministic fast-path to the desktop tool (Hyprland/Sway/X11). Without
+# this, "workspace 3" fell to the LLM emitting a raw hyprctl command, which
+# the user saw fail ("hyprctl failed").
+_WORKSPACE_NUM = re.compile(
+    r"\bworkspace\s+(\d{1,2})\b|"
+    r"\b(?:çalışma alanı|masaüstü)\s*(\d{1,2})\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_REL = re.compile(
+    r"\b(next|previous|prev)\s+workspace\b|"
+    r"\bworkspace\s+(next|previous|prev)\b",
+    re.IGNORECASE,
+)
+
 
 async def cot_route(
     en_input: str,
@@ -707,6 +722,26 @@ async def cot_route(
             "tool_args": {"goal": en_input, "intent": "watch_video"},
             "risk_level": "moderate", "confidence": 0.95,
             "reasoning": "pre-route: video-watching pattern",
+        }, None
+
+    _ws = _WORKSPACE_NUM.search(en_input)
+    if _ws:
+        target = _ws.group(1) or _ws.group(2)
+        log.debug("cot_route fast-path: pre-route to desktop workspace %s", target)
+        return {
+            "route": "tool", "tool_name": "desktop",
+            "tool_args": {"action": "workspace", "target": target},
+            "risk_level": "moderate", "confidence": 0.95,
+            "reasoning": "pre-route: workspace switch",
+        }, None
+    if _WORKSPACE_REL.search(en_input):
+        target = "next" if "next" in en_input.lower() else "prev"
+        log.debug("cot_route fast-path: pre-route to desktop workspace %s", target)
+        return {
+            "route": "tool", "tool_name": "desktop",
+            "tool_args": {"action": "workspace", "target": target},
+            "risk_level": "moderate", "confidence": 0.95,
+            "reasoning": "pre-route: workspace switch (relative)",
         }, None
 
     schema_str = _build_compact_schemas(tool_schemas)

@@ -242,6 +242,8 @@ class DesktopTool(BaseTool):
         "  close_app   — close the currently focused or named application\n"
         "  list_windows — list all accessible application windows\n"
         "  active_window — get info about the currently focused window\n"
+        "  workspace    — switch virtual desktop/workspace. target=<number> "
+        "(e.g. 3) or 'next'/'prev'. Works on Hyprland/Sway/X11.\n"
         "Params: action (str), app (str), locator (str, e.g. 'name:Send' or "
         "'role:push button'), text (str), keys (str, e.g. 'ctrl+c').\n"
         "Locator format: 'name:Submit', 'role:entry', 'name:OK,role:push button'."
@@ -267,6 +269,9 @@ class DesktopTool(BaseTool):
             "close": self._close_app,
             "list_windows": self._list_windows,
             "active_window": self._active_window,
+            "workspace": self._workspace,
+            "switch_workspace": self._workspace,
+            "goto_workspace": self._workspace,
         }
 
         handler = dispatch.get(action)
@@ -604,6 +609,71 @@ class DesktopTool(BaseTool):
             success=True, output=output,
             data={"title": title, "app": app, "pid": pid},
         )
+
+    async def _workspace(self, kwargs: dict) -> ToolResult:
+        """Switch virtual desktop / workspace.
+
+        target=<number> (absolute) or 'next'/'prev' (relative). Tries the
+        running compositor: Hyprland (hyprctl), Sway (swaymsg), then X11
+        (wmctrl). This exists so 'workspace 3' is a deterministic tool call
+        — previously it fell to the LLM emitting a raw hyprctl command,
+        which the user saw fail ("hyprctl failed").
+        """
+        target = str(
+            kwargs.get("target") or kwargs.get("n") or kwargs.get("number")
+            or kwargs.get("workspace") or ""
+        ).strip().lower()
+        if not target:
+            return ToolResult(
+                success=False, output="",
+                error="Specify a workspace target: a number (e.g. 3) or 'next'/'prev'.")
+
+        rel = target in ("next", "+1", "+", "prev", "previous", "-1", "-")
+        forward = target in ("next", "+1", "+")
+
+        async def _run(*argv: str) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT)
+            out, _ = await proc.communicate()
+            return proc.returncode or 0, (out or b"").decode(errors="replace").strip()
+
+        # ── Hyprland ──
+        hyprctl = shutil.which("hyprctl")
+        if hyprctl:
+            arg = ("e+1" if forward else "e-1") if rel else target
+            rc, out = await _run(hyprctl, "dispatch", "workspace", arg)
+            if rc == 0 and "ok" in out.lower():
+                return ToolResult(True, f"Switched to workspace {target}.",
+                                  data={"target": target, "via": "hyprctl"})
+            # fall through to other compositors only if hyprctl isn't the WM
+            if "ok" not in out.lower() and out:
+                return ToolResult(False, "", error=f"hyprctl failed: {out}")
+
+        # ── Sway ──
+        swaymsg = shutil.which("swaymsg")
+        if swaymsg:
+            cmd = ("workspace next" if forward else "workspace prev") if rel \
+                else f"workspace number {target}"
+            rc, out = await _run(swaymsg, *cmd.split())
+            if rc == 0:
+                return ToolResult(True, f"Switched to workspace {target}.",
+                                  data={"target": target, "via": "swaymsg"})
+            return ToolResult(False, "", error=f"swaymsg failed: {out}")
+
+        # ── X11 (wmctrl: 0-indexed desktops) ──
+        wmctrl = shutil.which("wmctrl")
+        if wmctrl and target.isdigit():
+            rc, out = await _run(wmctrl, "-s", str(int(target) - 1))
+            if rc == 0:
+                return ToolResult(True, f"Switched to workspace {target}.",
+                                  data={"target": target, "via": "wmctrl"})
+            return ToolResult(False, "", error=f"wmctrl failed: {out}")
+
+        return ToolResult(
+            success=False, output="",
+            error="No supported workspace switcher found (need hyprctl, "
+                  "swaymsg, or wmctrl).")
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
