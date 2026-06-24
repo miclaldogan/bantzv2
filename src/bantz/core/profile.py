@@ -169,10 +169,18 @@ class Profile:
             def _norm(s: str) -> str:
                 return "".join(c for c in s.lower() if c.isalnum())
             song = ""
+            matched = False
             for known, fav in favorites.items():
                 if _norm(known) == _norm(artist):
-                    artist, song = known, fav
+                    artist, song, matched = known, fav, True
                     break
+            # Generic "play music" (no artist given) → fall back to the
+            # user's top favorite artist (and its favorite song, if set).
+            if not matched and not artist:
+                fav_artists = music.get("favorite_artists", [])
+                if fav_artists:
+                    artist = fav_artists[0]
+                    song = favorites.get(artist, "")
             service = music.get("preferred_service", "yt_music")
             return {
                 "artist": artist,

@@ -199,8 +199,11 @@ class VisionExecuteTool(BaseTool):
         context: dict[str, Any] = {}
         intent = str(kwargs.get("intent") or "")
         # Fallback: routers sometimes omit intent — detect media goals from
-        # the text so the deterministic paths still engage.
-        if not intent and "watch" in goal.lower():
+        # the text so the deterministic paths still engage. "video"/"videos"
+        # ("open quantum videos", "star videos") is a watch request.
+        import re as _re0
+        if not intent and ("watch" in goal.lower()
+                           or _re0.search(r"\bvideos?\b", goal.lower())):
             intent = "watch_video"
         if not intent and any(
             w in goal.lower() for w in ("music", "listen", "play", "song")
@@ -216,7 +219,15 @@ class VisionExecuteTool(BaseTool):
                 goal, _re.I,
             )
             if m:
-                kwargs = {**kwargs, "artist": m.group(1).strip()}
+                cand = m.group(1).strip()
+                # "i want to listen music" / "play some music" carry no real
+                # artist — the captured word is a generic noun. Treat as empty
+                # so the profile-favorite fallback engages instead of
+                # searching YouTube for the literal word "music".
+                _GENERIC = {"music", "some music", "a song", "song", "songs",
+                            "tunes", "something", "anything", "stuff"}
+                if cand.lower() not in _GENERIC:
+                    kwargs = {**kwargs, "artist": cand}
         if intent:
             from bantz.core.profile import profile
             context = profile.get_relevant(
@@ -232,9 +243,21 @@ class VisionExecuteTool(BaseTool):
                 browser = context.get("browser", "firefox")
                 if context.get("song"):
                     query = f"{context['song']} {context['artist']}"
+                elif context.get("artist"):
+                    query = str(context["artist"])
                 else:
-                    query = str(kwargs.get("artist") or goal)
-                video_id = await _resolve_video_id(query)
+                    query = ""
+                if not query:
+                    # Generic "play music" and no favorite configured → just
+                    # open YT Music's home; don't search the literal word.
+                    context["open_home"] = True
+                    goal = (
+                        f"In {browser}, press ctrl+l, type {base} and press "
+                        f"Enter. Done when YouTube Music's home page is open."
+                    )
+                    video_id = None
+                else:
+                    video_id = await _resolve_video_id(query)
                 if video_id:
                     # Fully deterministic path — navigation needs no vision
                     # model at all (measured: the VLM typed the URL then
@@ -263,11 +286,19 @@ class VisionExecuteTool(BaseTool):
                 browser = context.get("browser") or "firefox"
                 context.setdefault("browser", browser)
                 context["service_url"] = "https://www.youtube.com"
-                m = _re.search(
-                    r"watch\s+(.{2,60}?)(?:\s+on youtube\b|\s+together\b|[.,!?]|$)",
-                    goal, _re.I,
-                )
-                query = (m.group(1).strip() if m else goal).strip()
+                # Extract the topic: drop the leading verb ("open/show/find/
+                # watch …") and the trailing "video(s)" noun, so both
+                # "watch quantum videos on youtube" and "open quantum videos"
+                # resolve the query "quantum".
+                q = _re.sub(
+                    r"(?i)\b(?:i (?:want|wanna|would like) to|let'?s|let us|"
+                    r"can we|wanna)\s+watch\b", " ", goal)
+                q = _re.sub(
+                    r"(?i)^\s*(?:open|show me|show|find|watch|pull up|put on|"
+                    r"play)\b", " ", q)
+                q = _re.sub(r"(?i)\bon youtube\b|\btogether\b", " ", q)
+                q = _re.sub(r"(?i)\bvideos?\b", " ", q)
+                query = _re.sub(r"\s+", " ", q).strip(" .,!?") or goal
                 context["query"] = query
                 video_id = await _resolve_video_id(query, music=False)
                 if video_id:
@@ -311,6 +342,26 @@ class VisionExecuteTool(BaseTool):
             focused = await executor.screen.focus_window(browser)
             log.info("pre-focus %s: %s", browser, "ok" if focused else
                      "not found — vision loop must open it")
+
+        # Scripted "just open YT Music" — generic request with no favorite.
+        # Launch the home page directly and return; no vision loop needed.
+        if context.get("open_home"):
+            import asyncio as _aio
+            import shutil as _shutil
+            base = context.get("service_url", "https://music.youtube.com")
+            browser_bin = _shutil.which(browser or "firefox") or "firefox"
+            await _aio.create_subprocess_exec(
+                browser_bin, base,
+                stdout=_aio.subprocess.DEVNULL, stderr=_aio.subprocess.DEVNULL,
+            )
+            log.info("scripted open-home via %s %s", browser_bin, base)
+            await _aio.sleep(1.0)
+            await executor.screen.focus_window(browser or "firefox")
+            return ToolResult(
+                True, "Opened YouTube Music. Tip: set a favorite artist with "
+                "`bantz --setup profile` so I can start a song straight away.",
+                data={"mode": "open_home", "url": base},
+            )
 
         # Scripted navigation for resolved songs: hand the URL to the
         # browser binary directly — no synthesized keystrokes (measured:

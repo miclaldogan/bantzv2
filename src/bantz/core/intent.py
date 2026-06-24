@@ -102,7 +102,7 @@ RULES:
 - ALWAYS pick a tool when the user wants something DONE. Only route to "chat" for greetings, casual chitchat, or pure opinions.
 - Factual questions about SPECIFIC current things (a price, a named entity's status, a schedule) → web_search.
 - "search for X", "find X online", "look up X", "ara", "bul" → web_search (quick lookup).
-- "research X", "deep dive into X", "investigate X", "araştır", "write a report on X" → web_research (slow, in-depth report). NOT web_search, NOT planner.
+- "research X", "i need research on X", "deep dive into X", "look into X (in depth)", "investigate X", "araştır", "write a report on X" → web_research (slow, in-depth report). NOT web_search, NOT planner.
 - "news about X", "latest on X", "what happened with X", "haberler", "gündem" → web_news.
 - "what's in the news", "today's headlines", "tech news", "what happened today" → news tool. ALWAYS news for headline/digest browsing — NEVER web_search, NEVER planner.
 - "summarize / rewrite / shorten / TL;DR this text: …" with the text pasted in the message → summarizer. The text is already provided: SINGLE tool call, NOT planner, NOT chat.
@@ -122,11 +122,11 @@ RULES:
 - "play/search/find/watch X on YouTube" or "listen to X on YT Music" → route="planner" (needs search + wait + click steps).
 - "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
 - ANY music-listening wish without "play" — "i want to listen (to) X", "put on some X", "can we hear X" → route="planner" too. NEVER web_search and NEVER news: music requests are ACTIONS to perform, not information lookups.
-- "search X, do research, give detailed summary" / "research X and write a report" → route="planner" (needs web_search + read_url + summarizer, possibly filesystem).
+- "research X and write a report", "research X and give a detailed summary", "deep dive into X and write it up" → web_research. The web_research tool ALREADY produces the full written report itself — do NOT send report/summary research to the planner.
 - Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
 - Literal bash commands (ls, df, top) → shell.
 - Multi-step with "then" / "and" / "after that" → route="planner".
-- Requests involving "research", "detailed summary", "write to file", or "in-depth analysis" → route="planner".
+- Route to planner ONLY when research must be COMBINED with a different action the report tool cannot do itself — e.g. "research X THEN email it to me", "research X and add it to my calendar", "research X then save it to ~/notes.md". A bare "research X" / "araştır" / "write me a report on X" is ALWAYS web_research, never planner.
 - "delegate this to researcher/developer/reviewer" or "have the researcher look into X" → delegate_task with the specified role.
 - "run workflow X", "execute my morning briefing", "list workflows" → run_workflow. If the user mentions a known workflow name, route to run_workflow action=run.
 - Do NOT hallucinate data — always route to the real tool.
@@ -624,11 +624,18 @@ _MUSIC_FAST = re.compile(
 )
 
 # Video-watching intent — same reasoning as _MUSIC_FAST.
+# Also covers the natural "open/show/find <topic> video(s)" phrasing and the
+# bare "<topic> videos" shorthand ("star videos", "quantum videos") — both
+# mean "find that on YouTube". The bare form requires a SINGLE leading topic
+# word so it can't swallow other-verb sentences like "delete my videos".
 _VIDEO_FAST = re.compile(
     r"(?i)"
     r"\b(?:let'?s|let us|i (?:want|wanna|would like) to|wanna|can we)\s+watch\b|"
     r"\bwatch\b.{1,50}\bon youtube\b|"
-    r"\bizleyelim\b|\bizlemek istiyorum\b"
+    r"\bizleyelim\b|\bizlemek istiyorum\b|"
+    r"^\s*(?:open|show(?: me)?|find|watch|pull up|put on|play)\s+[\w'/&. -]{1,40}\bvideos?\b[.!?]?\s*$|"
+    r"^\s*[\w'&-]{2,20}\s+videos?[.!?]?\s*$|"
+    r"\bvideo (?:aç|izle)\b"
 )
 
 
