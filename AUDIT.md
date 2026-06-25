@@ -55,12 +55,12 @@ Scorecard:
 - **Impact:** ChromaDB and the KG SQLite grow forever; retrieval quality and latency degrade with age; no backpressure.
 - **Fix:** After M2, add a drawer-count cap or age-based eviction; wire `invalidate()` into reflection for superseded facts. **Effort: ~1–2 d (depends on M2).**
 
-### M4 — `recall()` runs twice per tool turn — **P2, REPORTED**
+### M4 — `recall()` runs twice per tool turn — **P2, REPORTED** — ✅ FIXED (`f12b29a`)
 - **Evidence:** `omni_memory.recall()` is invoked in the chat/routing context **and again** inside `_finalize`/`_finalize_stream` (`brain.py:1285`, `brain.py:1299`), with no memoization.
 - **Impact:** Doubles memory-recall latency and token cost on every tool turn; two independent recalls can disagree (nondeterminism).
 - **Fix:** Cache the recall result on the turn (e.g. on the `BantzContext` or a per-turn attribute) and reuse in finalize. **Effort: ~1 h.**
 
-### M5 — Decay declared but never applied — **P1, VERIFIED**
+### M5 — Decay declared but never applied — **P1, VERIFIED** — ✅ FIXED (`924f942`, removed dead param; real decay deferred to M9 as a measured ablation)
 - **Evidence:** `bridge.py:124` constructor param `decay_half_life_days: float = 30.0`, assigned at `:130` `self._decay_half_life = ...`, and **never read again** (grep: only those two lines). KG `access_count` only ever increments (`bridge.py:419`); never decremented, never time-decayed.
 - **Impact:** No forgetting. Old + frequently-recalled facts dominate recall permanently; stale facts that were never `invalidate()`d are treated as current.
 - **Fix:** Either implement time-decay in the deep-probe / KG importance multiplier, or delete the dead parameter and stop advertising decay. **Effort: 30 min to remove; ~0.5 d to implement.**
@@ -110,7 +110,8 @@ Scorecard:
 - **Impact:** A runaway tool/plan or a deep research call has no global ceiling; on a memory-constrained box this stalls Ollama.
 - **Fix:** Add a per-turn token/step budget threaded through `brain.process()` (needed anyway for the closed-loop work). **Effort: ~1 d.**
 
-### S4 — Hallucination check skips the streaming and plan paths — **P1, REPORTED**
+### S4 — Hallucination check skips the streaming and plan paths — **P1, REPORTED** — ✅ FIXED (`47ae82d`)
+> Bonus bug found while fixing: `finalize()` logged with `result.tool`, but `ToolResult` has no `tool` field, so the existing guard **AttributeError'd exactly when a hallucination was detected** — fixed via `_tool_label()` in the same commit.
 - **Evidence:** `finalizer.hallucination_check` (`finalizer.py:397-451`) runs in `finalize()` but **not** in `finalize_stream()` (`:150-221`) nor `finalize_plan()` (`:254-335`).
 - **Impact:** Streamed responses (the common interactive path) and multi-step plan summaries are never checked for fabrication.
 - **Fix:** Accumulate streamed text and run the check post-stream with a trailing warning event; add to plan finalize. **Effort: ~0.5 d.**
@@ -148,7 +149,7 @@ Scorecard:
 - **Impact:** Malformed/hallucinated args reach `execute()` and surface as ad-hoc per-tool errors or `TypeError`s; nothing validates intent vs schema pre-call.
 - **Fix:** Add an optional `params_schema` to `BaseTool` and validate before dispatch; reject with a structured error the (future) loop can act on. **Effort: ~1 d.**
 
-### T2 — Silent ImportError swallowing hides unregistered tools — **P2, VERIFIED (pattern)**
+### T2 — Silent ImportError swallowing hides unregistered tools — **P2, VERIFIED (pattern)** — ✅ FIXED (`8aa0737`)
 - **Evidence:** `brain.py:129-185` wraps optional tool imports in `try/except (ImportError, ModuleNotFoundError): pass`. A tool with a missing dependency never registers; the only trace is a later "Tool not found".
 - **Impact:** A tool can silently vanish from the registry; hard to debug "tool does nothing".
 - **Fix:** Log a `warning` on swallowed import (keep the graceful-degrade behavior, just make it visible). **Effort: 15 min.**
@@ -158,7 +159,7 @@ Scorecard:
 - **Impact:** Dead scaffolding inflates the apparent tool surface; confuses maintenance.
 - **Fix:** Either wire them into the load block (if intended) or delete/quarantine. **Effort: ~0.5 d to triage.**
 
-### T4 — `core/router.py` is dead code — **P2, VERIFIED**
+### T4 — `core/router.py` is dead code — **P2, VERIFIED** — ✅ FIXED (`6ae276b`, deleted)
 - **Evidence:** Grep for importers → **none**. Superseded by `intent.cot_route`.
 - **Fix:** Delete. **Effort: 5 min.**
 
@@ -175,13 +176,13 @@ Scorecard:
 - **Impact:** No long-horizon task can span turns; "continue what we were doing" is unsupported.
 - **Fix:** Out of scope for the current research; note as future work.
 
-### P2 — Planner step count is prompt-capped, not code-capped — **P2, REPORTED**
+### P2 — Planner step count is prompt-capped, not code-capped — **P2, REPORTED** — ✅ FIXED (`c031e11`, `_MAX_PLAN_STEPS=8` backstop)
 - **Evidence:** `planner.py:242` "Maximum 4 steps" is prompt text only; validation (`planner.py:399-406`) drops unknown-tool steps but never truncates count. A model emitting 50 valid-tool steps gets 50 executed.
 - **Fix:** Hard `steps[:N]` cap after parse. **Effort: 15 min.**
 
-### P3 — Legacy `core/workflow.py` `WorkflowEngine` appears superseded — **P3, REPORTED**
-- **Evidence:** Regex-split conjunction engine; no live caller found in the brain dispatch path. Superseded by the LLM planner.
-- **Fix:** Confirm dead, then delete. **Effort: 15 min to confirm.**
+### P3 — Legacy `core/workflow.py` `WorkflowEngine` appears superseded — **P3, REPORTED** — ⏸ DEFERRED (correction)
+- **Evidence:** Regex-split conjunction engine; no live caller in the brain dispatch path. **Correction (2026-06-25):** it is *not* fully dead — `tests/core/test_brain_integrations.py` and `tests/agent/test_planner.py` still `patch("bantz.core.workflow.workflow_engine")` (4 sites). Deleting the module would break those `patch()` targets.
+- **Fix:** Deletion deferred — needs deliberate test surgery (remove/rewrite the `workflow_engine` mocks and the "planner takes priority over workflow_engine" assertion), not a cleanup-wave `git rm`. **Effort: ~0.5 d incl. test rewrite.**
 
 ---
 
@@ -203,8 +204,13 @@ Scorecard:
 3. ~~S1 — wire `requires_confirm` into the `brain.py:834` gate.~~ `33ccb8f`
 4. ~~S2 — call `is_destructive()` in the shell gate, independent of model `risk_level`.~~ `0b24686`
 
-**Wave 2 — observability & hygiene (≈1–1.5 days):**
-5. T2 — log swallowed tool imports (15 min). 6. M4 — memoize per-turn recall (1 h). 7. P2 — hard step cap (15 min). 8. T4/P3 — delete dead `router.py` / confirm-delete `workflow.py` (30 min). 9. M5 — implement or remove decay (0.5 d). 10. S4 — hallucination check on stream/plan (0.5 d).
+**Wave 2 — observability & hygiene — ✅ DONE (2026-06-25):**
+5. ~~T2 — log swallowed tool imports.~~ `8aa0737`
+6. ~~M4 — memoize per-turn recall.~~ `f12b29a`
+7. ~~P2 — hard step cap.~~ `c031e11`
+8. ~~T4 — delete dead `router.py`.~~ `6ae276b` — P3 (`workflow.py`) **deferred**: still referenced by tests (see P3).
+9. ~~M5 — remove dead decay param.~~ `924f942`
+10. ~~S4 — hallucination check on stream/plan (+ `result.tool` bonus bug).~~ `47ae82d`
 
 **Wave 3 — correctness & multi-user (≈3–4 days):**
 11. C2 — fix Telegram cross-user state leak (1–1.5 d). 12. S5 — account-identity verification (0.5 d). 13. M6 — wire `wake_up_context` + non-TTY onboarding (0.5 d). 14. M3 — real drawer eviction (1–2 d). 15. T1 — tool arg-schema validation (1 d). 16. M10 — isolated palace path for eval/CLI + `.drift-*` cleanup (0.5 d).
