@@ -831,7 +831,28 @@ class Brain:
                 return internal
             # dispatch_internal didn't handle it — fall through to registry
 
-        if risk == "destructive" and config.shell_confirm_destructive and not confirmed:
+        # ── Autonomy dial enforcement (audit S1) ─────────────────────────
+        # `requires_confirm` is set by intent.py from config.autonomy but was
+        # previously read nowhere, so autonomy=low/absolute had no effect.
+        # Honour the dial here while preserving the legacy default behaviour
+        # (confirm destructive only, gated by shell_confirm_destructive).
+        autonomy = (config.autonomy or "high").lower()
+        requires_confirm = plan.get("requires_confirm")
+        if requires_confirm is None:  # older verdict without the field
+            requires_confirm = risk == "destructive"
+
+        if autonomy == "absolute":
+            need_confirm = False                       # never confirm
+        elif autonomy == "low":
+            need_confirm = requires_confirm and not confirmed   # confirm everything
+        else:  # medium / high (default): destructive only, legacy toggle applies
+            need_confirm = (
+                risk == "destructive"
+                and config.shell_confirm_destructive
+                and not confirmed
+            )
+
+        if need_confirm:
             cmd_str = tool_args.get("command", tool_name)
             warn = (
                 f"⚠️  Destructive operation: [{tool_name}] `{cmd_str}`\n"
