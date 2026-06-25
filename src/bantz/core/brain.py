@@ -177,6 +177,10 @@ class Brain:
         self._turn_counter: int = 0
         self._context_turn: int = 0  # turn when context was last stored
         self._CONTEXT_TTL: int = 3   # expire after 3 turns of no related queries
+        # Per-turn memory-recall memo (audit M4): _finalize_stream is tried
+        # first and recalls, returns None for short output, then _finalize
+        # recalls again — same query, twice. Cache by en_input within a turn.
+        self._recall_cache: tuple[str, Any] | None = None
         # Screen vision context (#189+): VLM description of last screenshot
         self._last_screen_description: str = ""
         self._screen_description_turn: int = -1
@@ -586,6 +590,7 @@ class Brain:
 
         # Save user message ONCE — before any branching
         data_layer.conversations.add("user", user_input)
+        self._recall_cache = None  # new turn → invalidate memoized recall (M4)
 
         # Await pending VLM screen description (started after last screenshot).
         # User typically takes 2-5s to read the photo before typing — VLM usually done.
@@ -1294,10 +1299,25 @@ class Brain:
             log.error("investigate stream error: %s", exc)
             yield _BUTLER_LLM_ERROR
 
+    async def _recall_cached(self, en_input: str) -> Any:
+        """Per-turn memoized memory recall (audit M4).
+
+        ``_finalize_stream`` is attempted before ``_finalize`` on the tool
+        path; for short output the stream variant recalls, returns None, and
+        the non-stream variant then recalls the identical query again. Cache
+        the result for the duration of one turn so recall runs once.
+        """
+        from bantz.memory.omni_memory import omni_memory
+        cached = self._recall_cache
+        if cached is not None and cached[0] == en_input:
+            return cached[1]
+        recall = await omni_memory.recall(en_input)
+        self._recall_cache = (en_input, recall)
+        return recall
+
     async def _finalize(self, en_input: str, result: ToolResult, tc: dict) -> str:
         """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
-        from bantz.memory.omni_memory import omni_memory
-        recall = await omni_memory.recall(en_input)  # omni_memory now delegates to bridge
+        recall = await self._recall_cached(en_input)
         return await _finalize_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
@@ -1310,8 +1330,7 @@ class Brain:
         self, en_input: str, result: ToolResult, tc: dict,
     ) -> AsyncIterator[str] | None:
         """Delegate to core.finalizer module (#227, #211: use OmniMemory)."""
-        from bantz.memory.omni_memory import omni_memory
-        recall = await omni_memory.recall(en_input)  # omni_memory now delegates to bridge
+        recall = await self._recall_cached(en_input)
         return await _finalize_stream_fn(
             en_input, result, tc,
             style_hint=_style_hint(),
