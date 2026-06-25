@@ -573,14 +573,20 @@ async def _store_entities_to_graph(entities: list[dict]) -> int:
                 continue
 
             try:
+                # NOTE: mempalace KnowledgeGraph.add_triple takes `predicate`,
+                # not `relation`. The previous `relation=` kwarg raised
+                # TypeError on every call and was swallowed at debug level, so
+                # nightly entity extraction never reached the KG (audit M1).
                 kg.add_triple(
                     subject=value,
-                    relation=f"is_{label.lower()}",
+                    predicate=f"is_{label.lower()}",
                     obj=context or label,
                 )
                 stored += 1
             except Exception as exc:
-                log.debug("KG upsert failed for %s: %s", value, exc)
+                # warning, not debug: a signature drift here silently disables
+                # the entire nightly KG-learning step.
+                log.warning("KG upsert failed for %s: %s", value, exc)
 
         return stored
     except (ImportError, Exception) as exc:
