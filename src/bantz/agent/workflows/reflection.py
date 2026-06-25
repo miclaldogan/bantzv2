@@ -640,7 +640,9 @@ def _prune_old_messages(
 ) -> tuple[int, int]:
     """
     Delete raw messages older than keep_days, KEEPING distilled summaries.
-    Also cleans up orphaned vector embeddings (Recommendation #3).
+
+    Vector drawers live in ChromaDB and are NOT pruned here (audit M2/M3);
+    `vectors_deleted` is always 0 until real drawer eviction is implemented.
 
     Returns (messages_deleted, vectors_deleted).
     """
@@ -661,25 +663,20 @@ def _prune_old_messages(
     msg_ids = [r[0] if isinstance(r, (tuple, list)) else r["id"] for r in rows]
 
     if dry_run:
-        return len(msg_ids), len(msg_ids)  # estimate vectors = messages
+        return len(msg_ids), 0  # vectors not pruned here (see audit M2/M3)
 
     if not msg_ids:
         return 0, 0
 
-    # Delete vector embeddings FIRST (Rec #3: no ghost vectors)
+    # NOTE: there is no `message_vectors` SQLite table — message embeddings
+    # live in ChromaDB (MemPalace drawers). The old `DELETE FROM
+    # message_vectors` raised "no such table" on every run and was swallowed,
+    # so this never deleted anything and the count was always 0 (audit M2).
+    # Real ChromaDB drawer eviction is tracked separately (audit M3); until
+    # then drawers are intentionally retained and we report that honestly.
     vectors_deleted = 0
-    try:
-        placeholders = ",".join("?" * len(msg_ids))
-        with pool.connection(write=True) as conn:
-            cur = conn.execute(
-                f"DELETE FROM message_vectors WHERE message_id IN ({placeholders})",
-                msg_ids,
-            )
-            vectors_deleted = cur.rowcount
-    except Exception as exc:
-        log.debug("Vector pruning error: %s", exc)
 
-    # Then delete the messages
+    # Delete the raw messages (distilled summaries are preserved)
     messages_deleted = 0
     try:
         placeholders = ",".join("?" * len(msg_ids))
@@ -704,8 +701,9 @@ def _prune_old_messages(
     except Exception:
         pass
 
-    log.info("Pruned %d messages + %d vectors (older than %d days)",
-             messages_deleted, vectors_deleted, keep_days)
+    log.info("Pruned %d raw messages older than %d days "
+             "(ChromaDB drawers retained — see audit M3)",
+             messages_deleted, keep_days)
     return messages_deleted, vectors_deleted
 
 
