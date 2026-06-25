@@ -27,6 +27,13 @@ from bantz.agent.env_probe import env as _env_probe
 
 log = logging.getLogger("bantz.planner")
 
+# Hard backstop on plan length (audit P2). The prompt asks for <=4 steps, but
+# that is only a soft instruction — a small model can emit an arbitrarily long
+# valid-tool plan. This caps the *executed* step count so a runaway plan can't
+# fan out into dozens of sequential tool calls. Generous vs the prompt's 4 so
+# legitimate slightly-longer plans aren't truncated.
+_MAX_PLAN_STEPS = 8
+
 # ── System prompt — enforces 1920s Butler persona + valid JSON output ────────
 
 PLANNER_SYSTEM = """\
@@ -402,6 +409,11 @@ class PlannerAgent:
                 valid_steps.append(s)
             else:
                 log.warning("Planner dropped step %d: unknown tool '%s'", s.step, s.tool)
+
+        if len(valid_steps) > _MAX_PLAN_STEPS:
+            log.warning("Planner emitted %d steps; truncating to hard cap %d (audit P2)",
+                        len(valid_steps), _MAX_PLAN_STEPS)
+            valid_steps = valid_steps[:_MAX_PLAN_STEPS]
 
         return valid_steps
 
