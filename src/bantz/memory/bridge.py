@@ -121,13 +121,18 @@ class SpontaneousProbe:
         rate_every_n: int = 3,
         max_results: int = 3,
         min_similarity: float = 0.45,
-        decay_half_life_days: float = 30.0,
         dedup_ttl_seconds: float = 600.0,
     ) -> None:
+        # NOTE: a `decay_half_life_days` parameter used to live here, assigned
+        # to self._decay_half_life and then read NOWHERE — deep-probe results
+        # were never age-decayed despite advertising it (audit M5). Removed
+        # rather than silently implement: time-decay changes retrieval ranking
+        # and belongs in the measured memory work (audit M9), where decay-on
+        # vs decay-off is a retrieval-policy A/B, not a cleanup-wave behaviour
+        # change.
         self._rate_every_n = rate_every_n
         self._max_results = max_results
         self._min_similarity = min_similarity
-        self._decay_half_life = decay_half_life_days
         self._dedup_ttl = dedup_ttl_seconds
         self._call_counter: int = 0
         self._recently_used: dict[str, float] = {}  # drawer_id → mono time
