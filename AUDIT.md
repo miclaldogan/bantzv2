@@ -36,7 +36,7 @@ Scorecard:
 
 ## 1. Memory — the broken core (highest priority)
 
-### M1 — Nightly KG entity-write throws `TypeError` and is silently swallowed — **P0, BUG, VERIFIED**
+### M1 — Nightly KG entity-write throws `TypeError` and is silently swallowed — **P0, BUG, VERIFIED** — ✅ FIXED (`3774436`)
 - **Evidence:** `agent/workflows/reflection.py:576` calls
   ```python
   kg.add_triple(subject=value, relation=f"is_{label.lower()}", obj=context or label)
@@ -45,7 +45,7 @@ Scorecard:
 - **Impact:** The nightly reflection job's entire entity-extraction-into-KG step is a no-op. The knowledge graph **never** receives LLM-extracted entities. Every "the assistant learned X about you overnight" claim is false. Combined with M6, the KG is fed only by the brittle regex extractor in `bridge.py`.
 - **Fix:** Rename kwarg `relation=` → `predicate=` at `reflection.py:576-579`. Then **narrow the except** to log at `warning` (not `debug`) so future signature drift is visible. **Effort: 5 min + a smoke test that asserts `stored > 0`.**
 
-### M2 — Orphan-vector prune deletes from a non-existent table — **P0, BUG, VERIFIED**
+### M2 — Orphan-vector prune deletes from a non-existent table — **P0, BUG, VERIFIED** — ✅ FIXED (`a8e6a5f`; real drawer eviction still open as M3)
 - **Evidence:** `reflection.py:669` `DELETE FROM message_vectors WHERE message_id IN (...)`. Grep confirms **no `CREATE TABLE message_vectors` anywhere in `src/`** — message vectors live in ChromaDB, not SQLite. The statement raises (`no such table`), is caught at `:673`, and `vectors_deleted` is always `0`.
 - **Impact:** The advertised orphan-vector cleanup is fiction. ChromaDB drawers are **never pruned** → unbounded vector-store growth (see M3). The raw `messages` prune at `:682` *does* run, so the system deletes the raw text it does **not** use for retrieval while keeping the drawer copy it **does** use, forever.
 - **Fix:** Either (a) delete the phantom `message_vectors` block and implement real ChromaDB drawer pruning via the MemPalace API, or (b) if drawer pruning is out of scope now, remove the dead statement and log honestly that drawers are retained. **Effort: 15 min to remove; ~1 d to implement real drawer pruning.**
@@ -89,12 +89,12 @@ Scorecard:
 
 ## 2. Safety / autonomy — dead dials (high priority)
 
-### S1 — Autonomy dial (`requires_confirm`) is written and read nowhere — **P0, STUB, VERIFIED**
+### S1 — Autonomy dial (`requires_confirm`) is written and read nowhere — **P0, STUB, VERIFIED** — ✅ FIXED (`33ccb8f`)
 - **Evidence:** Set at `intent.py:391/393/395/397` based on `config.autonomy` (`low`→always confirm, `absolute`→never, default→`risk=="destructive"`). Grep for read-sites across `src/` → **only those 4 write-sites, zero reads.** The live confirmation gate (`brain.py:834`) derives its own condition from `risk == "destructive" and config.shell_confirm_destructive`, never consulting `requires_confirm`.
 - **Impact:** Setting **autonomy=low** ("confirm everything") has **no effect** — `safe`/`moderate` tools still execute unprompted. Setting **autonomy=absolute** also has no real effect. The dial is inert; the UI/Settings control is a placebo.
 - **Fix:** In `brain.process()` at the confirmation gate (`:834`), read `plan.get("requires_confirm")` and require confirmation when it's `True`, OR delete the dead field and the UI control. Prefer wiring it. **Effort: ~0.5 d incl. test.**
 
-### S2 — `shell.is_destructive()` is dead code; destructive gate is model-trusted — **P0, STUB, VERIFIED**
+### S2 — `shell.is_destructive()` is dead code; destructive gate is model-trusted — **P0, STUB, VERIFIED** — ✅ FIXED (`0b24686`)
 - **Evidence:** `shell.py:45` `def is_destructive` — grep shows **only the definition, zero callers.** `ShellTool.execute()` runs the command once it passes `is_blocked()` (`shell.py:73`); the only deterministic guard that actually runs is `is_blocked()` (fork-bomb/wget/curl), which is bypassable (first-word `shlex` only — `bash -c "rm -rf ~"` evades it) and over-broad (substring match false-positives on "curl"). Whether `rm -rf` prompts for confirmation depends entirely on whether the routing LLM tagged the call `risk_level="destructive"`.
 - **Impact:** A destructive shell command the model labels `"safe"` runs with no prompt. Safety is a function of an 8B/4B model's self-assessment, not a deterministic allow/deny list.
 - **Fix:** Call `is_destructive(cmd)` inside `ShellTool.execute()` (or in the brain gate) and force confirmation independent of the model's `risk_level`. Harden `is_destructive` against wrapped invocations (`bash -c`, `env`, pipes). **Effort: ~0.5 d.**
@@ -191,11 +191,11 @@ Scorecard:
 
 ## 7. Prioritized fix roadmap
 
-**Wave 1 — silent P0 fixes (≈1 day total, do first):**
-1. M1 — fix `add_triple(relation=` → `predicate=`, widen the except to `warning` (5 min).
-2. M2 — remove the phantom `message_vectors` delete; log drawer retention honestly (15 min).
-3. S1 — wire `requires_confirm` into the `brain.py:834` gate (or delete the dial) (0.5 d).
-4. S2 — call `is_destructive()` in the shell gate, independent of model `risk_level` (0.5 d).
+**Wave 1 — silent P0 fixes — ✅ DONE (2026-06-25):**
+1. ~~M1 — fix `add_triple(relation=` → `predicate=`, widen the except to `warning`.~~ `3774436`
+2. ~~M2 — remove the phantom `message_vectors` delete; log drawer retention honestly.~~ `a8e6a5f`
+3. ~~S1 — wire `requires_confirm` into the `brain.py:834` gate.~~ `33ccb8f`
+4. ~~S2 — call `is_destructive()` in the shell gate, independent of model `risk_level`.~~ `0b24686`
 
 **Wave 2 — observability & hygiene (≈1–1.5 days):**
 5. T2 — log swallowed tool imports (15 min). 6. M4 — memoize per-turn recall (1 h). 7. P2 — hard step cap (15 min). 8. T4/P3 — delete dead `router.py` / confirm-delete `workflow.py` (30 min). 9. M5 — implement or remove decay (0.5 d). 10. S4 — hallucination check on stream/plan (0.5 d).
