@@ -831,6 +831,19 @@ class Brain:
                 return internal
             # dispatch_internal didn't handle it — fall through to registry
 
+        # ── Deterministic destructive detection for shell (audit S2) ──────
+        # Don't trust the model's self-reported risk_level for shell commands:
+        # shell.is_destructive() is a deterministic allow/deny check that also
+        # sees through `bash -c`, `sudo`, pipes, and chaining. If it fires,
+        # promote risk to "destructive" so the gate below cannot be bypassed
+        # by the router mislabelling the call "safe".
+        if tool_name == "shell":
+            from bantz.tools.shell import is_destructive
+            if is_destructive(tool_args.get("command", "")):
+                if risk != "destructive":
+                    log.info("shell.is_destructive promoted risk safe/moderate → destructive")
+                risk = "destructive"
+
         # ── Autonomy dial enforcement (audit S1) ─────────────────────────
         # `requires_confirm` is set by intent.py from config.autonomy but was
         # previously read nowhere, so autonomy=low/absolute had no effect.

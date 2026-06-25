@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 from typing import Any
 
@@ -42,8 +43,53 @@ def _first_word(cmd: str) -> str:
         return cmd.split()[0] if cmd.split() else ""
 
 
+# Command separators (chaining / pipes / newlines) and wrapper programs that
+# carry the *real* command as a later argument.
+_CMD_SEPARATORS = re.compile(r"[;&|\n]+")
+_WRAPPERS: frozenset[str] = frozenset({
+    "sudo", "env", "nohup", "setsid", "time", "nice", "ionice",
+    "xargs", "watch", "bash", "sh", "zsh",
+})
+
+
+def _command_heads(cmd: str) -> set[str]:
+    """All plausible command-head words in ``cmd``, looking through shell
+    separators, wrapper programs, and ``-c`` payloads.
+
+    First-word-only matching (the old ``is_destructive``) was trivially
+    bypassed by ``bash -c "rm -rf ~"``, ``sudo rm ...``, ``foo && rm bar``,
+    or ``ls | xargs rm`` (audit S2). This walks all of those.
+    """
+    heads: set[str] = set()
+    for segment in _CMD_SEPARATORS.split(cmd):
+        seg = segment.strip()
+        if not seg:
+            continue
+        try:
+            parts = shlex.split(seg)
+        except ValueError:
+            parts = seg.split()
+        i = 0
+        while i < len(parts):
+            word = os.path.basename(parts[i])
+            heads.add(word)
+            if word in _WRAPPERS:
+                # `bash -c "<payload>"` / `sh -c "..."` — recurse into payload.
+                if word in {"bash", "sh", "zsh"}:
+                    for j in range(i + 1, len(parts)):
+                        if parts[j] == "-c" and j + 1 < len(parts):
+                            heads |= _command_heads(parts[j + 1])
+                            break
+                i += 1  # skip the wrapper, keep scanning for the real head
+                continue
+            break
+    return heads
+
+
 def is_destructive(cmd: str) -> bool:
-    return _first_word(cmd) in DESTRUCTIVE_COMMANDS
+    """Deterministic destructive-command detection. Looks through wrappers,
+    chaining, and quoted payloads — not just the first word."""
+    return bool(_command_heads(cmd) & DESTRUCTIVE_COMMANDS)
 
 
 def is_blocked(cmd: str) -> bool:
