@@ -109,6 +109,16 @@ def _verbosity() -> str:
         return "standard"
 
 
+def _tool_label(result: Any) -> str:
+    """Best-effort tool name for the hallucination log.
+
+    ToolResult has no ``tool`` field, so ``result.tool`` raised
+    AttributeError on the existing finalize() hallucination-log path — the
+    guard crashed precisely when it fired (audit S4). Access defensively.
+    """
+    return getattr(result, "tool", "") or getattr(result, "tool_name", "") or "tool"
+
+
 async def finalize(
     en_input: str,
     result: ToolResult,
@@ -185,7 +195,7 @@ async def finalize(
             tool_output=output[:2000],
             response=cleaned[:2000],
             confidence=confidence,
-            tool_used=result.tool,
+            tool_used=_tool_label(result),
         )
 
     return cleaned
@@ -246,6 +256,7 @@ async def finalize_stream(
     ]
 
     async def _stream() -> AsyncIterator[str]:
+        full_en = ""  # accumulate the raw English text for the post-stream check
         try:
             from bantz.llm.router import get_llm
             from bantz.i18n.bridge import bridge as _bridge
@@ -256,6 +267,7 @@ async def finalize_stream(
                 # instead of running serially after it. (#422)
                 buf = ""
                 async for token in llm.chat_stream(messages):
+                    full_en += token
                     buf += token
                     parts = _SENTENCE_END_RE.split(buf, maxsplit=1)
                     while len(parts) > 1:
@@ -269,7 +281,28 @@ async def finalize_stream(
                     yield await _bridge.to_turkish(buf.strip())
             else:
                 async for token in llm.chat_stream(messages):
+                    full_en += token
                     yield token
+
+            # Post-stream fabrication check (audit S4): streaming previously
+            # bypassed the guard finalize() runs. We can't redact mid-stream,
+            # but we can detect a likely-fabricated response after the fact,
+            # log it, and emit a trailing caveat so the user is warned.
+            try:
+                _checked, _conf = hallucination_check(full_en, output)
+                if _conf < 0.8:
+                    log_hallucination(
+                        user_input=en_input,
+                        tool_output=output[:2000],
+                        response=full_en[:2000],
+                        confidence=_conf,
+                        tool_used=_tool_label(result),
+                    )
+                    caveat = " ⚠ (Some details may be inaccurate; kindly verify, ma'am.)"
+                    yield (await _bridge.to_turkish(caveat)
+                           if _bridge.is_enabled() else caveat)
+            except Exception:
+                pass
         except Exception:
             yield strip_internal(output[:1500])
 
@@ -386,6 +419,18 @@ async def finalize_plan(
         # Strip outer quotation marks some models wrap their response in.
         if len(cleaned) > 2 and cleaned[0] in ('"', '“') and cleaned[-1] in ('"', '”'):
             cleaned = cleaned[1:-1].strip()
+        # Anti-hallucination guard (audit S4): the plan path previously skipped
+        # the fabrication check that finalize() runs. Ground truth = the tool
+        # facts the synthesis was built from.
+        cleaned, confidence = hallucination_check(cleaned, context_block)
+        if confidence < 0.8:
+            log_hallucination(
+                user_input=user_input,
+                tool_output=context_block[:2000],
+                response=cleaned[:2000],
+                confidence=confidence,
+                tool_used="planner",
+            )
         return cleaned
     except Exception:
         # Graceful fallback: return synthesis or first available output.
