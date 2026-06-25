@@ -7,6 +7,7 @@ location_handler.  See each module’s docstring for details.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 from typing import AsyncIterator, Callable, Optional
 
@@ -120,69 +121,49 @@ def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> Non
     _notif_mod.notify_toast(title, reason, toast_type)
 
 
+def _load_optional_tool(modname: str, reason: str = "") -> None:
+    """Import an optional tool module so it self-registers.
+
+    Logs a ``warning`` (not silence) when it can't load, so a tool vanishing
+    from the registry is visible at startup instead of only surfacing later as
+    an opaque "tool not found" at routing time (audit T2).
+    """
+    try:
+        importlib.import_module(modname)
+    except (ImportError, ModuleNotFoundError) as exc:
+        log.warning("Optional tool %r not registered (%s): %s",
+                    modname, reason or "optional dependency missing", exc)
+
+
 class Brain:
     def __init__(self) -> None:
         import bantz.tools.shell        # noqa: F401
         import bantz.tools.system       # noqa: F401
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
-        try:
-            import bantz.tools.news         # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass  # defusedxml may not be installed
+        _load_optional_tool("bantz.tools.news", "defusedxml")
         import bantz.tools.web_search   # noqa: F401
         import bantz.tools.web_reader   # noqa: F401
         import bantz.tools.gmail        # noqa: F401
         import bantz.tools.calendar     # noqa: F401
         import bantz.tools.classroom    # noqa: F401
         import bantz.tools.reminder     # noqa: F401
-        try:
-            import bantz.tools.document     # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass  # PDF/DOCX deps may not be installed
-        try:
-            import bantz.tools.accessibility  # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass  # AT-SPI2/gi deps may not be installed
+        _load_optional_tool("bantz.tools.document", "PDF/DOCX deps")
+        _load_optional_tool("bantz.tools.accessibility", "AT-SPI2/gi")
         # gui_action removed (#185) — superseded by visual_click
-        try:
-            import bantz.tools.visual_click  # noqa: F401  (#185)
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            # Without this the InputControlTool only registers as a side
-            # effect of a lazy import inside desktop/visual_click/browser —
-            # so the router advertised "input_control" but the registry
-            # never held it, and routing there failed ("unknown tool").
-            import bantz.tools.input_control  # noqa: F401  (#122)
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            import bantz.tools.browser_control  # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            import bantz.tools.screenshot_tool  # noqa: F401
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            import bantz.tools.desktop  # noqa: F401  (#322)
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            import bantz.tools.delegate_task  # noqa: F401  (#321)
-        except (ImportError, ModuleNotFoundError):
-            pass
-        try:
-            import bantz.tools.workflow_tool  # noqa: F401  (#323)
-        except (ImportError, ModuleNotFoundError):
-            pass
+        _load_optional_tool("bantz.tools.visual_click")  # (#185)
+        # input_control must be imported here explicitly (#122): otherwise it
+        # only registers as a side effect of a lazy import elsewhere, so the
+        # router advertised "input_control" but the registry never held it.
+        _load_optional_tool("bantz.tools.input_control")  # (#122)
+        _load_optional_tool("bantz.tools.browser_control")
+        _load_optional_tool("bantz.tools.screenshot_tool")
+        _load_optional_tool("bantz.tools.desktop")         # (#322)
+        _load_optional_tool("bantz.tools.delegate_task")   # (#321)
+        _load_optional_tool("bantz.tools.workflow_tool")   # (#323)
         import bantz.tools.summarizer    # noqa: F401  (Architect's Revision)
-        try:
-            import bantz.tools.screen_query_tool  # noqa: F401  (vision pipeline)
-            import bantz.tools.vision_execute     # noqa: F401  (vision pipeline)
-        except (ImportError, ModuleNotFoundError):
-            pass  # PIL / vision deps may not be installed
+        _load_optional_tool("bantz.tools.screen_query_tool", "PIL/vision deps")
+        _load_optional_tool("bantz.tools.vision_execute", "PIL/vision deps")
         self._memory_ready = False
         self._graph_ready = False
         # Session state: stores last tool results for contextual follow-ups
