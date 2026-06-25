@@ -80,6 +80,12 @@ Scorecard:
 - **Impact:** Lowercase / non-capitalized entity queries (common in Turkish and in casual typing) retrieve nothing from the graph — the graph silently contributes zero on a large class of queries.
 - **Fix:** Add lemma/lowercase seeding and entity-alias lookup. **Effort: ~0.5 d.** (Lower priority — graph value is questionable until M1 is fixed and the KG actually has content.)
 
+### M10 — The main palace vector segment is chronically re-quarantined on startup — **P1, BUG, VERIFIED (2026-06-25)**
+- **Evidence:** `~/.mempalace/palace/` holds **one** live segment (`7a82dfed-…`) and **20** quarantined copies of *the same segment id* named `…​.drift-<timestamp>`, dating back to 2026-05-21 at a roughly daily cadence (~3.5 MB orphaned, never cleaned up). MemPalace's loader logs `Quarantined corrupt HNSW segment … (sqlite … newer than HNSW and integrity check failed); renamed to ….drift-…` on process start and rebuilds the index.
+- **Impact:** The HNSW index for the primary palace segment fails its integrity check and is quarantined-and-rebuilt **on nearly every startup**, so (a) whatever vector memory lives in that segment is repeatedly unavailable until rebuild, and (b) `.drift-*` dirs accumulate without bound (no eviction). This compounds M2/M3 — the vector store both grows unbounded *and* chronically self-quarantines. The likely root cause is two processes opening the same ChromaDB concurrently (daemon + any second `bantz`/eval process), leaving the SQLite source newer than the HNSW index; the integrity check then trips on next open.
+- **Repro note:** running a second in-process `brain` while the daemon is live reliably produces one more quarantine (observed during the S1/S2 smoke test). **Do not run eval/test processes against the live `~/.mempalace`** — point them at a temp palace dir (this is also a reproducibility requirement for the memory eval, M9).
+- **Fix:** (1) single-writer discipline — eval/CLI processes must use an isolated palace path, not the daemon's; (2) add `.drift-*` cleanup/retention to the maintenance job; (3) investigate why the index is left stale (flush/close ordering on shutdown). **Effort: ~0.5 d for (1)+(2); index-flush root-cause ~1 d.**
+
 ### M9 — No memory-quality evaluation exists — **P1, REPORTED**
 - **Evidence:** Grep for `precision|recall@|mrr|ndcg|hit_rate|memory_quality` across `tests/` and `eval/` → **zero**. `tests/memory/*` assert truncation math and sort order only; `eval/` is routing/planner only.
 - **Impact:** There is no evidence recall surfaces correct memories; correctness is assumed. Any memory change is unmeasurable.
@@ -201,7 +207,7 @@ Scorecard:
 5. T2 — log swallowed tool imports (15 min). 6. M4 — memoize per-turn recall (1 h). 7. P2 — hard step cap (15 min). 8. T4/P3 — delete dead `router.py` / confirm-delete `workflow.py` (30 min). 9. M5 — implement or remove decay (0.5 d). 10. S4 — hallucination check on stream/plan (0.5 d).
 
 **Wave 3 — correctness & multi-user (≈3–4 days):**
-11. C2 — fix Telegram cross-user state leak (1–1.5 d). 12. S5 — account-identity verification (0.5 d). 13. M6 — wire `wake_up_context` + non-TTY onboarding (0.5 d). 14. M3 — real drawer eviction (1–2 d). 15. T1 — tool arg-schema validation (1 d).
+11. C2 — fix Telegram cross-user state leak (1–1.5 d). 12. S5 — account-identity verification (0.5 d). 13. M6 — wire `wake_up_context` + non-TTY onboarding (0.5 d). 14. M3 — real drawer eviction (1–2 d). 15. T1 — tool arg-schema validation (1 d). 16. M10 — isolated palace path for eval/CLI + `.drift-*` cleanup (0.5 d).
 
 **Wave 4 — research enablement (≈5–7 days, separate track):**
 16. M9 — planted-fact memory eval harness (2–3 d). 17. C1 — flag-gated `_execute_with_recovery` closed-loop (2.5–3 d, default off). 18. S3 — per-turn token/step budget (1 d, prerequisite for C1).
