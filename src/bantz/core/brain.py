@@ -173,6 +173,12 @@ class Brain:
         self._last_tool_output: str = ""     # last tool output snippet (generic)
         self._last_tool_name: str = ""       # which tool produced it
         self._feedback_ctx: str = ""  # one-shot RLHF context (#180)
+        # Which caller/session currently owns the follow-up state above. The
+        # Brain is a process-global singleton shared across the desktop and
+        # every Telegram user; when the active session changes we wipe the
+        # follow-up context so one caller's emails/output/screen can never be
+        # served as another's context (audit C2).
+        self._state_owner: str = ""
         # Turn-based TTL (#276): context expires after N process() calls
         self._turn_counter: int = 0
         self._context_turn: int = 0  # turn when context was last stored
@@ -296,6 +302,45 @@ class Brain:
             self._last_events = []
             self._last_tool_output = ""
             self._last_tool_name = ""
+
+    def _switch_session(self, session_key: str) -> None:
+        """Isolate per-conversation follow-up state across callers (audit C2).
+
+        When the active session changes, wipe the singleton's follow-up
+        context (last emails/events/tool output/screen/draft/recall) and drop
+        any in-flight VLM task, so one caller's data cannot surface as
+        another's context. Single-user desktop use keeps the same key every
+        turn, so nothing is cleared and behaviour is unchanged.
+
+        Residual: this is a clear-on-switch boundary safe for *serialized*
+        turns; truly concurrent interleaving of two sessions would still race
+        the shared active state — the complete fix is per-session state
+        objects (tracked as C2b). Also note conversation *history* in the data
+        layer is still a single shared session (C2b).
+        """
+        if session_key == self._state_owner:
+            return
+        if (self._last_messages or self._last_events
+                or self._last_tool_output or self._last_draft):
+            log.info("Session switch %r → %r: clearing follow-up context (C2)",
+                     self._state_owner, session_key)
+        self._last_messages = []
+        self._last_events = []
+        self._last_tool_output = ""
+        self._last_tool_name = ""
+        self._last_draft = None
+        self._last_screen_description = ""
+        self._recall_cache = None
+        # An in-flight VLM task belongs to the previous session's screenshot;
+        # cancel it so its description can't land in the new session's state.
+        task = self._pending_vlm_task
+        if task is not None:
+            try:
+                task.cancel()
+            except Exception:
+                pass
+            self._pending_vlm_task = None
+        self._state_owner = session_key
 
     def _store_tool_context(self, tool_name: str, result: ToolResult) -> None:
         """Persist tool results for contextual follow-ups (#276).
@@ -539,6 +584,7 @@ class Brain:
         confirmed: bool = False,
         is_remote: bool = False,
         progress_cb: Optional[Callable[[str], None]] = None,
+        session_key: str = "",
     ) -> BrainResult:
         """Process *user_input* through the full pipeline.
 
@@ -546,7 +592,14 @@ class Brain:
             progress_cb: Optional callback invoked at key pipeline stages
                          (translation, routing, …) so callers can display
                          progress to the user (#435).
+            session_key: Identifies the calling conversation (e.g. a Telegram
+                         user). Switching keys wipes the follow-up context so
+                         callers cannot see each other's data (audit C2).
+                         Empty string is the default single-user desktop
+                         session.
         """
+        # Isolate follow-up state per caller before anything reads it (C2).
+        self._switch_session(session_key)
         self._is_remote = is_remote
         self._ensure_memory()
         await self._ensure_graph()

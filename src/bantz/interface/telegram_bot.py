@@ -836,7 +836,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         async with _msg_lock:
             from bantz.core.brain import brain
             combined = f"[Image description: {description}]\n\nUser question: {caption}"
-            result = await brain.process(combined, is_remote=True)
+            result = await brain.process(combined, is_remote=True,
+                                         session_key=f"tg:{user_id}")
             response = result.response or description
 
         if not await _safe_edit(placeholder, response.strip()):
@@ -1056,7 +1057,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     async with _msg_lock:
         try:
             from bantz.core.brain import brain
-            result = await brain.process(user_text, is_remote=True)
+            result = await brain.process(user_text, is_remote=True,
+                                         session_key=f"tg:{user_id}")
 
             # ── Maintenance spam filter ──────────────────────────────
             if _is_maintenance_spam(result):
