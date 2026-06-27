@@ -242,6 +242,11 @@ async def _step_temp_cleanup(dry_run: bool) -> StepResult:
         (Path("/tmp"), "bantz*"),
         (Path("/tmp"), "bantz_*"),
         (Path.home() / ".cache" / "bantz" / "old-logs", "*"),
+        # Quarantined MemPalace HNSW segments (audit M10): the palace
+        # re-quarantines its index on most startups, leaving orphaned
+        # `<id>.drift-<timestamp>` dirs that accumulate without bound. Purge
+        # the ones older than the temp cutoff.
+        (Path.home() / ".mempalace" / "palace", "*.drift-*"),
     ]
 
     for base, pattern in targets:
