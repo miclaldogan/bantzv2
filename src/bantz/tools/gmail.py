@@ -933,7 +933,15 @@ class GmailTool(BaseTool):
 
     def _build_service(self, creds):
         from googleapiclient.discovery import build
-        return build("gmail", "v1", credentials=creds)
+        svc = build("gmail", "v1", credentials=creds)
+        try:
+            from bantz.tools._google_identity import check_once
+            check_once("gmail", svc,
+                       lambda s: s.users().getProfile(userId="me").execute()
+                       .get("emailAddress", ""))
+        except Exception:
+            pass
+        return svc
 
     def _count_sync(self, creds) -> int:
         svc = self._build_service(creds)

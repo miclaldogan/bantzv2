@@ -377,7 +377,16 @@ class CalendarTool(BaseTool):
 
     def _build_service(self, creds):
         from googleapiclient.discovery import build
-        return build("calendar", "v3", credentials=creds)
+        svc = build("calendar", "v3", credentials=creds)
+        try:
+            # The 'primary' calendar id is the authenticated account email.
+            from bantz.tools._google_identity import check_once
+            check_once("calendar", svc,
+                       lambda s: s.calendars().get(calendarId="primary").execute()
+                       .get("id", ""))
+        except Exception:
+            pass
+        return svc
 
     def _fetch_events_sync(
         self, creds, tz_name: str, days: int, anchor: str = "",

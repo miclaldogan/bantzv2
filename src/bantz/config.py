@@ -97,6 +97,12 @@ class Config(BaseSettings):
     # ── GPS Relay ─────────────────────────────────────────────────────────
     gps_relay_token: str = Field("", alias="BANTZ_GPS_RELAY_TOKEN")
 
+    # ── Google account ────────────────────────────────────────────────
+    # Optional expected Google account email. When set, gmail/calendar warn
+    # loudly if the authenticated token belongs to a different account —
+    # catches the silent "wrote OK but invisible" wrong-account bug (audit S5).
+    google_account: str = Field("", alias="BANTZ_GOOGLE_ACCOUNT")
+
     # ── MemPalace Memory ──────────────────────────────────────────────
     mempalace_enabled: bool = Field(True, alias="BANTZ_MEMPALACE_ENABLED")
     palace_path: str = Field("", alias="BANTZ_PALACE_PATH")
