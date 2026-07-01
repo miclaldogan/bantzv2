@@ -269,7 +269,11 @@ class TestHandleMessage:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            mock_brain.process.assert_awaited_once_with("Tell me a joke", is_remote=True)
+            # session_key isolates per-user follow-up state (audit C2):
+            # every Telegram call must carry tg:{user_id}.
+            mock_brain.process.assert_awaited_once_with(
+                "Tell me a joke", is_remote=True, session_key="tg:111"
+            )
         finally:
             mod._ALLOWED = original_allowed
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
-from typing import AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 from bantz.config import config
 from bantz.core.time_context import time_ctx
@@ -318,7 +318,10 @@ class Brain:
         objects (tracked as C2b). Also note conversation *history* in the data
         layer is still a single shared session (C2b).
         """
-        if session_key == self._state_owner:
+        # Read the owner defensively: tests build half-constructed Brains via
+        # Brain.__new__ (no __init__), and the default-session fast path must
+        # return before touching any other possibly-missing attribute.
+        if session_key == getattr(self, "_state_owner", ""):
             return
         if (self._last_messages or self._last_events
                 or self._last_tool_output or self._last_draft):
