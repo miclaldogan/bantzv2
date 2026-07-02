@@ -33,3 +33,6 @@ LICENSE.txt
 
 .ruff_cache/
 mempalace/
+
+# loop_eval run-queue lock (#509) — runtime state, never committed
+eval/loop_eval/.run.lock
