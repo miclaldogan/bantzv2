@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
-from typing import AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 from bantz.config import config
 from bantz.core.time_context import time_ctx

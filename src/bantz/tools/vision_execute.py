@@ -375,7 +375,7 @@ class VisionExecuteTool(BaseTool):
             url = (f"{context.get('service_url', 'https://music.youtube.com')}"
                    f"/watch?v={context['video_id']}")
             browser_bin = _shutil.which(browser or "firefox") or "firefox"
-            proc = await _aio.create_subprocess_exec(
+            await _aio.create_subprocess_exec(
                 browser_bin, url,
                 stdout=_aio.subprocess.DEVNULL,
                 stderr=_aio.subprocess.DEVNULL,

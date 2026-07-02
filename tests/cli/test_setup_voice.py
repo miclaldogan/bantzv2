@@ -265,6 +265,10 @@ class TestSetupVoiceEnvWriting:
         # Unrelated keys should be preserved
         assert "SOME_OTHER_KEY=keep" in text
 
+    @pytest.mark.skipif(
+        os.name != "posix",
+        reason="POSIX permission bits are not represented on Windows",
+    )
     def test_env_file_permissions_are_0600(self, tmp_path):
         self._run_setup_voice(tmp_path)
         env_path = tmp_path / ".env"

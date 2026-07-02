@@ -107,11 +107,14 @@ class TestIntervention:
 class TestInterventionLog:
     def setup_method(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()  # Windows: an open handle blocks SQLite + unlink
         self.log = InterventionLog()
         self.log.init(self.tmp.name)
 
     def teardown_method(self):
         self.log.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()  # release pooled connections so Windows can unlink
         Path(self.tmp.name).unlink(missing_ok=True)
 
     def test_record_and_total(self):
@@ -205,11 +208,14 @@ class TestInterventionLog:
 class TestInterventionQueue:
     def setup_method(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()  # Windows: an open handle blocks SQLite + unlink
         self.q = InterventionQueue()
         self.q.init(self.tmp.name, rate_limit=3, default_ttl=20.0)
 
     def teardown_method(self):
         self.q.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()  # release pooled connections so Windows can unlink
         Path(self.tmp.name).unlink(missing_ok=True)
 
     def _make_iv(self, **kw):
@@ -475,11 +481,14 @@ class TestInterventionBuilders:
 class TestAutoDismiss:
     def setup_method(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()  # Windows: an open handle blocks SQLite + unlink
         self.q = InterventionQueue()
         self.q.init(self.tmp.name, rate_limit=10, default_ttl=0.05)
 
     def teardown_method(self):
         self.q.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()  # release pooled connections so Windows can unlink
         Path(self.tmp.name).unlink(missing_ok=True)
 
     def test_auto_dismiss_expired_active(self):
@@ -557,11 +566,14 @@ class TestExplainability:
 class TestFocusMode:
     def setup_method(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()  # Windows: an open handle blocks SQLite + unlink
         self.q = InterventionQueue()
         self.q.init(self.tmp.name, rate_limit=10, default_ttl=60.0)
 
     def teardown_method(self):
         self.q.close()
+        from bantz.data.connection_pool import SQLitePool
+        SQLitePool.reset()  # release pooled connections so Windows can unlink
         Path(self.tmp.name).unlink(missing_ok=True)
 
     def test_focus_blocks_low_medium(self):

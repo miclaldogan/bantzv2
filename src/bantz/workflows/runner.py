@@ -50,7 +50,7 @@ class WorkflowRunner:
         inputs: dict[str, Any] | None = None,
     ) -> WorkflowResult:
         """Execute all steps in order and return the result."""
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         ctx = self._build_context(workflow, inputs or {})
         results: list[StepResult] = []
         completed: set[str] = set()
@@ -114,7 +114,7 @@ class WorkflowRunner:
                 success=False,
                 steps=results,
                 error=f"Workflow timed out after {workflow.timeout_seconds}s",
-                total_duration_ms=(time.monotonic() - t0) * 1000,
+                total_duration_ms=(time.perf_counter() - t0) * 1000,
                 variables=ctx.get("variables", {}),
             )
         except WorkflowError as exc:
@@ -123,7 +123,7 @@ class WorkflowRunner:
                 success=False,
                 steps=results,
                 error=str(exc),
-                total_duration_ms=(time.monotonic() - t0) * 1000,
+                total_duration_ms=(time.perf_counter() - t0) * 1000,
                 variables=ctx.get("variables", {}),
             )
 
@@ -139,7 +139,7 @@ class WorkflowRunner:
             success=True,
             steps=results,
             final_output=final_output,
-            total_duration_ms=(time.monotonic() - t0) * 1000,
+            total_duration_ms=(time.perf_counter() - t0) * 1000,
             variables=ctx.get("variables", {}),
         )
 
@@ -160,11 +160,11 @@ class WorkflowRunner:
                     step.name, attempt + 1, attempts,
                 )
 
-            t0 = time.monotonic()
+            t0 = time.perf_counter()
             try:
                 async with asyncio.timeout(step.timeout_seconds):
                     sr = await self._dispatch_step(step, ctx)
-                    sr.duration_ms = (time.monotonic() - t0) * 1000
+                    sr.duration_ms = (time.perf_counter() - t0) * 1000
                     if sr.success:
                         return sr
                     last_error = sr.error
@@ -175,7 +175,7 @@ class WorkflowRunner:
                 last_error = str(exc)
                 log.warning("Step '%s' failed: %s", step.name, exc)
 
-        duration = (time.monotonic() - t0) * 1000
+        duration = (time.perf_counter() - t0) * 1000
         return StepResult(
             step_name=step.name,
             success=False,

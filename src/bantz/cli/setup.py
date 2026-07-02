@@ -158,7 +158,8 @@ def _setup_telegram() -> None:
 
     import os
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    if hasattr(os, "fchmod"):  # unavailable on Windows
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"\n✅ Token saved: {env_path}")
@@ -184,7 +185,8 @@ def _write_env(updates: dict[str, str], *, prefix_strip: list[str] | None = None
         lines.append(f"{k}={v}")
     env_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    if hasattr(os, "fchmod"):  # unavailable on Windows
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"\n   Saved to: {env_path}")
@@ -400,7 +402,8 @@ def _setup_voice() -> None:
         lines.append("BANTZ_WAKE_WORD_ENABLED=true")
 
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    if hasattr(os, "fchmod"):  # unavailable on Windows
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"  ✅ Saved: {env_path}")
@@ -676,7 +679,8 @@ def _write_location_to_env(city: str, lat: float, lon: float) -> None:
 
     import os
     fd = os.open(str(env_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    if hasattr(os, "fchmod"):  # unavailable on Windows
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -818,7 +822,8 @@ def _setup_schedule() -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     content = json.dumps(data, ensure_ascii=False, indent=2)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    if hasattr(os, "fchmod"):  # unavailable on Windows
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"\n✅ Schedule saved: {path}")

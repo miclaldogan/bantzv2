@@ -118,7 +118,8 @@ class TokenStore:
 
         # Secure: create with 0o600 (owner read/write only) to avoid permission race condition
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):  # unavailable on Windows
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(creds.to_json())
 

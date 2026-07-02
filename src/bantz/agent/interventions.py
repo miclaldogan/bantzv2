@@ -171,7 +171,7 @@ class InterventionLog:
         from bantz.data.connection_pool import get_pool
         with get_pool().connection() as conn:
             cur = conn.execute(
-                "SELECT * FROM intervention_log ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM intervention_log ORDER BY created_at DESC, id DESC LIMIT ?",
                 (limit,),
             )
             cols = [d[0] for d in cur.description]
