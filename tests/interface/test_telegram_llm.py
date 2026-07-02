@@ -269,7 +269,9 @@ class TestHandleMessage:
                 with patch.dict("sys.modules", {"bantz.core.brain": MagicMock(brain=mock_brain)}):
                     await mod.handle_message(update, ctx)
 
-            mock_brain.process.assert_awaited_once_with("Tell me a joke", is_remote=True)
+            mock_brain.process.assert_awaited_once_with(
+                "Tell me a joke", is_remote=True, session_key="tg:111"
+            )
         finally:
             mod._ALLOWED = original_allowed
 

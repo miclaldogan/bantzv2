@@ -555,14 +555,11 @@ class TestPruneOldMessages:
 
         msgs_deleted, vecs_deleted = _prune_old_messages(keep_days=30)
         assert msgs_deleted == 2
-        assert vecs_deleted == 2
+        # Vector drawers live in ChromaDB and are intentionally NOT pruned
+        # here (audit M2/M3) — the reported count is always 0.
+        assert vecs_deleted == 0
 
-        # Verify vectors are actually gone
         with pool.connection() as conn:
-            remaining = conn.execute(
-                "SELECT COUNT(*) FROM message_vectors WHERE message_id IN (100, 101)"
-            ).fetchone()[0]
-            assert remaining == 0
 
             # Distillation should STILL exist (we keep summaries)
             dist = conn.execute(

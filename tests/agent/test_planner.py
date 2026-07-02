@@ -568,6 +568,8 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._state_owner = ""
+            brain._recall_cache = None
             brain._last_screen_description = ""
             brain._screen_description_turn = -1
             brain._pending_vlm_task = None
@@ -618,6 +620,8 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._state_owner = ""
+            brain._recall_cache = None
             brain._last_screen_description = ""
             brain._screen_description_turn = -1
             brain._pending_vlm_task = None
@@ -689,6 +693,8 @@ class TestBrainPlannerIntegration:
             brain._turn_counter = 0
             brain._context_turn = 0
             brain._CONTEXT_TTL = 3
+            brain._state_owner = ""
+            brain._recall_cache = None
             brain._last_screen_description = ""
             brain._screen_description_turn = -1
             brain._pending_vlm_task = None
