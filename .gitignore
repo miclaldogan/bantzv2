@@ -36,3 +36,7 @@ mempalace/
 
 # loop_eval run-queue lock (#509) — runtime state, never committed
 eval/loop_eval/.run.lock
+
+# loop_eval batch outputs (#510/#511) — data, not source
+eval/loop_eval/results/
+eval/loop_eval/manifests/

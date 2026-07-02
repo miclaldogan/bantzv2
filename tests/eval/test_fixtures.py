@@ -166,6 +166,10 @@ def test_from_contract_maps_failure_classes():
 @pytest.mark.asyncio
 async def test_registry_swap_is_complete_and_restorable():
     """Acceptance: no fixture task can reach a real gmail/calendar/shell."""
+    # install() itself imports bantz.core.brain (real-tool registration) so
+    # the swap is import-order independent; do it first here so our fake
+    # "real" tool below isn't clobbered by that side effect.
+    import bantz.core.brain  # noqa: F401
     from bantz.tools import registry
 
     # Simulate a real tool being registered (as the daemon would).
