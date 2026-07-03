@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, CornerDownLeft } from "lucide-react";
+import { Send, CornerDownLeft, Loader2, CheckCircle2, XCircle, Ban } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
+import type { ResearchProgress } from "../store/useAppStore";
 import { PageTitle, PanelHeader, fmtTime } from "../components/primitives";
 import { SlashMenu } from "../components/SlashMenu";
 import { DoctorModal } from "../components/DoctorModal";
@@ -12,10 +13,74 @@ interface ChatPageProps {
   onSend: (text: string) => void;
 }
 
+// Compact deep-research progress indicator (#490). Replaces the old raw ⏳
+// text that used to interleave with the chat transcript.
+const STAGE_LABEL: Record<string, string> = {
+  searching: "SEARCHING",
+  working:   "RESEARCHING",
+  done:      "COMPLETE",
+  cancelled: "CANCELLED",
+};
+
+function ResearchProgressCard({ research }: { research: ResearchProgress }) {
+  const wsSend      = useAppStore((s) => s.wsSend);
+  const setResearch = useAppStore((s) => s.setResearch);
+  const { stage, detail, elapsed, state } = research;
+  const label = STAGE_LABEL[stage] ?? STAGE_LABEL[state] ?? "RESEARCHING";
+  const accent =
+    state === "cancelled" ? "text-obsidian-200 border-obsidian-500"
+    : state === "done"    ? "text-gold-400 border-gold-500/60"
+    :                       "text-ember-400 border-ember-500/60";
+
+  // #491: the backend cancel path already exists (WS "cancel_research"); this
+  // is the missing UI trigger. The run only polls its cancel flag every ~30s,
+  // so reflect the request immediately and let the indicator self-clear.
+  function cancel() {
+    wsSend?.({ type: "cancel_research" });
+    setResearch({ stage: "cancelled", detail: "Cancelling…", elapsed, state: "cancelled" });
+    setTimeout(() => setResearch(null), 4000);
+  }
+
+  return (
+    <div className="grid grid-cols-[88px_1fr] gap-4">
+      <div className="pt-1 font-terminal text-[10px] tracking-widest text-ember-500">
+        RESEARCH
+      </div>
+      <div className={`flex items-center gap-3 border-l-2 ${accent} bg-obsidian-800/50 px-3 py-2`}>
+        {state === "running" && <Loader2 size={13} strokeWidth={1.75} className="animate-spin shrink-0" />}
+        {state === "done"     && <CheckCircle2 size={13} strokeWidth={1.75} className="shrink-0" />}
+        {state === "cancelled"&& <XCircle size={13} strokeWidth={1.75} className="shrink-0" />}
+        <span className="font-terminal text-[10px] font-bold tracking-widest shrink-0">
+          {label}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-terminal text-[13px] leading-relaxed text-fg-secondary">
+          {detail}
+        </span>
+        {elapsed > 0 && (
+          <span className="shrink-0 font-terminal text-[10px] tabular-nums text-obsidian-200">
+            {elapsed}s
+          </span>
+        )}
+        {state === "running" && wsSend && (
+          <button
+            type="button"
+            onClick={cancel}
+            className="flex shrink-0 items-center gap-1 border border-obsidian-500 px-1.5 py-0.5 font-ui text-[9px] font-bold uppercase tracking-widest text-obsidian-200 transition-colors duration-150 ease-bantz hover:border-ember-500 hover:text-ember-400"
+            aria-label="Cancel research"
+          >
+            <Ban size={10} strokeWidth={1.75} /> Cancel
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
   const chat          = useAppStore((s) => s.chat);
   const pushChat      = useAppStore((s) => s.pushChat);
   const streamingText = useAppStore((s) => s.streamingText);
+  const research      = useAppStore((s) => s.research);
   const [draft, setDraft] = useState("");
   const [modal, setModal] = useState<"doctor" | "setup" | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -23,10 +88,10 @@ export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
   // Show slash menu when draft starts with "/" and has no space yet.
   const showSlashMenu = draft.startsWith("/") && !draft.includes(" ");
 
-  // Auto-scroll on new messages and on each streaming token.
+  // Auto-scroll on new messages, streaming tokens, and research progress.
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [chat.length, streamingText]);
+  }, [chat.length, streamingText, research]);
 
   function submit() {
     const v = draft.trim();
@@ -124,6 +189,9 @@ export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
                 </div>
               </div>
             )}
+
+            {/* Deep-research progress — structured indicator, not raw text (#490) */}
+            {research && <ResearchProgressCard research={research} />}
           </div>
 
           {/* Input bar */}

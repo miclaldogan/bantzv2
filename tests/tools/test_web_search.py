@@ -129,3 +129,48 @@ class TestWebResearchTool:
         assert result.success is True
         assert result.output == "REPORT"
         assert result.data["topic"] == "quantum computing"
+
+    def test_research_emits_structured_progress_not_chat_tokens(self):
+        """web_research streams structured research_progress events (#490),
+        never raw chat_token text, so the UI can render a progress widget."""
+        events: list[tuple[str, dict]] = []
+        with patch(
+            "bantz.tools.web_search.execute_web_research", return_value="REPORT"
+        ), patch(
+            "bantz.tools.web_search.bus.emit_threadsafe",
+            side_effect=lambda name, **kw: events.append((name, kw)),
+        ):
+            _run(WebResearchTool().execute(topic="tea"))
+
+        names = [n for n, _ in events]
+        # A fast (mocked) run emits exactly a start + a terminal event…
+        assert names == ["research_progress", "research_progress"]
+        # …and never the old noisy chat_token path.
+        assert "chat_token" not in names
+
+        start = events[0][1]
+        assert start["stage"] == "searching"
+        assert start["state"] == "running"
+        assert "tea" in start["detail"]
+
+        done = events[-1][1]
+        assert done["stage"] == "done"
+        assert done["state"] == "done"
+        assert done["elapsed"] >= 0
+
+    def test_emit_research_progress_payload_shape(self):
+        from bantz.tools.web_search import _emit_research_progress
+
+        events: list[tuple[str, dict]] = []
+        with patch(
+            "bantz.tools.web_search.bus.emit_threadsafe",
+            side_effect=lambda name, **kw: events.append((name, kw)),
+        ):
+            _emit_research_progress(
+                "cancelled", "Research cancelled.", elapsed=12, state="cancelled"
+            )
+        assert events == [(
+            "research_progress",
+            {"stage": "cancelled", "detail": "Research cancelled.",
+             "elapsed": 12, "state": "cancelled"},
+        )]

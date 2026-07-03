@@ -51,16 +51,35 @@ def _silence_bantz_web_git() -> None:
 DEFAULT_RESEARCH_RESULTS = 15
 
 
-def _emit_progress(message: str) -> None:
-    """Stream a research progress line to the Broadcast Channel (chat stream).
+def _emit_research_progress(
+    stage: str,
+    detail: str,
+    *,
+    elapsed: int = 0,
+    state: str = "running",
+) -> None:
+    """Emit a *structured* deep-research progress update (#490).
 
-    ws_server bridges the "chat_token" bus event to a {"type":"token"} frame.
+    ws_server bridges the "research_progress" bus event to a
+    ``{"type": "research_progress", stage, detail, elapsed, state}`` WS frame,
+    which the Broadcast Channel renders as a compact labeled step/elapsed
+    indicator instead of interleaving raw ``⏳`` text with chat tokens.
+
+    ``state`` is ``"running" | "done" | "cancelled"``. ``detail`` doubles as a
+    readable one-liner and is echoed to the log so non-UI clients
+    (terminal/journald) still get legible progress.
     """
     try:
-        bus.emit_threadsafe("chat_token", token=f"\n⏳ {message}")
+        bus.emit_threadsafe(
+            "research_progress",
+            stage=stage,
+            detail=detail,
+            elapsed=elapsed,
+            state=state,
+        )
     except Exception:
         pass
-    log.info("[web_research] %s", message)
+    log.info("[web_research] %s: %s (%ss, %s)", stage, detail, elapsed, state)
 
 
 # ── wrapped functions ───────────────────────────────────────────────────────
@@ -168,24 +187,33 @@ class WebResearchTool(BaseTool):
         self._research_cancelled.clear()
         fut = asyncio.ensure_future(asyncio.to_thread(execute_web_research, topic))
         start = time.time()
-        _emit_progress(f"Researching: {topic} — expanding query & searching…")
+        _emit_research_progress(
+            "searching", f"Researching “{topic}” — expanding query & searching…",
+        )
         try:
             while True:
                 try:
                     report = await asyncio.wait_for(asyncio.shield(fut), timeout=30)
                     break
                 except asyncio.TimeoutError:
+                    elapsed = int(time.time() - start)
                     if self._research_cancelled.is_set():
-                        _emit_progress("Research cancelled.")
+                        _emit_research_progress(
+                            "cancelled", "Research cancelled.",
+                            elapsed=elapsed, state="cancelled",
+                        )
                         # The worker thread can't be force-killed; it finishes
                         # in the background but we stop waiting/reporting.
                         return ToolResult(success=False, output="",
                                           error="Research cancelled by user.")
-                    elapsed = int(time.time() - start)
-                    _emit_progress(f"still working on '{topic}' — {elapsed}s elapsed…")
+                    _emit_research_progress(
+                        "working", f"Still working on “{topic}”…", elapsed=elapsed,
+                    )
         except Exception as exc:
             return ToolResult(success=False, output="", error=f"web research failed: {exc}")
-        _emit_progress("Writing report… done.")
+        _emit_research_progress(
+            "done", "Report ready.", elapsed=int(time.time() - start), state="done",
+        )
         return ToolResult(success=True, output=report, data={"topic": topic})
 
 

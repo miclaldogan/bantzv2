@@ -71,6 +71,16 @@ export interface Anomaly {
   timestamp: number;
 }
 
+// Live deep-research (web_research) progress, pushed as structured
+// "research_progress" frames (#490). Null when no run is active; the terminal
+// states ("done"/"cancelled") clear it shortly after arriving.
+export interface ResearchProgress {
+  stage: string;   // "searching" | "working" | "done" | "cancelled"
+  detail: string;  // readable one-liner
+  elapsed: number; // seconds since the run started
+  state: "running" | "done" | "cancelled";
+}
+
 export type ServiceStatus = "online" | "degraded" | "offline";
 
 export interface ServiceItem {
@@ -113,6 +123,7 @@ interface AppState {
   activePage: string;
   services: ServiceItem[];
   configValues: ConfigValues | null;
+  research: ResearchProgress | null;
   wsSend: ((msg: Record<string, unknown>) => boolean) | null;
 
   pushChat: (turn: Omit<ChatTurn, "id" | "ts"> & Partial<Pick<ChatTurn, "ts">>) => void;
@@ -129,6 +140,7 @@ interface AppState {
   setActivePage: (page: string) => void;
   setServices: (services: ServiceItem[]) => void;
   setConfigValues: (cv: ConfigValues) => void;
+  setResearch: (progress: ResearchProgress | null) => void;
   setWsSend: (fn: ((msg: Record<string, unknown>) => boolean) | null) => void;
 }
 
@@ -258,6 +270,7 @@ export const useAppStore = create<AppState>((set) => ({
   activePage:   "chat",
   services:     SEED_SERVICES,
   configValues: null,
+  research:     null,
   wsSend:       null,
 
   pushChat: (turn) =>
@@ -337,6 +350,8 @@ export const useAppStore = create<AppState>((set) => ({
   setServices: (services) => set({ services }),
 
   setConfigValues: (cv) => set({ configValues: cv }),
+
+  setResearch: (progress) => set({ research: progress }),
 
   setWsSend: (fn) => set({ wsSend: fn }),
 }));

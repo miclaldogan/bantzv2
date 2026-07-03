@@ -155,6 +155,7 @@ export default function App() {
   const setServices      = useAppStore((s) => s.setServices);
   const setConfigValues  = useAppStore((s) => s.setConfigValues);
   const setAnomalies     = useAppStore((s) => s.setAnomalies);
+  const setResearch      = useAppStore((s) => s.setResearch);
   const setWsSend        = useAppStore((s) => s.setWsSend);
   const alertCount       = useAppStore((s) => s.anomalies.length);
 
@@ -270,12 +271,31 @@ export default function App() {
           break;
         }
 
+        case "research_progress": {
+          const r = d as {
+            stage?: string; detail?: string; elapsed?: number; state?: string;
+          };
+          const state =
+            r.state === "done" || r.state === "cancelled" ? r.state : "running";
+          setResearch({
+            stage:   String(r.stage ?? ""),
+            detail:  String(r.detail ?? ""),
+            elapsed: Number(r.elapsed ?? 0),
+            state,
+          });
+          // Leave the terminal state visible briefly, then clear the indicator.
+          if (state !== "running") {
+            setTimeout(() => setResearch(null), 4000);
+          }
+          break;
+        }
+
         default:
           break;
       }
     },
     [pushChat, pushVital, setStreamingText, pushLog, pushAlert,
-     setTasks, setServices, setConfigValues, setAnomalies],
+     setTasks, setServices, setConfigValues, setAnomalies, setResearch],
   );
 
   const { status, attempts, send } = useWebSocket({
