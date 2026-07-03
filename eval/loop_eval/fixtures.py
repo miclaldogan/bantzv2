@@ -509,7 +509,15 @@ class FixtureWorld:
 
     def install(self) -> "FixtureWorld":
         """Swap the global registry to fixtures ONLY (complete replacement:
-        a fixture task cannot reach a real gmail/calendar/shell)."""
+        a fixture task cannot reach a real gmail/calendar/shell).
+
+        Order-independent on purpose: the Brain registers the REAL tools as
+        a side effect of importing ``bantz.core.brain`` (its __init__ runs
+        at module import). If fixtures were installed before that import,
+        the real tools would silently clobber them by name. Trigger the
+        real registration NOW, then swap — fixtures win regardless of the
+        harness's import order."""
+        import bantz.core.brain  # noqa: F401 — side effect: real tools register
         from bantz.tools import registry
         self._saved_registry = dict(registry._tools)
         registry._tools.clear()
