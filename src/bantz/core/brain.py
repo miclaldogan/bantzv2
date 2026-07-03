@@ -347,6 +347,25 @@ class Brain:
         "calendar", "event", "meeting", "schedule", "appointment",
         "today", "tomorrow", "week", "upcoming",
     })
+    # Terse follow-up markers: short, context-dependent replies right after a
+    # tool turn ("u sure?", "from medium daily?", "which one?") that carry no
+    # topic keyword but are really about the previous tool's result (#495).
+    _FOLLOWUP_MARKERS = frozenset({
+        "u sure", "you sure", "are you sure", "sure?", "really", "which",
+        "from ", "filter", "only ", "just ", "sender", "what about",
+        "how about", "the first", "the second", "the third", "the last",
+        "that one", "the one",
+    })
+
+    def _is_tool_followup(self, lower: str) -> bool:
+        """A terse, context-dependent follow-up about the previous tool turn —
+        anaphora ('it', 'that', 'again') or a short clarifier ('u sure?',
+        'from medium daily?', 'which one?'). Keeps prior-tool context alive
+        across replies that carry no topic keyword, so the router re-routes to
+        that tool instead of falling back to chat (#495)."""
+        if _ANAPHORA.search(lower):
+            return True
+        return any(m in lower for m in self._FOLLOWUP_MARKERS)
 
     def _is_context_expired(self) -> bool:
         """Check if stored tool context has expired (turn-based TTL #276)."""
@@ -467,9 +486,17 @@ class Brain:
         self._clear_stale_context()
         parts: list[str] = []
         lower = en_input.lower()
+        # A terse follow-up ("u sure? from medium daily?") right after a tool
+        # turn carries no topic keyword; still surface that tool's context so
+        # the router doesn't drop to chat (#495).
+        is_followup = self._is_tool_followup(lower)
 
-        # Inject recent email IDs only if query relates to email
-        if self._last_messages and any(h in lower for h in self._EMAIL_HINTS):
+        # Inject recent email IDs if the query relates to email OR is a terse
+        # follow-up to the last (gmail) tool turn.
+        if self._last_messages and (
+            any(h in lower for h in self._EMAIL_HINTS)
+            or (is_followup and self._last_tool_name == "gmail")
+        ):
             lines = ["RECENT EMAIL RESULTS (use these IDs for follow-ups):"]
             for m in self._last_messages[:5]:
                 mid = m.get("id", "?")
@@ -479,8 +506,12 @@ class Brain:
             parts.append("\n".join(lines))
             self._context_turn = self._turn_counter  # refresh TTL on use
 
-        # Inject recent calendar events only if query relates to calendar
-        if self._last_events and any(h in lower for h in self._CALENDAR_HINTS):
+        # Inject recent calendar events if the query relates to calendar OR is
+        # a terse follow-up to the last (calendar) tool turn.
+        if self._last_events and (
+            any(h in lower for h in self._CALENDAR_HINTS)
+            or (is_followup and self._last_tool_name == "calendar")
+        ):
             lines = ["RECENT CALENDAR EVENTS (use these for follow-ups):"]
             for ev in self._last_events[:5]:
                 eid = ev.get("id", "?")
