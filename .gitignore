@@ -40,3 +40,6 @@ eval/loop_eval/.run.lock
 # loop_eval batch outputs (#510/#511) — data, not source
 eval/loop_eval/results/
 eval/loop_eval/manifests/
+
+# loop_eval generated figures (#515) — regenerate via figures.py
+eval/loop_eval/figures/

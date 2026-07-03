@@ -88,8 +88,26 @@ def success_rate_per_condition(records: list[dict]) -> dict:
         out[key] = {
             "n": len(denom),
             "success_rate": _rate(sum(r["success"] for r in denom), len(denom)),
+            "selection_accuracy": _rate(
+                sum(r["selection_correct_first"] for r in denom), len(denom)),
             "excluded": dict(excluded),
         }
+    return out
+
+
+def success_by_class_per_condition(records: list[dict]) -> dict:
+    """Fig 1's data: success rate per (condition, failure_class)."""
+    out: dict = {}
+    for key in sorted({cond_key(r) for r in records}):
+        denom = [r for r in records if cond_key(r) == key and in_denominator(r)]
+        per_class: dict = {}
+        for klass in sorted({r["failure_class"] for r in denom}):
+            rs = [r for r in denom if r["failure_class"] == klass]
+            per_class[klass] = {
+                "n": len(rs),
+                "success_rate": _rate(sum(r["success"] for r in rs), len(rs)),
+            }
+        out[key] = per_class
     return out
 
 
@@ -218,6 +236,7 @@ def analyze(records: list[dict], load_report: dict,
         "load_report": load_report,
         "completeness": completeness(records, expected_ids),
         "success_rate_per_condition": success_rate_per_condition(records),
+        "success_by_class_per_condition": success_by_class_per_condition(records),
         "paired_deltas_by_model": paired_deltas(records),
         "recovery_by_failure_class": recovery_by_class(records),
         "thrash_on_unrecoverable": thrash_on_unrecoverable(records),
