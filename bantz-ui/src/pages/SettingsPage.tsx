@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, Check, Save } from "lucide-react";
 import { PageTitle, PanelHeader } from "../components/primitives";
 import { useAppStore } from "../store/useAppStore";
+import { applyAccent } from "../lib/accentRamp";
 
 // Default Ollama host, used when no base URL has been configured.
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
@@ -121,7 +122,7 @@ export function SettingsPage() {
   // Appearance prefs: apply to the DOM immediately and persist to localStorage.
   useEffect(() => {
     const hex = ACCENTS.find((a) => a.key === s.accent)?.hex ?? ACCENTS[0].hex;
-    document.documentElement.style.setProperty("--accent", hex);
+    applyAccent(hex);   // recolor --accent + the whole --ember-* ramp (#493)
     document.body.classList.toggle("night-shift", s.nightShift);
     document.body.classList.toggle("crt", s.crt);
     localStorage.setItem(

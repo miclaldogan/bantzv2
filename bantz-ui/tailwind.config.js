@@ -17,13 +17,15 @@ export default {
           200: "#888888",
           100: "#BBBBBB",
         },
-        // Radiant Ember
+        // Radiant Ember — driven by CSS vars so the accent picker recolors
+        // every ember-* utility (#493). Channel vars + <alpha-value> keep
+        // opacity utilities (bg-ember-500/60) working.
         ember: {
-          100: "#FFD7A8",
-          200: "#FFB347",
-          300: "#FF8C00",
-          400: "#FF6A2A",
-          500: "#FF4500",
+          100: "rgb(var(--ember-100-rgb) / <alpha-value>)",
+          200: "rgb(var(--ember-200-rgb) / <alpha-value>)",
+          300: "rgb(var(--ember-300-rgb) / <alpha-value>)",
+          400: "rgb(var(--ember-400-rgb) / <alpha-value>)",
+          500: "rgb(var(--ember-500-rgb) / <alpha-value>)",
         },
         // Imperial Gold
         gold: {
@@ -65,8 +67,8 @@ export default {
         wide: "0.08em",
       },
       boxShadow: {
-        ember: "0 0 12px rgba(255, 69, 0, 0.6)",
-        "ember-soft": "0 0 24px rgba(255, 69, 0, 0.25)",
+        ember: "0 0 12px rgb(var(--ember-500-rgb) / 0.6)",
+        "ember-soft": "0 0 24px rgb(var(--ember-500-rgb) / 0.25)",
         gold: "0 0 8px rgba(212, 175, 55, 0.4)",
         "inner-well": "inset 0 0 20px rgba(0, 0, 0, 0.8)",
       },
@@ -82,10 +84,10 @@ export default {
           "100%": { opacity: "1", transform: "skewX(0deg)" },
         },
         "bantz-pulse": {
-          "0%, 100%": { filter: "drop-shadow(0 0 6px #FF4500)" },
+          "0%, 100%": { filter: "drop-shadow(0 0 6px var(--ember-500))" },
           "50%": {
             filter:
-              "drop-shadow(0 0 18px #FF6A2A) drop-shadow(0 0 4px #C9A80C)",
+              "drop-shadow(0 0 18px var(--ember-400)) drop-shadow(0 0 4px #C9A80C)",
           },
         },
         "bantz-waveform": {

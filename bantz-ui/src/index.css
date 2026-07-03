@@ -7,12 +7,24 @@
    ============================================================ */
 
 :root {
-  /* Accent color — SettingsPage overrides this on documentElement from the
-     accent picker; --ember-500 (the primary accent CSS var) follows it. */
+  /* Accent color — SettingsPage's accent picker overrides --accent AND the
+     whole --ember-* ramp on documentElement (see lib/accentRamp.ts, #493).
+     Each shade has a colour var (--ember-N, for raw CSS var() below) and a
+     channel var (--ember-N-rgb = "r g b", for Tailwind's
+     rgb(var(--ember-N-rgb) / <alpha-value>) utilities). Defaults below match
+     the original palette so first paint is unchanged. */
   --accent: #ff4500;
+  --accent-rgb: 255 69 0;
   --ember-500: var(--accent);
+  --ember-500-rgb: var(--accent-rgb);
   --ember-400: #ff6a2a;
+  --ember-400-rgb: 255 106 42;
   --ember-300: #ff8c00;
+  --ember-300-rgb: 255 140 0;
+  --ember-200: #ffb347;
+  --ember-200-rgb: 255 179 71;
+  --ember-100: #ffd7a8;
+  --ember-100-rgb: 255 215 168;
   --gold-500: #c9a80c;
   --gold-400: #e2bb0b;
   --rose-500: #8b0000;
