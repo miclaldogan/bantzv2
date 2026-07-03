@@ -105,13 +105,22 @@ def test_expected_tool_is_a_known_fixture():
 def test_generator_is_deterministic_and_current():
     """Checked-in variant files must match what variants.py generates."""
     import subprocess as sp
-    before = {p.name: p.read_bytes()
-              for p in TASKS_DIR.glob("*.variants.jsonl")}
+
+    def _read_normalized() -> dict:
+        # Normalize line endings: the check is for CONTENT drift (a base task
+        # edited without regenerating variants), not for line endings. On a
+        # Windows checkout with core.autocrlf=true the committed LF files
+        # materialize as CRLF while variants.py writes LF; comparing raw bytes
+        # would fail spuriously. .gitattributes pins these to LF, but this keeps
+        # the test correct regardless of a contributor's checkout config.
+        return {p.name: p.read_bytes().replace(b"\r\n", b"\n")
+                for p in TASKS_DIR.glob("*.variants.jsonl")}
+
+    before = _read_normalized()
     proc = sp.run([sys.executable, str(EVAL_DIR / "variants.py")],
                   capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
-    after = {p.name: p.read_bytes()
-             for p in TASKS_DIR.glob("*.variants.jsonl")}
+    after = _read_normalized()
     assert before == after, "checked-in variants are stale — rerun variants.py"
 
 
