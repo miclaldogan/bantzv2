@@ -139,7 +139,7 @@ class WsBroadcastServer:
         bus.bind_loop()
         bus.on("health_alert", self._on_health_alert)
         bus.on("observer_error", self._on_observer_error)
-        bus.on("chat_token", self._on_chat_token)
+        bus.on("research_progress", self._on_research_progress)
 
         self._tasks = [
             asyncio.create_task(self._vitals_loop(),        name="ws-vitals"),
@@ -450,12 +450,21 @@ class WsBroadcastServer:
         }
         asyncio.create_task(self._broadcast(payload))
 
-    def _on_chat_token(self, event: Event) -> None:
-        """Bridge a 'chat_token' bus event (e.g. web_research progress) to a
-        chat token frame so it streams into the Broadcast Channel."""
-        token = event.data.get("token", "")
-        if token:
-            asyncio.create_task(self._broadcast({"type": "token", "text": token}))
+    def _on_research_progress(self, event: Event) -> None:
+        """Bridge a 'research_progress' bus event to a structured frame (#490).
+
+        The Broadcast Channel renders these as a compact progress indicator
+        instead of interleaving raw text with the chat transcript. ``state`` is
+        "running" | "done" | "cancelled"; the UI clears the indicator on the
+        terminal states."""
+        d = event.data
+        asyncio.create_task(self._broadcast({
+            "type": "research_progress",
+            "stage": d.get("stage", ""),
+            "detail": d.get("detail", ""),
+            "elapsed": int(d.get("elapsed", 0) or 0),
+            "state": d.get("state", "running"),
+        }))
 
     def _handle_cancel_research(self) -> None:
         """Set the web_research tool's cancel flag (WS 'cancel_research')."""

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, CornerDownLeft } from "lucide-react";
+import { Send, CornerDownLeft, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
+import type { ResearchProgress } from "../store/useAppStore";
 import { PageTitle, PanelHeader, fmtTime } from "../components/primitives";
 import { SlashMenu } from "../components/SlashMenu";
 import { DoctorModal } from "../components/DoctorModal";
@@ -12,10 +13,52 @@ interface ChatPageProps {
   onSend: (text: string) => void;
 }
 
+// Compact deep-research progress indicator (#490). Replaces the old raw ⏳
+// text that used to interleave with the chat transcript.
+const STAGE_LABEL: Record<string, string> = {
+  searching: "SEARCHING",
+  working:   "RESEARCHING",
+  done:      "COMPLETE",
+  cancelled: "CANCELLED",
+};
+
+function ResearchProgressCard({ research }: { research: ResearchProgress }) {
+  const { stage, detail, elapsed, state } = research;
+  const label = STAGE_LABEL[stage] ?? STAGE_LABEL[state] ?? "RESEARCHING";
+  const accent =
+    state === "cancelled" ? "text-obsidian-200 border-obsidian-500"
+    : state === "done"    ? "text-gold-400 border-gold-500/60"
+    :                       "text-ember-400 border-ember-500/60";
+  return (
+    <div className="grid grid-cols-[88px_1fr] gap-4">
+      <div className="pt-1 font-terminal text-[10px] tracking-widest text-ember-500">
+        RESEARCH
+      </div>
+      <div className={`flex items-center gap-3 border-l-2 ${accent} bg-obsidian-800/50 px-3 py-2`}>
+        {state === "running" && <Loader2 size={13} strokeWidth={1.75} className="animate-spin shrink-0" />}
+        {state === "done"     && <CheckCircle2 size={13} strokeWidth={1.75} className="shrink-0" />}
+        {state === "cancelled"&& <XCircle size={13} strokeWidth={1.75} className="shrink-0" />}
+        <span className="font-terminal text-[10px] font-bold tracking-widest shrink-0">
+          {label}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-terminal text-[13px] leading-relaxed text-fg-secondary">
+          {detail}
+        </span>
+        {elapsed > 0 && (
+          <span className="shrink-0 font-terminal text-[10px] tabular-nums text-obsidian-200">
+            {elapsed}s
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
   const chat          = useAppStore((s) => s.chat);
   const pushChat      = useAppStore((s) => s.pushChat);
   const streamingText = useAppStore((s) => s.streamingText);
+  const research      = useAppStore((s) => s.research);
   const [draft, setDraft] = useState("");
   const [modal, setModal] = useState<"doctor" | "setup" | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -23,10 +66,10 @@ export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
   // Show slash menu when draft starts with "/" and has no space yet.
   const showSlashMenu = draft.startsWith("/") && !draft.includes(" ");
 
-  // Auto-scroll on new messages and on each streaming token.
+  // Auto-scroll on new messages, streaming tokens, and research progress.
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [chat.length, streamingText]);
+  }, [chat.length, streamingText, research]);
 
   function submit() {
     const v = draft.trim();
@@ -124,6 +167,9 @@ export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
                 </div>
               </div>
             )}
+
+            {/* Deep-research progress — structured indicator, not raw text (#490) */}
+            {research && <ResearchProgressCard research={research} />}
           </div>
 
           {/* Input bar */}
