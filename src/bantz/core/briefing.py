@@ -127,14 +127,35 @@ class Briefing:
             return None
         d = data.get("data", {})
         unread = d.get("unread", 0)
-        urgent_count = d.get("urgent_count", 0)
         if unread == 0:
             return "Inbox is clean"
+
+        # Category filter (#494): the briefing surfaces only high-value
+        # categories (personal / institutional) and drops the low-value ones
+        # (notifications / services / payments) that just add morning noise.
+        from bantz.tools.gmail import categorize, _BRIEFING_CATEGORIES
+
+        def _briefing_only(msgs: list) -> list:
+            return [
+                m for m in msgs
+                if categorize(m.get("from", ""), m.get("subject", ""))
+                in _BRIEFING_CATEGORIES
+            ]
+
+        urgent = _briefing_only(d.get("urgent", []))
+        normal = _briefing_only(d.get("normal", []))
+
         parts = [f"{unread} unread emails"]
-        if urgent_count:
-            urgent = d.get("urgent", [])
+        if not urgent and not normal:
+            # Everything sampled was low-value → say so instead of a bare count.
+            parts.append("nothing that needs your attention")
+            return "  ".join(parts)
+        if urgent:
             subjects = [u.get("subject", "?")[:60] for u in urgent[:3]]
-            parts.append(f"🚨 {urgent_count} urgent: " + ", ".join(subjects))
+            parts.append(f"🚨 {len(urgent)} urgent: " + ", ".join(subjects))
+        if normal:
+            subjects = [m.get("subject", "?")[:60] for m in normal[:2]]
+            parts.append("📬 " + ", ".join(subjects))
         return "  ".join(parts)
 
     def _calendar_from_cache(self, data: dict) -> Optional[str]:
