@@ -379,6 +379,8 @@ class TestProactiveBrainHandler:
         b._turn_counter = 0
         b._context_turn = 0
         b._CONTEXT_TTL = 3
+        b._state_owner = ""
+        b._recall_cache = None
         b._last_screen_description = ""
         b._screen_description_turn = -1
         b._pending_vlm_task = None

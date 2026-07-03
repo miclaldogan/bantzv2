@@ -26,7 +26,8 @@ def secure_write_text(path: Path | str, text: str, *, encoding: str = "utf-8") -
     """
     fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):  # unavailable on Windows
+            os.fchmod(fd, 0o600)
         f = os.fdopen(fd, "w", encoding=encoding)
     except BaseException:
         # fdopen never took ownership of the descriptor — close it ourselves.

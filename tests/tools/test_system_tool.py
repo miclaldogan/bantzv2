@@ -148,7 +148,10 @@ class TestRunSafeMode:
         tool = SystemTool()
         result = tool.run("nonexistent_command_999", safe_mode=False)
         assert result.returncode == 127
-        assert "No such file or directory" in result.stderr
+        if os.name == "posix":
+            assert "No such file or directory" in result.stderr
+        else:
+            assert result.stderr  # message text is locale/OS-dependent
 
 
 # ── SystemTool.run() — timeout ────────────────────────────────────────────────
@@ -266,6 +269,10 @@ class TestOpenApp:
         result = tool.open_app("nonexistent_app_xyz_123")
         assert result is False
 
+    @pytest.mark.skipif(
+        os.name != "posix",
+        reason="shebang scripts and ':'-separated PATH are POSIX-only",
+    )
     def test_known_binary_launches(self, tmp_path):
         """Create a fake binary, verify open_app finds and launches it."""
         from bantz.tools.system_tool import SystemTool

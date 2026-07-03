@@ -430,7 +430,8 @@ class TestStepLogRotation:
     async def test_normal_rotation(self, tmp_data_dir):
         from bantz.agent.workflows.maintenance import _step_log_rotation
         log_content = "lots of log content\n" * 1000
-        (tmp_data_dir / "bantz.log").write_text(log_content)
+        # newline="" keeps \n literal on Windows (rotation is binary-faithful)
+        (tmp_data_dir / "bantz.log").write_text(log_content, newline="")
 
         with patch("bantz.agent.workflows.maintenance._data_dir", return_value=tmp_data_dir):
             r = await _step_log_rotation(dry_run=False)
