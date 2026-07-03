@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import time
+from dataclasses import dataclass, field as _dc_field
 from typing import Any, AsyncIterator, Callable, Optional
 
 from bantz.config import config
@@ -113,6 +115,64 @@ def _exc_to_butler(exc: Exception) -> str:
     )):
         return _BUTLER_NET_ERROR
     return _BUTLER_TOOL_ERROR
+
+
+# Immediate "working on it" lines emitted before a tool blocks, so the user
+# sees intent instead of dead silence (speed illusion). Module-level so the
+# C1 recovery loop (#503) can announce on every executed iteration.
+_PRE_TOOL_LINES: dict[str, str] = {
+    "calendar":      "Let me check our schedule...",
+    "gmail":         "Let me check your inbox...",
+    "weather":       "Let me check the weather...",
+    "web_search":    "Let me look that up for you...",
+    "shell":         "Running that for you...",
+    "system":        "Checking system status...",
+    "reminder":      "Checking your reminders...",
+    "filesystem":    "Accessing the file...",
+    "document":      "Let me read that document...",
+    "news":          "Fetching the latest news...",
+    "read_url":      "Fetching that page...",
+    "visual_click":     "Clicking that for you...",
+    "input_control":    "Performing that action...",
+    "accessibility":    "Analysing the screen...",
+    "browser_control":  "Operating the browser for you...",
+    "vision_execute":   "On it — watching the screen and working through this...",
+    "screen_query":     "Taking a look at your screen...",
+    "web_research":     "Diving deep into that — this can take a few minutes...",
+    "classroom":     "Checking your assignments...",
+    "delegate_task":    "Delegating to a specialist agent...",
+    "run_workflow":     "Running your workflow...",
+}
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token) used only to *bound* the C1
+    recovery loop's re-decide cost against ``tool_loop_token_budget`` (#501).
+    Deterministic and provider-agnostic; not reported as real usage (the eval
+    runner measures actual tokens)."""
+    return max(1, len(text) // 4)
+
+
+@dataclass
+class _RecoveryOutcome:
+    """Result of the C1 observe→re-decide loop (#503).
+
+    Exactly one of ``terminal`` / ``result`` carries the outcome:
+
+    - ``terminal`` set → ``process()`` returns it directly (needs-confirm,
+      tool-not-found, or exhausted-on-exception butler reply).
+    - ``result`` set → a ToolResult (success or honest failure) that flows
+      into the normal post-processing / finalize path, with ``tool_name`` /
+      ``tool_args`` reflecting the action that actually ran last.
+
+    ``iterations`` is always the full per-iteration trace (contract #500).
+    """
+
+    iterations: list
+    terminal: "BrainResult | None" = None
+    result: "ToolResult | None" = None
+    tool_name: str = ""
+    tool_args: dict = _dc_field(default_factory=dict)
 
 
 def _notify_toast(title: str, reason: str = "", toast_type: str = "info") -> None:
@@ -545,6 +605,255 @@ class Brain:
         """Compat shim → ``routing_engine.quick_route`` (#228)."""
         return _quick_route_fn(orig, en)
 
+    # ── C1 observe→re-decide loop (#503, audit C1) ───────────────────
+    @staticmethod
+    def _iter_record(
+        index: int, tool_name: str, tool_args: dict, decision_source: str, *,
+        result: "ToolResult | None", exc: "Exception | None", gated: str | None,
+        wall_ms: int, error: str | None = None,
+    ) -> dict:
+        """One per-iteration trace entry in the loop_eval contract shape (#500).
+
+        Brain does not measure LLM tokens (the eval runner does), so tokens_in/
+        tokens_out are reported as 0 here; only ``wall_ms`` is real.
+        """
+        if result is not None:
+            res = {
+                "success": bool(result.success),
+                "error": result.error or None,
+                "output_excerpt": (result.output or "")[:500],
+            }
+        elif exc is not None:
+            res = {"success": False, "error": str(exc), "output_excerpt": ""}
+        else:
+            res = {"success": False, "error": error, "output_excerpt": ""}
+        return {
+            "index": index,
+            "route": "tool",
+            "tool_name": tool_name,
+            "tool_args": dict(tool_args) if isinstance(tool_args, dict) else {},
+            "decision_source": decision_source,
+            "result": res,
+            "exception": f"{type(exc).__name__}: {exc}" if exc is not None else None,
+            "gated": gated,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "wall_ms": int(wall_ms),
+        }
+
+    @staticmethod
+    def _observation_block(
+        tool_name: str, tool_args: dict,
+        result: "ToolResult | None", exc: "Exception | None",
+    ) -> str:
+        """Carry THIS turn's tool failure into the next cot_route call as an
+        observation (extends the existing PREVIOUS-TOOL-RESULT carrier, #276),
+        so the re-decision can see what went wrong and pick a DIFFERENT action.
+        """
+        import json as _json
+        try:
+            args_str = _json.dumps(tool_args, ensure_ascii=False)[:300]
+        except Exception:
+            args_str = str(tool_args)[:300]
+        if exc is not None:
+            detail = f"raised {type(exc).__name__}: {exc}"
+        elif result is not None:
+            detail = f"failed: {(result.error or result.output or 'no error message')[:300]}"
+        else:
+            detail = "is not an available tool"
+        return (
+            "PREVIOUS TOOL ATTEMPT FAILED — observe and choose a DIFFERENT "
+            "action (or answer honestly that it can't be done). Do NOT repeat "
+            "the same failing call:\n"
+            f"  tool: {tool_name}\n"
+            f"  args: {args_str}\n"
+            f"  outcome: {detail}"
+        )
+
+    async def _execute_with_recovery(
+        self, *,
+        tool_name: str, tool_args: dict, risk: str, requires_confirm: Any,
+        confirmed: bool, en_input: str, recent_history: list, tool_ctx: str,
+    ) -> _RecoveryOutcome:
+        """Bounded observe→re-decide loop around tool execution (audit C1, #503).
+
+        Default (``config.tool_loop_max_steps == 1``): the body runs exactly
+        once — byte-identical to the historical single-shot path, with ZERO
+        extra LLM calls. When ``max_steps > 1``, a tool failure (``success=
+        False`` OR a raised exception) is fed back as an observation and
+        ``cot_route`` is re-invoked with ``skip_fastpath=True`` (#502) to pick a
+        different action. The destructive + autonomy gates are re-checked every
+        iteration; a re-decided action that needs confirmation STOPS the loop
+        and returns the prompt — it is never auto-approved (the user's earlier
+        confirmation authorises only the first decision).
+        """
+        from bantz.tools.shell import is_destructive
+
+        max_steps = max(1, config.tool_loop_max_steps)
+        token_budget = config.tool_loop_token_budget
+        autonomy = (config.autonomy or "high").lower()
+
+        iterations: list = []
+        overhead_tokens = 0
+        decision_source = "initial"
+        result: ToolResult | None = None
+        last_exc: Exception | None = None
+
+        for index in range(1, max_steps + 1):
+            # ── Gates (re-checked every iteration) ──────────────────────
+            # Deterministic destructive detection for shell (audit S2): don't
+            # trust the model's self-reported risk on shell commands.
+            if tool_name == "shell" and is_destructive(tool_args.get("command", "")):
+                if risk != "destructive":
+                    log.info("shell.is_destructive promoted risk safe/moderate → destructive")
+                risk = "destructive"
+
+            # Autonomy dial (audit S1). The user's confirmation authorises ONLY
+            # the first decision; a re-decided (substituted) action must earn
+            # its own confirmation — never auto-approve it.
+            iter_confirmed = confirmed if index == 1 else False
+            rc = requires_confirm
+            if rc is None:  # older verdict without the field
+                rc = risk == "destructive"
+            if autonomy == "absolute":
+                need_confirm = False
+            elif autonomy == "low":
+                need_confirm = rc and not iter_confirmed
+            else:  # medium / high (default): destructive only, legacy toggle
+                need_confirm = (
+                    risk == "destructive"
+                    and config.shell_confirm_destructive
+                    and not iter_confirmed
+                )
+
+            if need_confirm:
+                cmd_str = tool_args.get("command", tool_name)
+                warn = (
+                    f"⚠️  Destructive operation: [{tool_name}] `{cmd_str}`\n"
+                    f"Confirm? (yes/no)"
+                )
+                data_layer.conversations.add("assistant", warn)
+                iterations.append(self._iter_record(
+                    index, tool_name, tool_args, decision_source,
+                    result=None, exc=None, gated="needs_confirm", wall_ms=0,
+                ))
+                return _RecoveryOutcome(
+                    iterations=iterations,
+                    terminal=BrainResult(
+                        response=warn, tool_used=tool_name, needs_confirm=True,
+                        pending_command=cmd_str, pending_tool=tool_name,
+                        pending_args=tool_args, iterations=iterations,
+                    ),
+                )
+
+            # ── Resolve tool ────────────────────────────────────────────
+            tool = registry.get(tool_name)
+            if tool is None:
+                iterations.append(self._iter_record(
+                    index, tool_name, tool_args, decision_source,
+                    result=None, exc=None, gated=None, wall_ms=0,
+                    error=f"Tool not found: {tool_name}",
+                ))
+                result = None
+                if index >= max_steps:
+                    err = f"Tool not found: {tool_name}"
+                    data_layer.conversations.add("assistant", err)
+                    return _RecoveryOutcome(
+                        iterations=iterations,
+                        terminal=BrainResult(response=err, tool_used=None,
+                                             iterations=iterations),
+                    )
+                # else: treat as a failed observation and re-decide below.
+            else:
+                # ── Pre-tool announcement (speed illusion) ──────────────
+                pre_line = _PRE_TOOL_LINES.get(tool_name)
+                if pre_line:
+                    try:
+                        from bantz.core.event_bus import bus as _bus
+                        await _bus.emit("pre_tool_message", message=pre_line, tool=tool_name)
+                        await asyncio.sleep(0)  # yield so the line renders first
+                    except Exception:
+                        pass
+
+                # ── Execute ─────────────────────────────────────────────
+                t0 = time.monotonic()
+                exc: Exception | None = None
+                try:
+                    result = await tool.execute(**tool_args)
+                except Exception as e:  # noqa: BLE001 — recoverable failure class
+                    log.exception("Tool %r raised unexpectedly: %s", tool_name, e)
+                    exc = e
+                    last_exc = e
+                    result = None
+                wall_ms = int((time.monotonic() - t0) * 1000)
+
+                iterations.append(self._iter_record(
+                    index, tool_name, tool_args, decision_source,
+                    result=result, exc=exc, gated=None, wall_ms=wall_ms,
+                ))
+
+                if result is not None and result.success:
+                    return _RecoveryOutcome(
+                        iterations=iterations, result=result,
+                        tool_name=tool_name, tool_args=tool_args,
+                    )
+                if exc is None:
+                    # A clean success=False failure (not an exception): keep the
+                    # ToolResult so, if the loop stops, the finalizer narrates
+                    # the real error exactly as the single-shot path does today.
+                    last_exc = None
+
+            # ── Failure: observe → re-decide (budget & steps permitting) ─
+            if index >= max_steps:
+                break
+            observation = self._observation_block(tool_name, tool_args, result, last_exc)
+            est = _estimate_tokens(observation + en_input)
+            if overhead_tokens + est > token_budget:
+                log.info("C1 loop: token budget %d exhausted (+%d) — stop re-decide",
+                         token_budget, est)
+                break
+            overhead_tokens += est
+            redecide_ctx = (tool_ctx + "\n\n" + observation).strip()
+            plan2, _err2 = await cot_route(
+                en_input, registry.all_schemas(),
+                recent_history=recent_history,
+                tool_context=redecide_ctx,
+                skip_fastpath=True,   # SAFETY (#502): never re-enter fast-path
+            )
+            if not plan2 or plan2.get("route") != "tool" or not plan2.get("tool_name"):
+                # Model chose to stop / answer in chat → honest give-up. Keep
+                # the last failed result for the finalizer to narrate.
+                break
+            tool_name = plan2.get("tool_name") or tool_name
+            tool_args = plan2.get("tool_args") or {}
+            risk = plan2.get("risk_level", "safe")
+            requires_confirm = plan2.get("requires_confirm")
+            decision_source = "llm"
+
+        # ── Loop exhausted / gave up ────────────────────────────────────
+        if result is None and last_exc is not None:
+            # Ended on a raised exception with nothing recovered → historical
+            # butler reply (identical to the pre-#503 single-shot behaviour).
+            return _RecoveryOutcome(
+                iterations=iterations,
+                terminal=BrainResult(
+                    response=_exc_to_butler(last_exc), tool_used=tool_name,
+                    iterations=iterations,
+                ),
+            )
+        if result is None:
+            err = f"Tool not found: {tool_name}"
+            data_layer.conversations.add("assistant", err)
+            return _RecoveryOutcome(
+                iterations=iterations,
+                terminal=BrainResult(response=err, tool_used=None,
+                                     iterations=iterations),
+            )
+        return _RecoveryOutcome(
+            iterations=iterations, result=result,
+            tool_name=tool_name, tool_args=tool_args,
+        )
+
     # ── RL & Intervention hooks (#125, #126) ─────────────────────────
 
     def _rl_reward_hook(self, tool_name: str, result: ToolResult) -> None:
@@ -873,102 +1182,24 @@ class Brain:
                 return internal
             # dispatch_internal didn't handle it — fall through to registry
 
-        # ── Deterministic destructive detection for shell (audit S2) ──────
-        # Don't trust the model's self-reported risk_level for shell commands:
-        # shell.is_destructive() is a deterministic allow/deny check that also
-        # sees through `bash -c`, `sudo`, pipes, and chaining. If it fires,
-        # promote risk to "destructive" so the gate below cannot be bypassed
-        # by the router mislabelling the call "safe".
-        if tool_name == "shell":
-            from bantz.tools.shell import is_destructive
-            if is_destructive(tool_args.get("command", "")):
-                if risk != "destructive":
-                    log.info("shell.is_destructive promoted risk safe/moderate → destructive")
-                risk = "destructive"
-
-        # ── Autonomy dial enforcement (audit S1) ─────────────────────────
-        # `requires_confirm` is set by intent.py from config.autonomy but was
-        # previously read nowhere, so autonomy=low/absolute had no effect.
-        # Honour the dial here while preserving the legacy default behaviour
-        # (confirm destructive only, gated by shell_confirm_destructive).
-        autonomy = (config.autonomy or "high").lower()
-        requires_confirm = plan.get("requires_confirm")
-        if requires_confirm is None:  # older verdict without the field
-            requires_confirm = risk == "destructive"
-
-        if autonomy == "absolute":
-            need_confirm = False                       # never confirm
-        elif autonomy == "low":
-            need_confirm = requires_confirm and not confirmed   # confirm everything
-        else:  # medium / high (default): destructive only, legacy toggle applies
-            need_confirm = (
-                risk == "destructive"
-                and config.shell_confirm_destructive
-                and not confirmed
-            )
-
-        if need_confirm:
-            cmd_str = tool_args.get("command", tool_name)
-            warn = (
-                f"⚠️  Destructive operation: [{tool_name}] `{cmd_str}`\n"
-                f"Confirm? (yes/no)"
-            )
-            data_layer.conversations.add("assistant", warn)
-            return BrainResult(
-                response=warn,
-                tool_used=tool_name,
-                needs_confirm=True,
-                pending_command=cmd_str,
-                pending_tool=tool_name,
-                pending_args=tool_args,
-            )
-
-        tool = registry.get(tool_name)
-        if not tool:
-            err = f"Tool not found: {tool_name}"
-            data_layer.conversations.add("assistant", err)
-            return BrainResult(response=err, tool_used=None)
-
-        # ── Pre-tool announcement (speed illusion) ────────────────────
-        # Emit an immediate chat message before the tool runs so the user
-        # sees "Let me check your calendar..." instead of dead silence.
-        _PRE_TOOL_LINES = {
-            "calendar":      "Let me check our schedule...",
-            "gmail":         "Let me check your inbox...",
-            "weather":       "Let me check the weather...",
-            "web_search":    "Let me look that up for you...",
-            "shell":         "Running that for you...",
-            "system":        "Checking system status...",
-            "reminder":      "Checking your reminders...",
-            "filesystem":    "Accessing the file...",
-            "document":      "Let me read that document...",
-            "news":          "Fetching the latest news...",
-            "read_url":      "Fetching that page...",
-            "visual_click":     "Clicking that for you...",
-            "input_control":    "Performing that action...",
-            "accessibility":    "Analysing the screen...",
-            "browser_control":  "Operating the browser for you...",
-            "vision_execute":   "On it — watching the screen and working through this...",
-            "screen_query":     "Taking a look at your screen...",
-            "web_research":     "Diving deep into that — this can take a few minutes...",
-            "classroom":     "Checking your assignments...",
-            "delegate_task":    "Delegating to a specialist agent...",
-            "run_workflow":     "Running your workflow...",
-        }
-        pre_line = _PRE_TOOL_LINES.get(tool_name)
-        if pre_line:
-            try:
-                from bantz.core.event_bus import bus as _bus
-                await _bus.emit("pre_tool_message", message=pre_line, tool=tool_name)
-                await asyncio.sleep(0)  # yield so TUI renders the line before tool blocks
-            except Exception:
-                pass
-
-        try:
-            result = await tool.execute(**tool_args)
-        except Exception as exc:
-            log.exception("Tool %r raised unexpectedly: %s", tool_name, exc)
-            return BrainResult(response=_exc_to_butler(exc), tool_used=tool_name)
+        # ── C1 observe→re-decide loop (audit C1, #503) ───────────────────
+        # Wraps the destructive (S2) + autonomy (S1) gates and tool execution.
+        # Default (config.tool_loop_max_steps=1) runs the body exactly once —
+        # byte-identical to the historical single-shot path, no extra LLM
+        # calls. Higher budgets feed a failed ToolResult / raised exception
+        # back as an observation and re-decide via cot_route(skip_fastpath=True).
+        _outcome = await self._execute_with_recovery(
+            tool_name=tool_name, tool_args=tool_args, risk=risk,
+            requires_confirm=plan.get("requires_confirm"),
+            confirmed=confirmed, en_input=en_input,
+            recent_history=recent_history, tool_ctx=tool_ctx,
+        )
+        _loop_iters = _outcome.iterations
+        if _outcome.terminal is not None:
+            return _outcome.terminal
+        result = _outcome.result
+        tool_name = _outcome.tool_name
+        tool_args = _outcome.tool_args
 
         # ── RL reward: positive signal on successful tool use (#125) ──
         self._rl_reward_hook(tool_name, result)
@@ -998,6 +1229,7 @@ class Brain:
                     "subject": d.get("subject", ""),
                     "body": d["body"],
                 },
+                iterations=_loop_iters,
             )
 
         # ── Embed metadata in output for conversation history (#276) ──
@@ -1025,6 +1257,7 @@ class Brain:
                 response="", tool_used=tool_name,
                 tool_result=result, stream=fin_stream,
                 attachments=stream_attachments,
+                iterations=_loop_iters,
             )
 
         # Short output — non-streaming finalize
@@ -1087,6 +1320,7 @@ class Brain:
         return BrainResult(
             response=resp, tool_used=tool_name,
             tool_result=result, attachments=attachments,
+            iterations=_loop_iters,
         )
 
     @staticmethod
