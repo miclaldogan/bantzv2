@@ -36,6 +36,14 @@ class Config(BaseSettings):
     autonomy: str = Field("high", alias="BANTZ_AUTONOMY")             # low|medium|high|absolute
     mood_bias: str = Field("tolerant", alias="BANTZ_MOOD_BIAS")       # tolerant|impatient|resigned
 
+    # ── Tool loop budget (audit S3; consumed by the C1 recovery loop) ─────
+    # Max tool EXECUTIONS per turn: 1 = single-shot (exact current
+    # behaviour, the loop never re-decides); 2-3 = bounded observe→re-decide.
+    tool_loop_max_steps: int = Field(1, ge=1, alias="BANTZ_TOOL_LOOP_MAX_STEPS")
+    # Ceiling on EXTRA routing-call tokens per turn once the loop is active;
+    # the loop stops re-deciding when exceeded. Irrelevant at max_steps=1.
+    tool_loop_token_budget: int = Field(4096, ge=0, alias="BANTZ_TOOL_LOOP_TOKEN_BUDGET")
+
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")
     vlm_endpoint: str = Field("http://localhost:8090", alias="BANTZ_VLM_ENDPOINT")
