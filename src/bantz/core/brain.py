@@ -708,9 +708,14 @@ class Brain:
                     log.info("shell.is_destructive promoted risk safe/moderate → destructive")
                 risk = "destructive"
 
-            # Autonomy dial (audit S1). The user's confirmation authorises ONLY
-            # the first decision; a re-decided (substituted) action must earn
-            # its own confirmation — never auto-approve it.
+            # Autonomy dial (audit S1, #492). Monotonic caution ladder:
+            #   absolute → never confirm (run everything)
+            #   high (default) → confirm destructive only (legacy toggle applies)
+            #   medium → confirm moderate + destructive
+            #   low → confirm every tool action (even safe)
+            # The user's confirmation authorises ONLY the first decision; a
+            # re-decided (substituted) action must earn its own confirmation —
+            # never auto-approve it.
             iter_confirmed = confirmed if index == 1 else False
             rc = requires_confirm
             if rc is None:  # older verdict without the field
@@ -719,7 +724,9 @@ class Brain:
                 need_confirm = False
             elif autonomy == "low":
                 need_confirm = rc and not iter_confirmed
-            else:  # medium / high (default): destructive only, legacy toggle
+            elif autonomy == "medium":
+                need_confirm = risk in ("moderate", "destructive") and not iter_confirmed
+            else:  # high (default): destructive only, legacy toggle applies
                 need_confirm = (
                     risk == "destructive"
                     and config.shell_confirm_destructive
