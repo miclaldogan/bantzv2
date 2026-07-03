@@ -33,6 +33,9 @@ import subprocess
 from datetime import datetime
 from typing import Any, Optional
 
+from bantz.config import config
+from bantz.tools import BaseTool, ToolResult, registry
+
 
 def _resolve_bin(name: str) -> str | None:
     """Locate a binary PATH-independently.
@@ -49,9 +52,6 @@ def _resolve_bin(name: str) -> str | None:
         if os.path.exists(cand):
             return cand
     return None
-
-from bantz.config import config  # noqa: E402
-from bantz.tools import BaseTool, ToolResult, registry  # noqa: E402
 
 log = logging.getLogger("bantz.input_control")
 

@@ -669,38 +669,15 @@ _CLICK_FAST_TR = re.compile(
 )
 
 
-async def cot_route(
-    en_input: str,
-    tool_schemas: list[dict],
-    *,
-    recent_history: list[dict] | None = None,
-    tool_context: str = "",
-    confidence_threshold: float = 0.4,
-) -> tuple[dict | None, str | None]:
-    """
-    Chain-of-Thought routing via Ollama **streaming** (#273).
+def _fastpath_route(en_input: str) -> tuple[dict, None] | None:
+    """Deterministic pre-route regexes, checked BEFORE the LLM call.
 
-    Returns ``(plan, routing_error)``:
-
-    - ``(plan_dict, None)``     — successful routing (tool or chat).
-    - ``(None, None)``          — pure chat / refusal / low confidence
-                                  (no tool was attempted).
-    - ``(None, error_string)``  — a tool route was *attempted* but JSON
-                                  parsing or validation failed.  The
-                                  caller **must not** silently fall back
-                                  to chat — it should inform the user
-                                  (#253 People-Pleaser fix).
-
-    Now streams via ``ollama.chat_stream()`` and emits ``thinking_token``
-    events on the EventBus so the TUI can display the chain-of-thought
-    in real-time.
-
-    Parameters
-    ----------
-    tool_context : str
-        Optional dynamic context block (e.g. recent email IDs, calendar
-        events) injected only when relevant (#275 — avoids bloating the
-        prompt when unrelated queries are asked).
+    Returns a ``(plan, None)`` tuple exactly like a successful cot_route
+    verdict, or ``None`` to fall through to the LLM. Extracted from
+    cot_route so the C1 recovery loop can bypass the whole family with
+    ``skip_fastpath=True`` (#502) — these match on input text, which does
+    not change after a tool failure, so re-entering them from a re-decide
+    call would re-select the same failed tool forever.
     """
     # "investigate: <anomaly> — <detail>" comes from the Anomaly Watch
     # Investigate button — Bantz should analyze it conversationally, never
@@ -780,6 +757,58 @@ async def cot_route(
             "risk_level": "moderate", "confidence": 0.95,
             "reasoning": "pre-route: click-by-description",
         }, None
+
+    return None
+
+
+async def cot_route(
+    en_input: str,
+    tool_schemas: list[dict],
+    *,
+    recent_history: list[dict] | None = None,
+    tool_context: str = "",
+    confidence_threshold: float = 0.4,
+    skip_fastpath: bool = False,
+) -> tuple[dict | None, str | None]:
+    """
+    Chain-of-Thought routing via Ollama **streaming** (#273).
+
+    Returns ``(plan, routing_error)``:
+
+    - ``(plan_dict, None)``     — successful routing (tool or chat).
+    - ``(None, None)``          — pure chat / refusal / low confidence
+                                  (no tool was attempted).
+    - ``(None, error_string)``  — a tool route was *attempted* but JSON
+                                  parsing or validation failed.  The
+                                  caller **must not** silently fall back
+                                  to chat — it should inform the user
+                                  (#253 People-Pleaser fix).
+
+    Now streams via ``ollama.chat_stream()`` and emits ``thinking_token``
+    events on the EventBus so the TUI can display the chain-of-thought
+    in real-time.
+
+    Parameters
+    ----------
+    tool_context : str
+        Optional dynamic context block (e.g. recent email IDs, calendar
+        events) injected only when relevant (#275 — avoids bloating the
+        prompt when unrelated queries are asked).
+    skip_fastpath : bool
+        Bypass ALL pre-route regexes (including the ``investigate:``
+        pre-route) and go straight to the LLM. REQUIRED for the C1
+        recovery loop's re-decide calls (audit C1, #502): the fast-paths
+        match on the *input text*, which does not change after a tool
+        failure — re-entering them would re-select the same failed tool
+        every iteration (an infinite same-tool loop, not a re-decision).
+        Do not remove this parameter or default it to True.
+    """
+    # Pre-route regexes live in _fastpath_route; the C1 recovery loop's
+    # re-decide calls MUST bypass them (see skip_fastpath in the docstring).
+    if not skip_fastpath:
+        fast = _fastpath_route(en_input)
+        if fast is not None:
+            return fast
 
     schema_str = _build_compact_schemas(tool_schemas)
 

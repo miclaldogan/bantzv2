@@ -512,7 +512,15 @@ class TestEntityResolution:
 
 class TestPruneOldMessages:
     def test_prune_removes_old_messages_and_vectors(self, populated_db):
-        """Messages AND vectors older than 30 days should be deleted."""
+        """Old messages are deleted; vectors are NOT pruned here (audit M2).
+
+        Production has no message_vectors SQLite table — embeddings live in
+        ChromaDB drawers, and eviction is tracked separately (audit M3). The
+        old DELETE raised "no such table" and was swallowed, so the reported
+        count was always a lie. _prune_old_messages now honestly reports
+        vectors_deleted=0 and leaves vector rows (this fixture table exists
+        only in tests) untouched.
+        """
         from bantz.agent.workflows.reflection import _prune_old_messages
         pool, _ = populated_db
 
@@ -555,11 +563,15 @@ class TestPruneOldMessages:
 
         msgs_deleted, vecs_deleted = _prune_old_messages(keep_days=30)
         assert msgs_deleted == 2
-        # Vector drawers live in ChromaDB and are intentionally NOT pruned
-        # here (audit M2/M3) — the reported count is always 0.
+        # Honest count: nothing prunes SQLite vector rows (audit M2/M3).
         assert vecs_deleted == 0
 
+        # Vector rows remain untouched — pruning must not reach into them.
         with pool.connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM message_vectors WHERE message_id IN (100, 101)"
+            ).fetchone()[0]
+            assert remaining == 2
 
             # Distillation should STILL exist (we keep summaries)
             dist = conn.execute(
