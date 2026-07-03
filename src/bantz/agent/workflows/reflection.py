@@ -733,15 +733,16 @@ async def _send_report(result: ReflectionResult, dry_run: bool) -> None:
         if config.telegram_bot_token and config.telegram_allowed_users:
             users = [u.strip() for u in config.telegram_allowed_users.split(",") if u.strip()]
             client = _get_client()
-            for uid in users:
-                try:
-                    await client.post(
-                        f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                        json={"chat_id": uid, "text": summary, "parse_mode": ""},
-                        timeout=10.0,
-                    )
-                except Exception:
-                    pass
+            # ⚡ Bolt: execute Telegram broadcasts concurrently to eliminate N+1 network latency bottleneck
+            coros = [
+                client.post(
+                    f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
+                    json={"chat_id": uid, "text": summary, "parse_mode": ""},
+                    timeout=10.0,
+                )
+                for uid in users
+            ]
+            await asyncio.gather(*coros, return_exceptions=True)
     except Exception:
         pass
 
