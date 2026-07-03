@@ -708,6 +708,11 @@ class Brain:
     ) -> _RecoveryOutcome:
         """Bounded observe→re-decide loop around tool execution (audit C1, #503).
 
+        ``config.tool_loop_mode`` selects the recovery strategy when
+        ``max_steps > 1``: ``"redecide"`` (default) re-invokes cot_route with
+        the failure as an observation; ``"retry"`` re-executes the same call
+        with no router consult (the eval ablation baseline).
+
         Default (``config.tool_loop_max_steps == 1``): the body runs exactly
         once — byte-identical to the historical single-shot path, with ZERO
         extra LLM calls. When ``max_steps > 1``, a tool failure (``success=
@@ -841,9 +846,14 @@ class Brain:
                     # the real error exactly as the single-shot path does today.
                     last_exc = None
 
-            # ── Failure: observe → re-decide (budget & steps permitting) ─
+            # ── Failure: observe → recover (budget & steps permitting) ─
             if index >= max_steps:
                 break
+            if config.tool_loop_mode == "retry":
+                # Ablation baseline: re-execute the SAME call, no router
+                # consult, zero extra LLM calls. tool_name/args/risk (and the
+                # gates re-checked at the top of the loop) stay as-is.
+                continue
             observation = self._observation_block(tool_name, tool_args, result, last_exc)
             est = _estimate_tokens(observation + en_input)
             if overhead_tokens + est > token_budget:

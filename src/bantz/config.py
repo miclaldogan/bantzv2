@@ -43,6 +43,13 @@ class Config(BaseSettings):
     # Ceiling on EXTRA routing-call tokens per turn once the loop is active;
     # the loop stops re-deciding when exceeded. Irrelevant at max_steps=1.
     tool_loop_token_budget: int = Field(4096, ge=0, alias="BANTZ_TOOL_LOOP_TOKEN_BUDGET")
+    # Recovery strategy once the loop is active (max_steps>1):
+    #   "redecide" (default) — feed the failure back and re-invoke cot_route
+    #   "retry"             — re-execute the SAME call, no router consult
+    # "retry" is the eval ablation baseline (does re-decision beat a plain
+    # bounded retry?); it costs zero extra LLM calls.
+    tool_loop_mode: str = Field("redecide", pattern="^(redecide|retry)$",
+                                alias="BANTZ_TOOL_LOOP_MODE")
 
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")

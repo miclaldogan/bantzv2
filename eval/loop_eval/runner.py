@@ -67,7 +67,12 @@ def _now_iso() -> str:
 
 def condition_slug(cond: dict) -> str:
     model = "".join(c if c.isalnum() else "-" for c in cond["model"])
-    return f"{model}_steps{cond['tool_loop_max_steps']}"
+    slug = f"{model}_steps{cond['tool_loop_max_steps']}"
+    # Default mode keeps historical slugs stable so --resume still dedupes
+    # against pre-ablation batches.
+    if cond.get("tool_loop_mode", "redecide") != "redecide":
+        slug += f"_{cond['tool_loop_mode']}"
+    return slug
 
 
 # ── task loading ─────────────────────────────────────────────────────────────
@@ -384,6 +389,7 @@ def _child_env(cond: dict, mock: bool) -> dict:
     env["BANTZ_OLLAMA_MODEL"] = cond["model"]
     env["BANTZ_LLM_PROVIDER"] = cond["provider"]
     env["BANTZ_TOOL_LOOP_MAX_STEPS"] = str(cond["tool_loop_max_steps"])
+    env["BANTZ_TOOL_LOOP_MODE"] = cond.get("tool_loop_mode", "redecide")
     # Disable eval-irrelevant, leak-prone subsystems for EVERY child (mock and
     # real), not just mock. MemPalace writes lock files under the live
     # ~/.mempalace/locks regardless of BANTZ_PALACE_PATH, and voice/observer/RL
@@ -458,8 +464,9 @@ def run_batch(args: argparse.Namespace) -> int:
 
     conditions = [
         {"model": model, "tool_loop_max_steps": steps,
-         "provider": args.provider}
+         "provider": args.provider, "tool_loop_mode": mode}
         for model in args.model for steps in args.steps
+        for mode in args.mode
     ]
 
     batch_dir = results_root / args.batch_id
@@ -529,6 +536,11 @@ def main(argv: list[str] | None = None) -> int:
                                                    s.split(",")],
                         default=[1],
                         help="comma-separated tool_loop_max_steps, e.g. 1,3")
+    parser.add_argument("--mode", type=lambda s: s.split(","),
+                        default=["redecide"],
+                        help="comma-separated tool_loop_mode values "
+                             "(redecide,retry) — retry is the ablation "
+                             "baseline: same call re-executed, no re-decide")
     parser.add_argument("--provider", default="ollama")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     parser.add_argument("--resume", action="store_true")

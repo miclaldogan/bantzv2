@@ -90,7 +90,8 @@ def _quiet_conversation(monkeypatch):
 
 
 def _cfg(monkeypatch, *, max_steps=1, token_budget=4096,
-         autonomy="high", confirm_destructive=True):
+         autonomy="high", confirm_destructive=True, mode="redecide"):
+    monkeypatch.setattr(brain_mod.config, "tool_loop_mode", mode)
     monkeypatch.setattr(brain_mod.config, "tool_loop_max_steps", max_steps)
     monkeypatch.setattr(brain_mod.config, "tool_loop_token_budget", token_budget)
     monkeypatch.setattr(brain_mod.config, "autonomy", autonomy)
@@ -290,6 +291,56 @@ def test_iteration_trace_matches_contract(brain, monkeypatch):
         "transcript_path": "x", "ts": "2026-07-03T00:00:00Z",
     }
     assert loop_schema.validate_result(record) == []
+
+
+
+# ── retry-only ablation mode (tool_loop_mode="retry") ────────────────────────
+
+def test_retry_mode_recovers_transient_without_llm(brain, monkeypatch):
+    """mode=retry re-executes the SAME call on failure — recovery on a
+    transient fault with ZERO cot_route calls (the ablation baseline)."""
+    _cfg(monkeypatch, max_steps=3, mode="retry")
+    flaky = _FakeTool([
+        ToolResult(success=False, output="", error="transient 503"),
+        ToolResult(success=True, output="Created"),
+    ])
+    monkeypatch.setattr(brain_mod, "registry", _FakeRegistry({"calendar": flaky}))
+    cot = AsyncMock()
+    monkeypatch.setattr(brain_mod, "cot_route", cot)
+
+    outcome = _run(_call(brain, tool_name="calendar",
+                         tool_args={"action": "create"}))
+
+    assert outcome.result is not None and outcome.result.success is True
+    assert len(outcome.iterations) == 2
+    cot.assert_not_called()                       # no re-decide in retry mode
+    assert flaky.calls == [{"action": "create"}] * 2   # identical call, twice
+
+
+def test_retry_mode_exhausts_on_consistent_failure(brain, monkeypatch):
+    _cfg(monkeypatch, max_steps=3, mode="retry")
+    tool = _FakeTool([ToolResult(success=False, output="", error="bad args")] * 3)
+    monkeypatch.setattr(brain_mod, "registry", _FakeRegistry({"demo": tool}))
+    cot = AsyncMock()
+    monkeypatch.setattr(brain_mod, "cot_route", cot)
+
+    outcome = _run(_call(brain, tool_name="demo"))
+
+    assert outcome.result is not None and outcome.result.success is False
+    assert len(outcome.iterations) == 3           # all budget spent retrying
+    cot.assert_not_called()
+
+
+def test_default_mode_is_redecide(brain, monkeypatch):
+    """Omitting the mode keeps the #503 behaviour: failure → cot_route."""
+    _cfg(monkeypatch, max_steps=2)                # mode defaults to redecide
+    first = _FakeTool([ToolResult(success=False, output="", error="boom")])
+    monkeypatch.setattr(brain_mod, "registry", _FakeRegistry({"alpha": first}))
+    cot = AsyncMock(return_value=(None, None))
+    monkeypatch.setattr(brain_mod, "cot_route", cot)
+
+    _run(_call(brain))
+    cot.assert_awaited_once()
 
 
 # ── #504: seeded transient-failure recovery ──────────────────────────────────

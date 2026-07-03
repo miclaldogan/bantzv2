@@ -36,3 +36,14 @@ class TestToolLoopConfig:
         monkeypatch.setenv("BANTZ_TOOL_LOOP_TOKEN_BUDGET", "-1")
         with pytest.raises(ValidationError):
             Config()
+
+    def test_mode_default_and_env_override(self, monkeypatch):
+        monkeypatch.delenv("BANTZ_TOOL_LOOP_MODE", raising=False)
+        assert Config().tool_loop_mode == "redecide"
+        monkeypatch.setenv("BANTZ_TOOL_LOOP_MODE", "retry")
+        assert Config().tool_loop_mode == "retry"
+
+    def test_mode_invalid_rejected(self, monkeypatch):
+        monkeypatch.setenv("BANTZ_TOOL_LOOP_MODE", "yolo")
+        with pytest.raises(ValidationError):
+            Config()
