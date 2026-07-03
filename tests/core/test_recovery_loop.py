@@ -1,12 +1,19 @@
-"""C1 observe→re-decide loop (audit C1, issue #503).
+"""C1 observe→re-decide loop (audit C1, issues #503 + #504).
 
-Exercises ``Brain._execute_with_recovery`` directly — the self-contained
-recovery loop — with fake tools and a mocked ``cot_route``, so no LLM or DB is
-touched. Covers the issue's safety-critical acceptance criteria:
+Exercises ``Brain._execute_with_recovery`` — the self-contained recovery loop
+— with fake tools and a mocked ``cot_route``, so no LLM or DB is touched.
+Covers the safety-critical acceptance criteria:
 
-- max_steps=1 (default) is single-shot: one iteration, NO re-decide call.
-- re-decide calls use skip_fastpath=True (#502) — never re-enter the fast-path.
+- max_steps=1 (default) is single-shot: one iteration, NO re-decide call
+  (flag-off = current system exactly; the full suite green at the 1874+
+  baseline is the companion regression, enforced in CI).
+- re-decide calls use skip_fastpath=True (#502) — never re-enter the fast-path;
+  ``test_end_to_end_fastpath_bypass`` proves the wiring through the *real*
+  ``cot_route`` with only the LLM mocked.
 - the exception path enters the loop as an observation when steps>1.
+- a seeded transient failure recovers (``recovery=true``), including a
+  SANDBOXED subprocess smoke that redirects all persistence BEFORE importing
+  bantz so the live ``~/.mempalace`` is never touched (#504).
 - destructive + autonomy gates are re-checked every iteration; a re-decided
   action needing confirmation STOPS the loop and never executes.
 - the per-iteration trace on BrainResult matches the loop_eval contract (#500).
@@ -15,14 +22,20 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import bantz.core.brain as brain_mod
 from bantz.core.brain import Brain
 from bantz.tools import ToolResult
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ── load the #500 contract validator straight from the eval tree ─────────────
@@ -277,3 +290,141 @@ def test_iteration_trace_matches_contract(brain, monkeypatch):
         "transcript_path": "x", "ts": "2026-07-03T00:00:00Z",
     }
     assert loop_schema.validate_result(record) == []
+
+
+# ── #504: seeded transient-failure recovery ──────────────────────────────────
+
+def test_transient_same_tool_recovery(brain, monkeypatch):
+    """A transient failure recovers by retrying the SAME tool (recovery=true)."""
+    _cfg(monkeypatch, max_steps=3)
+    flaky = _FakeTool([
+        ToolResult(success=False, output="", error="transient: API backend error"),
+        ToolResult(success=True, output="Created: dinner 19:00"),
+    ])
+    monkeypatch.setattr(brain_mod, "registry", _FakeRegistry({"calendar": flaky}))
+    # A transient error just needs a retry — the model re-picks the same tool.
+    monkeypatch.setattr(brain_mod, "cot_route", AsyncMock(return_value=(
+        {"route": "tool", "tool_name": "calendar",
+         "tool_args": {"action": "create"}, "risk_level": "safe"}, None)))
+
+    outcome = _run(_call(brain, tool_name="calendar",
+                         tool_args={"action": "create"},
+                         en_input="add dinner tomorrow at 7pm"))
+
+    assert outcome.result is not None and outcome.result.success is True
+    assert len(flaky.calls) == 2                       # failed once, then recovered
+    recovery = outcome.result.success and len(outcome.iterations) > 1
+    assert recovery is True
+    assert outcome.iterations[0]["result"]["success"] is False
+    assert outcome.iterations[1]["result"]["success"] is True
+
+
+# ── #504: same-tool-loop guard, end-to-end through the REAL cot_route ─────────
+
+def test_end_to_end_fastpath_bypass(brain, monkeypatch):
+    """skip_fastpath wired end-to-end: a fast-path-pattern input ('remind
+    me…') whose initial tool fails must NOT re-select 'reminder' via regex on
+    re-decide. Here cot_route is the REAL function and only the LLM is mocked,
+    returning web_search — so a tool_name of 'web_search' proves the fast-path
+    regex was bypassed (otherwise the reminder pre-route would fire first)."""
+    _cfg(monkeypatch, max_steps=2)
+    reminder = _FakeTool([ToolResult(success=False, output="", error="boom")])
+    web = _FakeTool([ToolResult(success=True, output="looked it up")])
+    monkeypatch.setattr(brain_mod, "registry",
+                        _FakeRegistry({"reminder": reminder, "web_search": web}))
+    # NOTE: brain_mod.cot_route is intentionally NOT patched — real routing.
+    verdict = json.dumps({"route": "tool", "tool_name": "web_search",
+                          "tool_args": {}, "risk_level": "safe",
+                          "confidence": 0.9})
+
+    async def _stream(messages, **kwargs):
+        for ch in verdict:
+            yield ch
+
+    with patch("bantz.core.intent.ollama") as mock_llm, \
+         patch("bantz.core.intent.bus") as mock_bus:
+        mock_llm.chat_stream = _stream
+        mock_bus.emit = AsyncMock()
+        outcome = _run(_call(
+            brain, tool_name="reminder", tool_args={},
+            en_input="remind me in 10 minutes to stretch"))
+
+    assert outcome.result is not None and outcome.result.success is True
+    assert outcome.tool_name == "web_search"          # LLM decision, not the regex
+    assert len(web.calls) == 1
+    assert reminder.calls == [{}]                     # the failed first attempt only
+    assert outcome.iterations[1]["tool_name"] == "web_search"
+
+
+# ── #504: SANDBOXED recovery smoke (env redirect BEFORE bantz import) ────────
+
+def test_sandboxed_recovery_smoke_subprocess():
+    """Recovery smoke in a child process that redirects all persistence into a
+    temp root BEFORE importing bantz (loop_eval sandbox, #505), so the live
+    ~/.mempalace is never touched. The condition is a pure env flip
+    (BANTZ_TOOL_LOOP_MAX_STEPS=3) and a seeded transient failure recovers."""
+    script = textwrap.dedent(
+        '''
+        import os, sys, asyncio, tempfile, types
+        os.environ["BANTZ_TOOL_LOOP_MAX_STEPS"] = "3"   # condition = env flip
+        REPO = sys.argv[1]
+        sys.path.insert(0, os.path.join(REPO, "eval", "loop_eval"))
+        sys.path.insert(0, os.path.join(REPO, "src"))
+        import sandbox
+        root = sandbox.bootstrap()          # redirect + guard BEFORE brain import
+
+        from unittest.mock import AsyncMock
+        import bantz.core.brain as brain_mod
+        from bantz.core.brain import Brain
+        from bantz.tools import ToolResult
+        from bantz.config import config as cfg
+
+        assert cfg.tool_loop_max_steps == 3, "env flip did not reach Config()"
+
+        class Flaky:
+            def __init__(self): self.n = 0
+            async def execute(self, **kw):
+                self.n += 1
+                if self.n == 1:
+                    return ToolResult(success=False, output="", error="transient")
+                return ToolResult(success=True, output="Created")
+
+        class Reg:
+            def __init__(self, t): self.t = t
+            def get(self, name): return self.t
+            def all_schemas(self): return []
+
+        class NoOp:
+            def add(self, *a, **k): pass
+
+        flaky = Flaky()
+        brain_mod.registry = Reg(flaky)
+        brain_mod.cot_route = AsyncMock(return_value=(
+            {"route": "tool", "tool_name": "calendar",
+             "tool_args": {"action": "create"}, "risk_level": "safe"}, None))
+        brain_mod.data_layer = types.SimpleNamespace(conversations=NoOp())
+
+        b = Brain.__new__(Brain)
+        outcome = asyncio.run(b._execute_with_recovery(
+            tool_name="calendar", tool_args={"action": "create"}, risk="safe",
+            requires_confirm=None, confirmed=False,
+            en_input="add dinner tomorrow at 7pm", recent_history=[], tool_ctx=""))
+
+        assert outcome.terminal is None
+        assert outcome.result is not None and outcome.result.success is True
+        assert len(outcome.iterations) == 2 and flaky.n == 2
+        assert (outcome.result.success and len(outcome.iterations) > 1) is True
+        assert str(root).startswith(tempfile.gettempdir())
+        assert str(cfg.resolved_palace_path).startswith(str(root))
+        print("RECOVERY_OK", root)
+        '''
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(_REPO_ROOT)],
+        capture_output=True, text=True, timeout=240,
+    )
+    assert proc.returncode == 0, (
+        f"sandboxed smoke failed (rc={proc.returncode})\n"
+        f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+    )
+    assert "RECOVERY_OK" in proc.stdout
