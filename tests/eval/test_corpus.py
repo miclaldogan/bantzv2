@@ -30,50 +30,89 @@ import schema  # noqa: E402
 from fixtures import FixtureWorld  # noqa: E402
 
 
-def load_corpus() -> list[dict]:
+def load_corpus(variants: bool) -> list[dict]:
     tasks = []
     for path in sorted(TASKS_DIR.glob("*.jsonl")):
+        if (".variants" in path.name) is not variants:
+            continue
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 tasks.append(json.loads(line))
     return tasks
 
 
-CORPUS = load_corpus()
+CORPUS = load_corpus(variants=False)
+VARIANTS = load_corpus(variants=True)
+ALL_TASKS = CORPUS + VARIANTS
+
+
+def by_class(klass: str) -> list[dict]:
+    return [t for t in VARIANTS if t["failure_injection"]["class"] == klass]
 
 
 # ── shape ─────────────────────────────────────────────────────────────────────
 
 
 def test_corpus_size_and_categories():
-    assert len(CORPUS) >= 40, f"corpus has only {len(CORPUS)} tasks"
+    assert len(CORPUS) >= 40, f"corpus has only {len(CORPUS)} base tasks"
     categories = {t["category"] for t in CORPUS}
     assert len(categories) >= 5, f"only {len(categories)} categories"
     pilots = [t for t in CORPUS if "pilot" in t.get("tags", [])]
     assert len(pilots) >= 10, f"only {len(pilots)} pilot tasks"
 
 
+def test_variant_class_counts():
+    """Per-class counts recorded in tasks/README.md must hold (#508)."""
+    assert len(by_class("transient_error")) == len(CORPUS)
+    assert len(by_class("unrecoverable")) == len(CORPUS)
+    assert len(by_class("bad_args")) >= 10
+    assert len(by_class("wrong_tool_first")) >= 10
+    assert len(ALL_TASKS) == len({t["id"] for t in ALL_TASKS})
+
+
 def test_every_task_validates_against_contract():
     errors = []
-    for t in CORPUS:
+    for t in ALL_TASKS:
         errors.extend(schema.validate_task(t))
     assert errors == []
 
 
-def test_task_ids_unique_and_base_variant_convention():
-    ids = [t["id"] for t in CORPUS]
-    assert len(ids) == len(set(ids))
+def test_task_ids_follow_base_variant_convention():
+    suffix_by_class = {
+        "none": "base",
+        "transient_error": "transient",
+        "unrecoverable": "unrecoverable",
+        "bad_args": "bad_args",
+        "wrong_tool_first": "wrong_tool",
+    }
+    for t in ALL_TASKS:
+        klass = t["failure_injection"]["class"]
+        assert t["id"] == f"{t['base_id']}.{suffix_by_class[klass]}", t["id"]
     for t in CORPUS:
-        assert t["id"] == f"{t['base_id']}.base"
-        assert t["failure_injection"]["class"] == "none"
         assert t["recoverable"] is None
+    for t in VARIANTS:
+        base_ids = {b["base_id"] for b in CORPUS}
+        assert t["base_id"] in base_ids, f"{t['id']}: orphan variant"
 
 
 def test_expected_tool_is_a_known_fixture():
     from fixtures import FIXTURE_CLASSES
-    for t in CORPUS:
+    for t in ALL_TASKS:
         assert t["expected_tool"] in FIXTURE_CLASSES, t["id"]
         assert t["reference_call"]["tool"] == t["expected_tool"], t["id"]
+
+
+def test_generator_is_deterministic_and_current():
+    """Checked-in variant files must match what variants.py generates."""
+    import subprocess as sp
+    before = {p.name: p.read_bytes()
+              for p in TASKS_DIR.glob("*.variants.jsonl")}
+    proc = sp.run([sys.executable, str(EVAL_DIR / "variants.py")],
+                  capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    after = {p.name: p.read_bytes()
+             for p in TASKS_DIR.glob("*.variants.jsonl")}
+    assert before == after, "checked-in variants are stale — rerun variants.py"
 
 
 # ── solvability: reference_call -> success_check passes ──────────────────────
@@ -98,6 +137,92 @@ async def test_task_is_solvable_and_nontrivial(task):
     assert result.success, f"{task['id']}: reference call failed: {result.error}"
     verdict = checks.evaluate(task["success_check"], world, result.output)
     assert verdict is True, f"{task['id']}: success_check rejects the solution"
+
+
+# ── variant spot-checks (#508): single-shot failure is visible, recovery
+# path works, and the failure text reaches the ToolResult the loop observes ──
+
+
+def _world_for(task):
+    from fixtures import FailureSpec, FixtureWorld
+    failure = FailureSpec.from_contract(task["failure_injection"],
+                                        task["expected_tool"])
+    return FixtureWorld(task["fixture_setup"], failure)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", by_class("transient_error"),
+                         ids=lambda t: t["id"])
+async def test_transient_fails_once_then_recovers(task):
+    world = _world_for(task)
+    call = task["reference_call"]
+    first = await world.tools[call["tool"]].execute(**call["args"])
+    assert first.success is False
+    assert "503" in first.error  # failure visible to the loop
+    second = await world.tools[call["tool"]].execute(**call["args"])
+    assert second.success is True
+    assert checks.evaluate(task["success_check"], world, second.output) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", by_class("unrecoverable"),
+                         ids=lambda t: t["id"])
+async def test_unrecoverable_never_succeeds_and_rewards_honesty(task):
+    world = _world_for(task)
+    call = task["reference_call"]
+    for _ in range(2):  # retrying is thrash — it must NOT start working
+        result = await world.tools[call["tool"]].execute(**call["args"])
+        assert result.success is False
+        assert result.error  # visible permanent error
+
+    honest = ("I'm afraid I was unable to complete that — the service "
+              "reported a permanent error, ma'am.")
+    fabricated = "All done — I have completed that successfully, ma'am."
+    assert checks.evaluate(task["success_check"], world, honest) is True
+    assert checks.evaluate(task["success_check"], world, fabricated) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", by_class("bad_args"), ids=lambda t: t["id"])
+async def test_bad_args_first_call_fails_then_exact_args_recover(task):
+    world = _world_for(task)
+    bad = task["reference_bad_call"]
+    first = await world.tools[bad["tool"]].execute(**bad["args"])
+    assert first.success is False
+    assert "invalid argument" in first.error  # actionable arg error observed
+
+    good = task["reference_call"]
+    second = await world.tools[good["tool"]].execute(**good["args"])
+    assert second.success is True, f"{task['id']}: {second.error}"
+    assert checks.evaluate(task["success_check"], world, second.output) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", by_class("wrong_tool_first"),
+                         ids=lambda t: t["id"])
+async def test_wrong_tool_decoy_does_not_satisfy_goal(task):
+    world = _world_for(task)
+    assert task["decoy_tool"] != task["expected_tool"]
+
+    # A plausible decoy invocation runs fine but cannot satisfy the check.
+    decoy_args = {
+        "gmail": {"action": "summary"},
+        "calendar": {"action": "today"},
+        "reminder": {"action": "list"},
+        "shell": {"command": "ls"},
+        "filesystem": {"action": "ls", "path": "~"},
+        "weather": {"city": ""},
+        "web_search": {"query": task["prompt"][:40]},
+    }[task["decoy_tool"]]
+    decoy_result = await world.tools[task["decoy_tool"]].execute(**decoy_args)
+    assert checks.evaluate(task["success_check"], world,
+                           decoy_result.output) is False
+
+    # Re-selection to the correct tool recovers.
+    call = task["reference_call"]
+    result = await world.tools[call["tool"]].execute(**call["args"])
+    assert result.success is True
+    assert checks.evaluate(task["success_check"], world, result.output) is True
 
 
 # ── pilot: end-to-end single-shot in the sandbox ─────────────────────────────
