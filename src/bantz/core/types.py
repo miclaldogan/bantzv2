@@ -46,3 +46,12 @@ class BrainResult:
     pending_args: dict = field(default_factory=dict)
     stream: AsyncIterator[str] | None = None
     attachments: list = field(default_factory=list)  # list[Attachment]
+
+    # Per-iteration trace of the C1 observe→re-decide loop (#503). Empty on
+    # every non-tool path; a single entry on the default single-shot tool path
+    # (tool_loop_max_steps=1); ≥2 entries when the loop actually re-decided.
+    # Each entry follows the loop_eval contract's `iterations[]` shape (#500):
+    # {index, route, tool_name, tool_args, decision_source, result{success,
+    #  error, output_excerpt}, exception, gated, tokens_in, tokens_out,
+    #  wall_ms}. Consumed by the eval runner to build result records.
+    iterations: list = field(default_factory=list)  # list[dict]
