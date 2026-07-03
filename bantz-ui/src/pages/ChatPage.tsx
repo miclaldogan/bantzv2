@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, CornerDownLeft, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Send, CornerDownLeft, Loader2, CheckCircle2, XCircle, Ban } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import type { ResearchProgress } from "../store/useAppStore";
 import { PageTitle, PanelHeader, fmtTime } from "../components/primitives";
@@ -23,12 +23,24 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 function ResearchProgressCard({ research }: { research: ResearchProgress }) {
+  const wsSend      = useAppStore((s) => s.wsSend);
+  const setResearch = useAppStore((s) => s.setResearch);
   const { stage, detail, elapsed, state } = research;
   const label = STAGE_LABEL[stage] ?? STAGE_LABEL[state] ?? "RESEARCHING";
   const accent =
     state === "cancelled" ? "text-obsidian-200 border-obsidian-500"
     : state === "done"    ? "text-gold-400 border-gold-500/60"
     :                       "text-ember-400 border-ember-500/60";
+
+  // #491: the backend cancel path already exists (WS "cancel_research"); this
+  // is the missing UI trigger. The run only polls its cancel flag every ~30s,
+  // so reflect the request immediately and let the indicator self-clear.
+  function cancel() {
+    wsSend?.({ type: "cancel_research" });
+    setResearch({ stage: "cancelled", detail: "Cancelling…", elapsed, state: "cancelled" });
+    setTimeout(() => setResearch(null), 4000);
+  }
+
   return (
     <div className="grid grid-cols-[88px_1fr] gap-4">
       <div className="pt-1 font-terminal text-[10px] tracking-widest text-ember-500">
@@ -48,6 +60,16 @@ function ResearchProgressCard({ research }: { research: ResearchProgress }) {
           <span className="shrink-0 font-terminal text-[10px] tabular-nums text-obsidian-200">
             {elapsed}s
           </span>
+        )}
+        {state === "running" && wsSend && (
+          <button
+            type="button"
+            onClick={cancel}
+            className="flex shrink-0 items-center gap-1 border border-obsidian-500 px-1.5 py-0.5 font-ui text-[9px] font-bold uppercase tracking-widest text-obsidian-200 transition-colors duration-150 ease-bantz hover:border-ember-500 hover:text-ember-400"
+            aria-label="Cancel research"
+          >
+            <Ban size={10} strokeWidth={1.75} /> Cancel
+          </button>
         )}
       </div>
     </div>
