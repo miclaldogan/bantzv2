@@ -274,9 +274,12 @@ def run_child() -> int:
             if result.stream is not None:
                 async for token in result.stream:
                     text += token
-            return text, bool(result.needs_confirm)
+            # The C1 loop's per-iteration trace (#503) is authoritative for
+            # what the loop actually did; carry it out for the record.
+            trace = [dict(it) for it in (getattr(result, "iterations", None) or [])]
+            return text, bool(result.needs_confirm), trace
 
-    response, needs_confirm = asyncio.run(drive())
+    response, needs_confirm, brain_iters = asyncio.run(drive())
     wall_ms = int((time.perf_counter() - t0) * 1000)
 
     live_writes = sandbox.live_writes_since(marker)
@@ -293,36 +296,42 @@ def run_child() -> int:
         outcome = "completed"
 
     calls = world.call_log.calls()
-    iterations = []
-    for i, rec in enumerate(calls):
-        iterations.append({
-            "index": i + 1,
-            "route": "tool",
-            "tool_name": rec.tool,
-            "tool_args": rec.args,
-            # C1 loop telemetry (#503) will refine this; until then the
-            # first execution is the initial decision, later ones are
-            # LLM re-decisions by construction.
-            "decision_source": "initial" if i == 0 else "llm",
-            "result": {"success": rec.success, "error": rec.error,
-                       "output_excerpt": rec.output_excerpt},
-            "exception": rec.exception,
-            "gated": ("needs_confirm"
-                      if needs_confirm and i == len(calls) - 1 else None),
-            "tokens_in": 0, "tokens_out": 0, "wall_ms": 0,
-        })
-    if not iterations:  # routed to chat / never reached a tool
-        iterations.append({
-            "index": 1, "route": "chat", "tool_name": "", "tool_args": {},
-            "decision_source": "initial",
-            "result": {"success": False, "error": None,
-                       "output_excerpt": response[:500]},
-            "exception": None,
-            "gated": "needs_confirm" if needs_confirm else None,
-            "tokens_in": 0, "tokens_out": 0, "wall_ms": 0,
-        })
+    # Prefer the authoritative C1 loop trace from BrainResult (#503): it
+    # directly encodes each iteration's decision + result, so loop_triggered /
+    # recovery reflect what the loop actually did. Fall back to the fixture
+    # call log for no-tool (chat) paths that never enter the loop.
+    if brain_iters:
+        iterations = brain_iters
+    else:
+        iterations = []
+        for i, rec in enumerate(calls):
+            iterations.append({
+                "index": i + 1,
+                "route": "tool",
+                "tool_name": rec.tool,
+                "tool_args": rec.args,
+                "decision_source": "initial" if i == 0 else "llm",
+                "result": {"success": rec.success, "error": rec.error,
+                           "output_excerpt": rec.output_excerpt},
+                "exception": rec.exception,
+                "gated": ("needs_confirm"
+                          if needs_confirm and i == len(calls) - 1 else None),
+                "tokens_in": 0, "tokens_out": 0, "wall_ms": 0,
+            })
+        if not iterations:  # routed to chat / never reached a tool
+            iterations.append({
+                "index": 1, "route": "chat", "tool_name": "", "tool_args": {},
+                "decision_source": "initial",
+                "result": {"success": False, "error": None,
+                           "output_excerpt": response[:500]},
+                "exception": None,
+                "gated": "needs_confirm" if needs_confirm else None,
+                "tokens_in": 0, "tokens_out": 0, "wall_ms": 0,
+            })
 
-    loop_triggered = False  # C1 loop not landed (#503); baseline semantics
+    # The loop re-decided iff more than one iteration was recorded (steps=1
+    # baseline always has exactly one → loop_triggered stays False).
+    loop_triggered = len(iterations) > 1
     record = {
         "schema_version": "1.0",
         "batch_id": payload["batch_id"],
@@ -375,11 +384,17 @@ def _child_env(cond: dict, mock: bool) -> dict:
     env["BANTZ_OLLAMA_MODEL"] = cond["model"]
     env["BANTZ_LLM_PROVIDER"] = cond["provider"]
     env["BANTZ_TOOL_LOOP_MAX_STEPS"] = str(cond["tool_loop_max_steps"])
-    if mock:  # keep test children lean and network-free
-        env["BANTZ_MEMPALACE_ENABLED"] = "false"
-        env["BANTZ_VOICE_ENABLED"] = "false"
-        env["BANTZ_OBSERVER_ENABLED"] = "false"
-        env["BANTZ_RL_ENABLED"] = "false"
+    # Disable eval-irrelevant, leak-prone subsystems for EVERY child (mock and
+    # real), not just mock. MemPalace writes lock files under the live
+    # ~/.mempalace/locks regardless of BANTZ_PALACE_PATH, and voice/observer/RL
+    # touch live paths too — any of which trips the sandbox guard (#505) on a
+    # real run. None affect the measured routing/recovery on fresh sandboxed
+    # tasks (no stored memory to recall); only the model call stays real when
+    # mock is off.
+    env["BANTZ_MEMPALACE_ENABLED"] = "false"
+    env["BANTZ_VOICE_ENABLED"] = "false"
+    env["BANTZ_OBSERVER_ENABLED"] = "false"
+    env["BANTZ_RL_ENABLED"] = "false"
     return env
 
 

@@ -24,13 +24,17 @@ def _run(*args: str, timeout: int = 900) -> subprocess.CompletedProcess:
         cwd=str(REPO))
 
 
-def test_preflight_green_baseline_only(tmp_path):
+def test_preflight_green_with_loop(tmp_path):
+    """With the C1 loop landed (#503), the UNWAIVED gate is GREEN: check #4
+    shows a real steps=3 recovery end-to-end, so no --allow-no-loop is needed.
+    (Before the loop landed this same call correctly returned RED.)"""
     report = tmp_path / "report.md"
-    proc = _run("--allow-no-loop", "--report", str(report))
+    proc = _run("--report", str(report))
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-1000:]
     text = report.read_text(encoding="utf-8")
-    assert "GREEN (BASELINE-ONLY)" in text
+    assert "GREEN — full batch may proceed" in text
     assert text.count("✅ PASS") == 5
+    assert "recovery=True" in text
     assert "git SHA" in text
     # every one of the five checks is present in the archived report
     for marker in ("1. mini-batch", "2. hard-kill", "3. zero writes",
@@ -38,12 +42,14 @@ def test_preflight_green_baseline_only(tmp_path):
         assert marker in text, marker
 
 
-def test_preflight_red_without_loop_waiver(tmp_path):
-    """Until the C1 loop (#503) lands, an unwaived gate must refuse the
-    batch — that is the gate doing its job, not a bug."""
+def test_preflight_baseline_only_waiver_accepted(tmp_path):
+    """--allow-no-loop remains a valid (now redundant) waiver: the gate still
+    passes and archives all five checks. Because the loop recovers the
+    transient task, the verdict is full GREEN rather than BASELINE-ONLY."""
     report = tmp_path / "report.md"
-    proc = _run("--report", str(report))
-    assert proc.returncode == 1
+    proc = _run("--allow-no-loop", "--report", str(report))
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-1000:]
     text = report.read_text(encoding="utf-8")
-    assert "RED — do NOT start a full batch" in text
-    assert "loop" in text.lower()
+    assert "GREEN" in text
+    assert text.count("✅ PASS") == 5
+    assert "git SHA" in text
