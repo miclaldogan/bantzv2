@@ -766,7 +766,11 @@ class Brain:
         if result.tools_used:
             response += f"\n\n[Agent: {role} · tools: {', '.join(result.tools_used)}]"
 
-        data_layer.conversations.add("assistant", response, tool_used=f"agent:{role}")
+        try:
+            data_layer.conversations.add(
+                "assistant", response, tool_used=f"agent:{role}")
+        except Exception as exc:
+            log.debug("agent route: history persistence failed: %s", exc)
         # Same follow-up context bookkeeping as the planner branch.
         self._last_tool_output = response[:500]
         self._last_tool_name = f"agent:{role}"
