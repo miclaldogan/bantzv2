@@ -435,6 +435,15 @@ class TTSEngine:
         if not self.available():
             return
 
+        # Never read internal monologue/markdown aloud. strip removes
+        # closed <thinking> blocks; a truncated stream can leave an
+        # unclosed one — everything from the orphan tag on is internal.
+        text = strip_markdown_for_tts(text)
+        if "<thinking" in text:
+            text = text.split("<thinking", 1)[0].strip()
+        if not text:
+            return
+
         self._stop_requested = False
         self._speaking = True
         _emit_voice_event("tts_started")
