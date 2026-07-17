@@ -307,6 +307,9 @@ class Config(BaseSettings):
     agent_default_model: str = Field("gemma3:4b", alias="BANTZ_AGENT_DEFAULT_MODEL")
     # WebAgent may drive the browser only when explicitly allowed (#555).
     webagent_browser: bool = Field(False, alias="BANTZ_WEBAGENT_BROWSER")
+    # Local mail store (#552): mbsync maildir + notmuch index.
+    localmail_enabled: bool = Field(False, alias="BANTZ_LOCALMAIL_ENABLED")
+    maildir_path: str = Field("~/Mail", alias="BANTZ_MAILDIR_PATH")
     # Jury (#557): event-driven verifier; LLM analyses are hard-budgeted.
     jury_enabled: bool = Field(False, alias="BANTZ_JURY_ENABLED")
     jury_llm_budget_per_hour: int = Field(4, alias="BANTZ_JURY_LLM_BUDGET_PER_HOUR")

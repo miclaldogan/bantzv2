@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync Gmail to local maildir for Bantz (mbsync + notmuch)
+Documentation=file://%h/.local/share/bantz/src/deploy/README-mail.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mbsync -a
+ExecStartPost=/usr/bin/notmuch new
+# Network may be down — that's fine, next timer tick retries.
+SuccessExitStatus=0 1
