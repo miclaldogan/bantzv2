@@ -702,6 +702,61 @@ class Brain:
             f"  outcome: {detail}"
         )
 
+    async def _execute_agent_route(
+        self,
+        plan: dict,
+        en_input: str,
+        user_input: str,
+        confirmed: bool,
+    ) -> BrainResult | None:
+        """route == "agent" (#550): hand the task to a specialist sub-agent.
+
+        Returns None when multi-agent is disabled, the role can't be
+        resolved, or the delegation fails — the caller falls back to chat.
+        Low autonomy asks before delegating (a delegation runs tools)."""
+        from bantz.agent.agent_manager import agent_manager
+        from bantz.agent.sub_agent import resolve_role
+
+        if not agent_manager.enabled:
+            log.info("agent route requested but multi-agent is disabled")
+            return None
+
+        role = resolve_role(str(plan.get("agent_role") or "researcher")) or "researcher"
+        task = str(plan.get("agent_task") or "").strip() or en_input
+
+        if config.autonomy == "low" and not confirmed:
+            warn = (
+                f"⚠️  Delegate to the {role} agent: “{task[:120]}”\n"
+                f"Confirm? (yes/no)"
+            )
+            data_layer.conversations.add("assistant", warn)
+            return BrainResult(
+                response=warn, tool_used="delegate_task", needs_confirm=True,
+                pending_command=task[:120], pending_tool="delegate_task",
+                pending_args={"agent_role": role, "task_description": task},
+            )
+
+        try:
+            result = await agent_manager.delegate(role, task)
+        except Exception as exc:
+            log.warning("agent route: delegation crashed: %s", exc)
+            return None
+        if not result.success:
+            log.warning("agent route: delegation failed: %s", result.error)
+            return None
+
+        response = result.summary or "Task completed."
+        if result.tools_used:
+            response += f"\n\n[Agent: {role} · tools: {', '.join(result.tools_used)}]"
+
+        # Same follow-up context bookkeeping as the planner branch.
+        self._last_tool_output = response[:500]
+        self._last_tool_name = f"agent:{role}"
+        self._context_turn = self._turn_counter
+        await self._graph_store(user_input, response, f"agent:{role}")
+        self._fire_embeddings()
+        return BrainResult(response=response, tool_used=f"agent:{role}")
+
     async def _execute_with_recovery(
         self, *,
         tool_name: str, tool_args: dict, risk: str, requires_confirm: Any,
@@ -1119,7 +1174,7 @@ class Brain:
         #    llama3.1:8b often returns route="gmail" instead of "tool",
         #    or route="Web Search" instead of "tool".
         #    Fix: if route looks like a tool name → normalise to "tool".
-        if route not in ("tool", "planner", "chat"):
+        if route not in ("tool", "planner", "chat", "agent"):
             # Fuzzy-match route against registered tool names
             if registry.get(route):
                 if not tool_name:
@@ -1205,6 +1260,17 @@ class Brain:
                 en_input, tc,
                 system_alert=f"Multi-step planner failed: {routing_error or 'decomposition returned no steps'}",
             )
+            return BrainResult(response="", tool_used=None, stream=stream)
+
+        # ── Step 4b: route == "agent" → delegate to a sub-agent (#550) ──
+        if route == "agent":
+            agent_result = await self._execute_agent_route(
+                plan, en_input, user_input, confirmed,
+            )
+            if agent_result is not None:
+                return agent_result
+            # Multi-agent disabled / delegation failed → graceful chat.
+            stream = self._chat_stream(en_input, tc)
             return BrainResult(response="", tool_used=None, stream=stream)
 
         # ── Step 5: route == "chat" → streaming chat ──────────────────
