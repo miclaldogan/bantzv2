@@ -131,7 +131,7 @@ RULES:
 - "play X" / "listen to X" (music intent, no site specified) → route="planner" (open YT Music + search + click).
 - ANY music-listening wish without "play" — "i want to listen (to) X", "put on some X", "can we hear X" → route="planner" too. NEVER web_search and NEVER news: music requests are ACTIONS to perform, not information lookups.
 - "research X and write a report", "research X and give a detailed summary", "deep dive into X and write it up" → web_research. The web_research tool ALREADY produces the full written report itself — do NOT send report/summary research to the planner.
-- route="agent" ONLY for tasks that need a specialist working autonomously with verification: "thoroughly research X and cite/verify sources", "fact-check X across multiple sources", "have an agent handle X", "triage my inbox". Set agent_role (researcher|developer|reviewer) and agent_task=<the full task>. A bare "research X" / "araştır" stays web_research; a simple question stays chat. When unsure, do NOT pick agent.
+- route="agent" ONLY for tasks that need a specialist working autonomously with verification: "thoroughly research X and cite/verify sources", "fact-check X across multiple sources", "have an agent handle X", "triage my inbox". Set agent_role (web|developer|reviewer) and agent_task=<the full task>. A bare "research X" / "araştır" stays web_research; a simple question stays chat. When unsure, do NOT pick agent.
 - Creating events/meetings/dinners → calendar. Reminders/timers → reminder.
 - Literal bash commands (ls, df, top) → shell.
 - Multi-step with "then" / "and" / "after that" → route="planner".
@@ -164,7 +164,7 @@ ANTI-FALSE-POSITIVE RULES (when in doubt, route to chat):
 - When in doubt between tool and chat, always choose route="chat".
 
 OUTPUT — single JSON, no markdown:
-{{"route": "tool|planner|chat|agent", "tool_name": "exact_name", "tool_args": {{}}, "agent_role": "researcher|developer|reviewer (route=agent only)", "agent_task": "full task (route=agent only)", "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
+{{"route": "tool|planner|chat|agent", "tool_name": "exact_name", "tool_args": {{}}, "agent_role": "web|developer|reviewer (route=agent only)", "agent_task": "full task (route=agent only)", "risk_level": "safe|moderate|destructive", "confidence": 0.0-1.0, "reasoning": "one sentence"}}\
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

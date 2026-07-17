@@ -89,14 +89,14 @@ class TestResolveRole:
 
     def test_canonical_names(self):
         """Direct role names resolve to themselves."""
-        assert resolve_role("researcher") == "researcher"
+        assert resolve_role("researcher") == "web"  # legacy name is an alias now
         assert resolve_role("developer") == "developer"
         assert resolve_role("reviewer") == "reviewer"
 
     def test_aliases(self):
         """Common aliases resolve correctly."""
         assert resolve_role("dev") == "developer"
-        assert resolve_role("search") == "researcher"
+        assert resolve_role("search") == "web"
         assert resolve_role("code") == "developer"
         assert resolve_role("check") == "reviewer"
         assert resolve_role("verify") == "reviewer"
@@ -104,13 +104,13 @@ class TestResolveRole:
 
     def test_case_insensitive(self):
         """Resolution is case-insensitive."""
-        assert resolve_role("RESEARCHER") == "researcher"
+        assert resolve_role("RESEARCHER") == "web"
         assert resolve_role("Dev") == "developer"
         assert resolve_role("REVIEW") == "reviewer"
 
     def test_normalisation(self):
         """Leading/trailing whitespace is stripped."""
-        assert resolve_role(" researcher ") == "researcher"
+        assert resolve_role(" researcher ") == "web"
         assert resolve_role(" dev ") == "developer"
         assert resolve_role("  review  ") == "reviewer"
 
@@ -127,7 +127,7 @@ class TestCreateAgent:
     def test_creates_researcher(self):
         agent = create_agent("researcher")
         assert isinstance(agent, ResearcherAgent)
-        assert agent.role == "researcher"
+        assert agent.role == "web"
 
     def test_creates_developer(self):
         agent = create_agent("developer")
@@ -150,7 +150,7 @@ class TestCreateAgent:
         roles = available_roles()
         assert len(roles) == 3
         role_names = {r["role"] for r in roles}
-        assert role_names == {"researcher", "developer", "reviewer"}
+        assert role_names == {"web", "developer", "reviewer"}
         # Each has display_name
         for r in roles:
             assert "display_name" in r
@@ -195,7 +195,7 @@ class TestBuildSystem:
         agent = ResearcherAgent()
         prompt = agent._build_system("Find GDP", {"user_language": "Turkish"})
         assert "Turkish" in prompt
-        assert "Research Agent" in prompt
+        assert "Web Agent" in prompt
 
     def test_developer_with_workdir(self):
         agent = DeveloperAgent()
@@ -211,7 +211,7 @@ class TestBuildSystem:
         """System prompt text is always included even without context."""
         agent = ResearcherAgent()
         prompt = agent._build_system("task", {})
-        assert "Research Agent" in prompt
+        assert "Web Agent" in prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -510,7 +510,7 @@ class TestLLMChat:
             return "lane answer"
 
         with patch("bantz.llm.lane.llm_call", fake_llm_call), \
-             patch.object(config, "agent_models", '{"researcher": "gemma3:4b"}'):
+             patch.object(config, "agent_models", '{"web": "gemma3:4b"}'):
             result = await agent._llm_chat([{"role": "user", "content": "hi"}])
 
         assert result == "lane answer"
@@ -536,7 +536,7 @@ class TestLLMChat:
                  patch.object(config, "llm_provider", "ollama"), \
                  patch.object(config, "gemini_enabled", False), \
                  patch.object(config, "llm_lane_enabled", True), \
-                 patch.object(config, "agent_models", '{"researcher": "gemma3:4b"}'), \
+                 patch.object(config, "agent_models", '{"web": "gemma3:4b"}'), \
                  patch.object(ollama_singleton, "chat", chat_mock):
                 result = await agent._llm_chat([{"role": "user", "content": "hi"}])
         finally:
@@ -609,4 +609,58 @@ class TestRoleRegistry:
 
     def test_three_roles_registered(self):
         assert len(AGENT_ROLES) == 3
-        assert set(AGENT_ROLES.keys()) == {"researcher", "developer", "reviewer"}
+        assert set(AGENT_ROLES.keys()) == {"web", "developer", "reviewer"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Corrective re-plan (#555)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestReplanIteration:
+    """One bounded re-plan when most tool calls fail."""
+
+    @pytest.mark.asyncio
+    async def test_failed_calls_trigger_exactly_one_replan(self):
+        from bantz.tools import registry
+
+        agent = create_agent("web")
+        llm_responses = [
+            '[{"tool": "web_search", "args": {"query": "q1"}}]',  # plan
+            '[{"tool": "web_search", "args": {"query": "q2"}}]',  # re-plan
+            '{"summary": "final answer", "data": {}}',            # synthesize
+        ]
+        chat_mock = AsyncMock(side_effect=llm_responses)
+
+        fail_result = MagicMock(success=False, output="search error")
+        ok_result = MagicMock(success=True, output="good result")
+        tool = MagicMock()
+        tool.execute = AsyncMock(side_effect=[fail_result, ok_result])
+
+        with patch.object(agent, "_llm_chat", chat_mock), \
+             patch.object(registry, "get", return_value=tool):
+            result = await agent.run("find x")
+
+        assert chat_mock.await_count == 3, "expected plan + ONE re-plan + synthesis"
+        assert tool.execute.await_count == 2
+        assert result.success
+        assert result.summary == "final answer"
+
+    @pytest.mark.asyncio
+    async def test_successful_calls_skip_replan(self):
+        from bantz.tools import registry
+
+        agent = create_agent("web")
+        llm_responses = [
+            '[{"tool": "web_search", "args": {"query": "q1"}}]',
+            '{"summary": "done", "data": {}}',
+        ]
+        chat_mock = AsyncMock(side_effect=llm_responses)
+        tool = MagicMock()
+        tool.execute = AsyncMock(return_value=MagicMock(success=True, output="ok"))
+
+        with patch.object(agent, "_llm_chat", chat_mock), \
+             patch.object(registry, "get", return_value=tool):
+            result = await agent.run("find x")
+
+        assert chat_mock.await_count == 2, "no re-plan when calls succeed"
+        assert result.success

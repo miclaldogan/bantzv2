@@ -128,6 +128,9 @@ class SubAgent(ABC):
     # Optional in-code model pin; BANTZ_AGENT_MODELS[role] wins over this,
     # and BANTZ_AGENT_DEFAULT_MODEL applies when both are empty.
     model_override: str = ""
+    # Delegation correlation id — set by AgentManager.delegate() so
+    # agent_progress events pair up with delegation_start/done.
+    corr_id: str = ""
 
     @abstractmethod
     def _build_system(self, task: str, context: dict[str, Any]) -> str:
@@ -163,46 +166,43 @@ class SubAgent(ABC):
 
         tool_calls = self._parse_tool_calls(plan_raw)
 
-        # ── Phase 2: Execute tools ──────────────────────────────
+        # ── Phase 2: Execute tools (with one corrective re-plan) ─
         tool_results: list[dict[str, Any]] = []
         if tool_calls:
-            from bantz.tools import registry
+            tool_results = await self._execute_calls(
+                tool_calls[: self.max_tool_calls], tools_used,
+            )
 
-            for i, call in enumerate(tool_calls[: self.max_tool_calls]):
-                tool_name = call.get("tool", "")
-                tool_args = call.get("args", {})
-
-                if tool_name not in self.allowed_tools:
-                    tool_results.append({
-                        "tool": tool_name,
-                        "success": False,
-                        "output": f"Tool '{tool_name}' not permitted for {self.role} agent.",
-                    })
-                    continue
-
-                tool = registry.get(tool_name)
-                if not tool:
-                    tool_results.append({
-                        "tool": tool_name,
-                        "success": False,
-                        "output": f"Tool '{tool_name}' not found in registry.",
-                    })
-                    continue
-
+            # One bounded re-plan: if most calls failed and budget remains,
+            # feed the failures back and let the LLM correct itself once.
+            failed = sum(1 for r in tool_results if not r.get("success"))
+            budget_left = self.max_tool_calls - len(tool_results)
+            if tool_results and failed * 2 > len(tool_results) and budget_left > 0:
+                log.info(
+                    "%s agent: %d/%d tool calls failed — one corrective re-plan",
+                    self.role, failed, len(tool_results),
+                )
+                replan_messages = plan_messages + [
+                    {"role": "assistant", "content": plan_raw},
+                    {"role": "user", "content": (
+                        "These tool calls failed:\n```json\n"
+                        + json.dumps(tool_results, ensure_ascii=False)[:2000]
+                        + "\n```\nReturn a corrected JSON array of at most "
+                        f"{budget_left} tool calls that fixes the errors "
+                        "(different query/args or a different permitted tool). "
+                        "Only the JSON array."
+                    )},
+                ]
                 try:
-                    tr = await tool.execute(**tool_args)
-                    tool_results.append({
-                        "tool": tool_name,
-                        "success": tr.success,
-                        "output": tr.output[:3000],  # cap output to save tokens
-                    })
-                    tools_used.append(tool_name)
+                    replan_raw = await self._llm_chat(replan_messages)
+                    corrected = self._parse_tool_calls(replan_raw)
                 except Exception as exc:
-                    tool_results.append({
-                        "tool": tool_name,
-                        "success": False,
-                        "output": f"Execution error: {exc}",
-                    })
+                    log.debug("%s agent re-plan failed: %s", self.role, exc)
+                    corrected = []
+                if corrected:
+                    tool_results += await self._execute_calls(
+                        corrected[:budget_left], tools_used,
+                    )
 
         # ── Phase 3: Synthesise (LLM produces final answer) ─────
         synth_messages = list(plan_messages)
@@ -247,6 +247,68 @@ class SubAgent(ABC):
             return SubAgentResult.failure(f"LLM error during synthesis: {exc}")
 
         return self._parse_final_result(final_raw, tools_used)
+
+    async def _execute_calls(
+        self,
+        calls: list[dict[str, Any]],
+        tools_used: list[str],
+    ) -> list[dict[str, Any]]:
+        """Run tool calls sequentially with the allowed_tools whitelist.
+
+        Emits an agent_progress bus event per call (role/corr_id/tool/ok)."""
+        from bantz.tools import registry
+
+        results: list[dict[str, Any]] = []
+        for call in calls:
+            tool_name = call.get("tool", "")
+            tool_args = call.get("args", {})
+
+            if tool_name not in self.allowed_tools:
+                results.append({
+                    "tool": tool_name,
+                    "success": False,
+                    "output": f"Tool '{tool_name}' not permitted for {self.role} agent.",
+                })
+                self._emit_progress(tool_name, False)
+                continue
+
+            tool = registry.get(tool_name)
+            if not tool:
+                results.append({
+                    "tool": tool_name,
+                    "success": False,
+                    "output": f"Tool '{tool_name}' not found in registry.",
+                })
+                self._emit_progress(tool_name, False)
+                continue
+
+            try:
+                tr = await tool.execute(**tool_args)
+                results.append({
+                    "tool": tool_name,
+                    "success": tr.success,
+                    "output": tr.output[:3000],  # cap output to save tokens
+                })
+                tools_used.append(tool_name)
+                self._emit_progress(tool_name, tr.success)
+            except Exception as exc:
+                results.append({
+                    "tool": tool_name,
+                    "success": False,
+                    "output": f"Execution error: {exc}",
+                })
+                self._emit_progress(tool_name, False)
+        return results
+
+    def _emit_progress(self, tool: str, ok: bool) -> None:
+        try:
+            from bantz.core.event_bus import bus
+            bus.emit_threadsafe(
+                "agent_progress",
+                role=self.role, corr_id=self.corr_id, tool=tool, ok=ok,
+            )
+        except Exception:
+            pass
 
     # ── LLM Abstraction ──────────────────────────────────────────
 
@@ -347,27 +409,30 @@ class SubAgent(ABC):
 # Specialized Roles
 # ═══════════════════════════════════════════════════════════════════════════
 
-class ResearcherAgent(SubAgent):
-    """Specialised in web search, reading, and information synthesis.
+class WebAgent(SubAgent):
+    """Specialised in web search, reading, news, and information synthesis.
 
-    Has access to search, URL reading, and summarisation tools.
-    No shell, filesystem, or destructive capabilities.
+    Has access to search, URL reading, news, and summarisation tools.
+    No shell, filesystem, or destructive capabilities. Browser automation
+    only when BANTZ_WEBAGENT_BROWSER=true.
     """
 
-    role = "researcher"
-    display_name = "Researcher"
+    role = "web"
+    display_name = "Web"
+    max_tool_calls = 8
     allowed_tools = {
         "web_search",
         "read_url",
         "summarizer",
         "news",
+        "web_news",
         "feed",
     }
 
     system_prompt = """\
-You are a Research Agent — a specialised sub-agent within the Bantz system.
-Your job is to find accurate, up-to-date information using web search and
-URL reading tools.
+You are a Web Agent — a specialised sub-agent within the Bantz system.
+Your job is to find accurate, up-to-date information using web search,
+URL reading, and news tools.
 
 RULES:
 1. Always verify claims using multiple sources when possible.
@@ -380,10 +445,15 @@ TOOL USAGE:
 To use tools, respond with a JSON array of tool calls:
 [{"tool": "web_search", "args": {"query": "your search query"}}]
 
-Available tools: web_search, read_url, summarizer, news, feed.
+Available tools: web_search, read_url, summarizer, news, web_news, feed.
 
 After receiving tool results, synthesise a clear, factual answer.
 """
+
+    def __init__(self) -> None:
+        from bantz.config import config
+        if getattr(config, "webagent_browser", False):
+            self.allowed_tools = self.allowed_tools | {"browser_control"}
 
     def _build_system(self, task: str, context: dict[str, Any]) -> str:
         parts = [self.system_prompt]
@@ -392,6 +462,10 @@ After receiving tool results, synthesise a clear, factual answer.
         if context.get("prior_findings"):
             parts.append(f"\nPrior findings: {context['prior_findings']}")
         return "\n".join(parts)
+
+
+# Backward-compat name — external imports and old delegations still work.
+ResearcherAgent = WebAgent
 
 
 class DeveloperAgent(SubAgent):
@@ -499,17 +573,18 @@ After reviewing, provide a structured assessment with:
 
 # All available sub-agent roles — keyed by their role identifier
 AGENT_ROLES: dict[str, type[SubAgent]] = {
-    "researcher": ResearcherAgent,
+    "web": WebAgent,
     "developer": DeveloperAgent,
     "reviewer": ReviewerAgent,
 }
 
 # Human-friendly aliases for flexible delegation
 ROLE_ALIASES: dict[str, str] = {
-    "research": "researcher",
-    "search": "researcher",
-    "lookup": "researcher",
-    "find": "researcher",
+    "researcher": "web",
+    "research": "web",
+    "search": "web",
+    "lookup": "web",
+    "find": "web",
     "dev": "developer",
     "coder": "developer",
     "code": "developer",

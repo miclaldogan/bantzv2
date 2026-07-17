@@ -323,4 +323,4 @@ class TestStatsAndReset:
         roles = mgr.list_roles()
         assert len(roles) == 3
         role_ids = {r["role"] for r in roles}
-        assert "researcher" in role_ids
+        assert "web" in role_ids

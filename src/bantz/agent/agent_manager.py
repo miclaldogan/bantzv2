@@ -244,6 +244,7 @@ class AgentManager:
             pass
         from bantz.core.event_bus import new_corr_id
         corr_id = new_corr_id()
+        agent.corr_id = corr_id  # pairs agent_progress with delegation events
         try:
             from bantz.core.event_bus import bus as _bus
             await _bus.emit(

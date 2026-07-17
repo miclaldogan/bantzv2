@@ -53,10 +53,10 @@ class TestExecuteAgentRoute:
                 "verify X", "verify X", False,
             )
         assert out is not None
-        assert out.tool_used == "agent:researcher"  # alias resolved
+        assert out.tool_used == "agent:web"  # alias resolved
         assert "the answer" in out.response
         assert "web_search" in out.response
-        mgr.delegate.assert_awaited_once_with("researcher", "verify X")
+        mgr.delegate.assert_awaited_once_with("web", "verify X")
 
     async def test_failed_delegation_returns_none(self, brain):
         from bantz.agent.sub_agent import SubAgentResult
@@ -113,4 +113,4 @@ class TestExecuteAgentRoute:
             await brain._execute_agent_route(
                 {"agent_role": "researcher"}, "the english input", "orig", False,
             )
-        mgr.delegate.assert_awaited_once_with("researcher", "the english input")
+        mgr.delegate.assert_awaited_once_with("web", "the english input")
