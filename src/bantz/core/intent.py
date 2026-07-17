@@ -49,6 +49,14 @@ _ROUTING_HINTS: dict[str, str] = {
         "Translation artifact: 'what is the use of cpu/ram/disk' = system metric query, NOT web_search. "
         "NOT for windows, apps, or UI elements — 'what windows are open', 'list interactive elements' go to accessibility/desktop."
     ),
+    "lantern": (
+        "Desktop ambiance control (Lantern). Turkish/English triggers: "
+        "'odak modu' (focus mode) → action=focus; 'müzik ışığı/glow' → action=glow "
+        "(mode=waves|pulse|hybrid via action=glow_mode); 'albüm teması' → action=album_theme; "
+        "'masaüstü sesleri' → action=sounds; 'gece modu' (night mode) → action=night; "
+        "'ortam/ambiyans durumu', 'batarya sağlığı', 'gpu durumu' → action=status. "
+        "state=on|off|toggle. NOT for system CPU/RAM metrics (that is 'system')."
+    ),
     "filesystem": "Read, write, list files and folders under home directory",
     "browser_control": "Launch apps AND control the web browser ONLY (clicking links, filling web forms, navigating URLs, web page elements). Actions: open, navigate, find_and_click, type_in_element, hotkey, type, scroll, screenshot, wait_for_load. Web services (YouTube, Spotify, Netflix…) = action=open. NOT for: clicking desktop buttons/dialogs (visual_click), native app windows (desktop), bare keyboard/mouse input (input_control), listing windows (accessibility). IMPORTANT: 'play/search/find X on YouTube/YT Music' needs MULTIPLE steps (search → wait → click) → route=planner.",
     "visual_click": "Click any visible UI element on screen by describing it ('click the submit button', 'click OK in the dialog'). Works on desktop and native app windows — first choice for clicking things that are NOT inside a web page.",

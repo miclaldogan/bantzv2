@@ -201,6 +201,7 @@ class Brain:
         import bantz.tools.system       # noqa: F401
         import bantz.tools.filesystem   # noqa: F401
         import bantz.tools.weather      # noqa: F401
+        import bantz.tools.lantern      # noqa: F401
         _load_optional_tool("bantz.tools.news", "defusedxml")
         import bantz.tools.web_search   # noqa: F401
         import bantz.tools.web_reader   # noqa: F401
