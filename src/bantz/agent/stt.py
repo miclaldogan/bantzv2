@@ -55,6 +55,41 @@ class STTEngine:
         self._device: str = "cpu"
         self._language: str = "auto"
         self._available: bool | None = None  # None = not checked yet
+        # Idle unload (#560): last transcription time + pending timer.
+        self._last_used: float = 0.0
+        self._unload_timer = None
+
+    # ── idle unload (#560) ────────────────────────────────────────────────
+
+    def _schedule_idle_unload(self) -> None:
+        """(Re)arm a timer that frees the whisper model after N idle minutes.
+
+        Gated on BANTZ_STT_IDLE_UNLOAD_MIN (0 = keep resident forever).
+        The model reloads transparently on the next transcription via
+        _ensure_model()."""
+        import threading
+        import time as _time
+        try:
+            from bantz.config import config
+            minutes = int(config.stt_idle_unload_min)
+        except Exception:
+            minutes = 0
+        if minutes <= 0:
+            return
+        self._last_used = _time.monotonic()
+        if self._unload_timer is not None:
+            self._unload_timer.cancel()
+
+        def _unload() -> None:
+            import time as _t
+            if self._model is not None and _t.monotonic() - self._last_used >= minutes * 60 - 1:
+                log.info("STT: idle %d min — unloading model '%s'", minutes, self._model_name)
+                self._model = None
+                self._available = None
+
+        self._unload_timer = threading.Timer(minutes * 60, _unload)
+        self._unload_timer.daemon = True
+        self._unload_timer.start()
 
     def _ensure_model(self) -> bool:
         """Lazy-load the Whisper model on first use."""
@@ -110,6 +145,7 @@ class STTEngine:
 
         if not self._ensure_model():
             return None
+        self._schedule_idle_unload()
 
         # Convert raw PCM to a WAV file in a temp location
         # (faster-whisper needs a file path or numpy array)

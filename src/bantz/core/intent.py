@@ -506,7 +506,9 @@ async def _stream_and_collect(
         # ignore the flag... except Ollama 400s on unsupported models, so we
         # only send it when the model is known to support native thinking.
         _think = think if _supports_native_think(model_override or ollama.model) else None
-        async for token in ollama.chat_stream(messages, options=options, model_override=model_override, think=_think):
+        # Routing is the hottest path — keep its model resident (#560).
+        from bantz.config import config as _cfg
+        async for token in ollama.chat_stream(messages, options=options, model_override=model_override, think=_think, keep_alive=_cfg.ollama_keep_alive):
             buf += token
 
             if not emit_thinking or thinking_complete:

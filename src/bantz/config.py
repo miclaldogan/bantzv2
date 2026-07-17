@@ -33,6 +33,15 @@ class Config(BaseSettings):
     ollama_keep_alive: str = Field("30m", alias="BANTZ_OLLAMA_KEEP_ALIVE")
     ollama_bg_keep_alive: str = Field("5m", alias="BANTZ_OLLAMA_BG_KEEP_ALIVE")
 
+    # ── Model residency (#560) ────────────────────────────────────────────
+    # Lazy STT: skip the startup whisper preload; first wake pays ~2s once.
+    stt_lazy_load: bool = Field(False, alias="BANTZ_STT_LAZY_LOAD")
+    # Unload the whisper model after N idle minutes (0 = keep resident).
+    stt_idle_unload_min: int = Field(0, alias="BANTZ_STT_IDLE_UNLOAD_MIN")
+    # Preload MarianMT translation models at startup (only relevant when
+    # the language bridge is enabled).
+    translation_preload: bool = Field(True, alias="BANTZ_TRANSLATION_PRELOAD")
+
     # ── Vector Search ─────────────────────────────────────────────────────
     vector_search_weight: float = Field(0.5, alias="BANTZ_VECTOR_SEARCH_WEIGHT")
 

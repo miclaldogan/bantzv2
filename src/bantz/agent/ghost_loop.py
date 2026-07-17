@@ -82,12 +82,18 @@ class GhostLoop:
         self._running = True
         log.info("Ghost Loop: active — waiting for wake word")
 
-        # Pre-load STT model in background so first voice command is fast
-        threading.Thread(
-            target=self._preload_stt,
-            name="bantz-stt-preload",
-            daemon=True,
-        ).start()
+        # Pre-load STT model in background so first voice command is fast.
+        # BANTZ_STT_LAZY_LOAD skips this — the model loads on first wake
+        # instead (one-time ~2s latency, smaller idle RSS). (#560)
+        from bantz.config import config as _config
+        if _config.stt_lazy_load:
+            log.info("Ghost Loop: STT lazy-load enabled — skipping preload")
+        else:
+            threading.Thread(
+                target=self._preload_stt,
+                name="bantz-stt-preload",
+                daemon=True,
+            ).start()
 
         return True
 

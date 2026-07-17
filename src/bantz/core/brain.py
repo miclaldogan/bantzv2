@@ -90,6 +90,19 @@ _TOPIC_DISCIPLINE = (
 )
 
 
+def _keep_alive_kwargs(provider) -> dict:
+    """keep_alive applies only to the Ollama client (#560) — the main
+    conversation model stays resident so an idle gap doesn't cost a
+    multi-second reload on the next message."""
+    try:
+        from bantz.llm.ollama import OllamaClient
+        if isinstance(provider, OllamaClient):
+            return {"keep_alive": config.ollama_keep_alive}
+    except Exception:
+        pass
+    return {}
+
+
 def _mood_suffix() -> str:
     """Personality 'mood bias' dial → an instruction appended to the chat
     system prompt. Read live from config so Settings changes apply at once."""
@@ -1525,7 +1538,7 @@ class Brain:
         from bantz.llm.router import get_provider
         try:
             provider = get_provider()
-            raw = await provider.chat(messages)
+            raw = await provider.chat(messages, **_keep_alive_kwargs(provider))
             if _is_refusal(raw):
                 return "I'm afraid that's outside my service area, sir."
             return strip_markdown(raw)
@@ -1584,7 +1597,7 @@ class Brain:
         from bantz.llm.router import get_provider
         try:
             provider = get_provider()
-            async for token in provider.chat_stream(messages):
+            async for token in provider.chat_stream(messages, **_keep_alive_kwargs(provider)):
                 yield token
         except Exception as exc:
             log.error("LLM stream error: %s", exc)
@@ -1698,7 +1711,7 @@ class Brain:
         from bantz.llm.router import get_provider
         try:
             provider = get_provider()
-            async for token in provider.chat_stream(messages):
+            async for token in provider.chat_stream(messages, **_keep_alive_kwargs(provider)):
                 yield token
         except Exception as exc:
             log.error("investigate stream error: %s", exc)

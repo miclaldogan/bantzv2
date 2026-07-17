@@ -391,8 +391,9 @@ class WsBroadcastServer:
         """Load MarianMT models into memory at startup so the first user
         message doesn't pay the 20-30s disk-load cost."""
         try:
+            from bantz.config import config
             from bantz.i18n.bridge import bridge
-            if not bridge.is_enabled():
+            if not bridge.is_enabled() or not config.translation_preload:
                 return
             log.info("Preloading translation models in background…")
             await asyncio.get_running_loop().run_in_executor(None, bridge.preload)
