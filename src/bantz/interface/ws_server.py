@@ -297,6 +297,10 @@ class WsBroadcastServer:
             response = "".join(parts)
             if response.strip():
                 await _send(ws, {"type": "token", "text": response})
+                # Streamed replies are assembled HERE, not in brain — persist
+                # them or follow-ups see a one-sided conversation (the
+                # "are you even listening" bug: only user rows were stored).
+                _store_assistant_reply(response)
             await _send(ws, {"type": "done"})
         else:
             # Non-streaming path (tool results, planner output, etc.).
@@ -532,6 +536,8 @@ class WsBroadcastServer:
             except Exception as exc:
                 log.debug("voice chat stream error: %s", exc)
             response = "".join(parts)
+            if response.strip():
+                _store_assistant_reply(response)
         else:
             response = await _to_tr(result.response or "")
         if response.strip():
@@ -685,6 +691,19 @@ def _maybe_speak(text: str) -> None:
             asyncio.create_task(tts_engine.speak_background(text))
     except Exception as exc:
         log.debug("TTS speak skipped: %s", exc)
+
+
+def _store_assistant_reply(text: str) -> None:
+    """Persist an assistant reply assembled from a stream.
+
+    Brain stores replies on the tool/confirm paths itself; streaming
+    replies only ever exist as joined tokens in this process, so the WS
+    consumer is the one place that can write them to history."""
+    try:
+        from bantz.data.layer import data_layer
+        data_layer.conversations.add("assistant", text)
+    except Exception as exc:
+        log.debug("assistant reply persistence failed: %s", exc)
 
 
 async def _send(ws: ServerConnection, payload: dict) -> None:
