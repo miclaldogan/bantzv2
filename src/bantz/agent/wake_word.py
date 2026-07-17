@@ -88,7 +88,15 @@ class _OpenWakeWordEngine:
             return -1
         window = self._features.get_features(self._n_frames)
         score = float(self._clf.predict_proba(window.reshape(1, -1))[0, 1])
-        return 0 if score >= self._threshold else -1
+        if score >= self._threshold:
+            # Reset the streaming buffer: without this the wake audio is
+            # still inside the feature window after the pause/capture
+            # cycle and immediately re-triggers on resume.
+            from openwakeword.utils import AudioFeatures
+            self._features = AudioFeatures(ncpu=1)
+            self._frames_seen = 0
+            return 0
+        return -1
 
     def delete(self) -> None:
         pass
@@ -114,6 +122,9 @@ class WakeWordListener:
         self._on_wake: Optional[Callable[[], None]] = None
         self._running = False
         self._paused = False
+        # Set by the AUDIO THREAD once it has closed the stream after a
+        # pause request — the mic is only truly free when this is set.
+        self._released = threading.Event()
         self._last_trigger: float = 0.0
         self._total_detections: int = 0
 
@@ -186,37 +197,26 @@ class WakeWordListener:
     def pause(self) -> None:
         """Temporarily release the microphone so another module can use it.
 
-        The wake word thread keeps running but ``stream.read()`` will
-        raise after we close the stream — the loop catches that and
-        sleeps until ``resume()`` re-opens the stream.
+        Cooperative: only sets the flag and WAITS for the audio thread to
+        close its own stream. Tearing the stream down from this (caller)
+        thread while the audio thread is blocked inside ``stream.read()``
+        segfaults PortAudio (observed SIGSEGV core dumps) — all PyAudio
+        lifecycle for the wake stream belongs to the audio thread.
         """
         if not self._running:
             return
+        self._released.clear()
         self._paused = True
-        if self._audio_stream:
-            try:
-                self._audio_stream.stop_stream()
-                self._audio_stream.close()
-            except Exception:
-                pass
-            self._audio_stream = None
-        if self._pa:
-            try:
-                self._pa.terminate()
-            except Exception:
-                pass
-            self._pa = None
+        if not self._released.wait(timeout=2.0):
+            log.warning("Wake word: audio thread slow to release the mic")
         log.info("Wake word: paused (mic released for voice capture)")
 
     def resume(self) -> None:
-        """Re-open the microphone after a pause."""
+        """Ask the audio thread to re-open the microphone after a pause."""
         if not self._running:
             return
         self._paused = False
-        if self._init_audio():
-            log.info("Wake word: resumed (mic re-acquired)")
-        else:
-            log.error("Wake word: could not re-acquire mic after pause")
+        log.info("Wake word: resume requested (audio thread re-acquires mic)")
 
     def diagnose(self) -> dict:
         """Return diagnostic info for --doctor."""
@@ -280,13 +280,24 @@ class WakeWordListener:
             pass
 
         while not self._stop.is_set():
-            # While paused, sleep and skip audio reads
-            if self._paused or self._audio_stream is None:
+            # Pause protocol: THIS thread closes its own stream (closing it
+            # from another thread mid-read segfaults PortAudio), signals
+            # _released, and idles until resume() clears the flag.
+            if self._paused:
+                if self._audio_stream is not None:
+                    self._cleanup_audio()
+                    stream = None
+                self._released.set()
                 time.sleep(0.05)
-                # Re-acquire stream reference after resume()
-                if not self._paused and self._audio_stream is not None:
-                    stream = self._audio_stream
                 continue
+
+            # (Re)acquire the mic in the owner thread after a resume.
+            if stream is None or self._audio_stream is None:
+                if not self._init_audio():
+                    time.sleep(0.5)
+                    continue
+                stream = self._audio_stream
+                log.info("Wake word: resumed (mic re-acquired)")
 
             try:
                 pcm_bytes = stream.read(frame_length, exception_on_overflow=False)

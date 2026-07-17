@@ -163,6 +163,46 @@ class GhostLoop:
         )
         thread.start()
 
+    _ACK_PHRASES = ["Yes?", "I'm here.", "Listening."]
+
+    def _play_spoken_ack(self) -> None:
+        """Speak a short acknowledgment after the wake word.
+
+        Wavs are synthesized once with the configured Piper voice and
+        cached under wakewords/acks; playback is synchronous so the ack
+        has finished before the VAD capture opens the mic."""
+        try:
+            from bantz.config import config
+            if not getattr(config, "wake_ack_spoken", True) or not config.tts_enabled:
+                return
+            import random
+            import shutil
+            import subprocess
+            from pathlib import Path
+
+            cache = Path.home() / ".local/share/bantz/wakewords/acks"
+            cache.mkdir(parents=True, exist_ok=True)
+            idx = random.randrange(len(self._ACK_PHRASES))
+            wav = cache / f"ack_{idx}.wav"
+            if not wav.exists():
+                from bantz.agent.tts import tts_engine
+                if not tts_engine._ensure_init():
+                    return
+                r = subprocess.run(
+                    [tts_engine._piper_path, "-m", tts_engine._model_path,
+                     "-f", str(wav)],
+                    input=self._ACK_PHRASES[idx],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if r.returncode != 0 or not wav.exists():
+                    return
+            player = (shutil.which("pw-play") or shutil.which("paplay")
+                      or shutil.which("aplay"))
+            if player:
+                subprocess.run([player, str(wav)], capture_output=True, timeout=5)
+        except Exception as exc:
+            log.debug("Ghost Loop: spoken ack failed — %s", exc)
+
     # ── Pipeline (runs on background thread) ────────────────────────────
 
     def _capture_and_transcribe(self, *, release_mic: bool = True) -> None:
@@ -188,6 +228,9 @@ class GhostLoop:
                     log.info("Ghost Loop: [1/4] mic released, starting capture")
                 except Exception as exc:
                     log.warning("Ghost Loop: could not pause wake word — %s", exc)
+                # Spoken acknowledgment ("Yes?") — blocks ~0.5s so it never
+                # overlaps the VAD capture; tells the user when to speak.
+                self._play_spoken_ack()
 
             # 1. Emit "listening" event so TUI shows indicator
             bus.emit_threadsafe("ghost_loop_listening")

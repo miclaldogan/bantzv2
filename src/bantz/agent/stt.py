@@ -115,6 +115,9 @@ class STTEngine:
             self._model_name = "tiny"
             self._device = "cpu"
             self._language = "auto"
+        # faster-whisper wants None for auto-detection, not "auto".
+        if self._language in ("auto", ""):
+            self._language = None
 
         try:
             log.info("STT: loading model '%s' on '%s'...", self._model_name, self._device)

@@ -311,6 +311,8 @@ class Config(BaseSettings):
     # (scripts/train_wakeword.py), porcupine = legacy Picovoice.
     wake_engine: str = Field("openwakeword", alias="BANTZ_WAKE_ENGINE")
     wake_model_path: str = Field("", alias="BANTZ_WAKE_MODEL_PATH")
+    # Speak a short "Yes?" after the wake word so the user knows when to talk.
+    wake_ack_spoken: bool = Field(True, alias="BANTZ_WAKE_ACK_SPOKEN")
     # Local mail store (#552): mbsync maildir + notmuch index.
     localmail_enabled: bool = Field(False, alias="BANTZ_LOCALMAIL_ENABLED")
     maildir_path: str = Field("~/Mail", alias="BANTZ_MAILDIR_PATH")
