@@ -316,7 +316,8 @@ class ProactiveEngine:
 
         # KV store fresh data (overnight poll cache)
         try:
-            for key in ("overnight_emails", "overnight_calendar", "overnight_news"):
+            # Key names must match what overnight_poll writes.
+            for key in ("overnight:gmail", "overnight:calendar", "overnight:classroom"):
                 val = kv.get(key, "")
                 if val:
                     ctx.fresh_data[key] = val[:500]

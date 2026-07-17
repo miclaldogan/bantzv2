@@ -295,15 +295,37 @@ class Briefing:
         return None
 
     async def _get_gmail(self) -> Optional[str]:
+        """Live fallback when the overnight cache is empty.
+
+        Mirrors _gmail_from_cache (#494): reports a categorized digest of
+        personal/institutional mail, not a bare unread count."""
         try:
-            from bantz.tools.gmail import GmailTool
+            from bantz.auth.token_store import token_store
+            from bantz.tools.gmail import (
+                GmailTool, categorize, _BRIEFING_CATEGORIES,
+            )
             g = GmailTool()
-            result = await g.execute(action="count")
-            if result.success:
-                count = result.data.get("count", 0)
-                if count == 0:
-                    return "Inbox is clean"
-                return f"{count} unread emails"
+            creds = token_store.get("gmail")
+            loop = asyncio.get_event_loop()
+            count = await loop.run_in_executor(None, g._count_sync, creds)
+            if count == 0:
+                return "Inbox is clean"
+            msgs = await loop.run_in_executor(
+                None, g._fetch_messages_sync, creds,
+                "label:unread newer_than:1d", 15,
+            )
+            keep = [
+                m for m in msgs
+                if categorize(m.get("from", ""), m.get("subject", ""))
+                in _BRIEFING_CATEGORIES
+            ]
+            parts = [f"{count} unread emails"]
+            if not keep:
+                parts.append("nothing that needs your attention")
+            else:
+                subjects = [m.get("subject", "?")[:60] for m in keep[:3]]
+                parts.append("📬 " + ", ".join(subjects))
+            return "  ".join(parts)
         except Exception:
             pass
         return None

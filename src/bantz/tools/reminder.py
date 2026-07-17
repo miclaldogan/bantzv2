@@ -23,10 +23,11 @@ class ReminderTool(BaseTool):
     name = "reminder"
     description = (
         "Manage reminders and timers: create, list, cancel, snooze. "
-        "Params: action (add|list|cancel|snooze), intent (str) = what to remind, "
+        "Params: action (add|list|today|cancel|snooze), intent (str) = what to remind, "
         "id (str) = reminder ID for cancel/snooze. "
         "Supports time-based and location-based triggers. "
-        "Use for: 'remind me to X', 'set a timer', 'list my reminders'."
+        "Use for: 'remind me to X', 'set a timer', 'list my reminders', "
+        "'what do I need to do today' → action=today."
     )
     risk_level = "safe"
 
@@ -38,6 +39,8 @@ class ReminderTool(BaseTool):
 
         if action == "list":
             return self._list(scheduler)
+        elif action == "today":
+            return self._today(scheduler)
         elif action == "cancel":
             return self._cancel(scheduler, kwargs)
         elif action == "snooze":
@@ -140,6 +143,11 @@ class ReminderTool(BaseTool):
 
     def _list(self, scheduler) -> ToolResult:
         text = scheduler.format_upcoming(limit=10)
+        return ToolResult(success=True, output=text)
+
+    def _today(self, scheduler) -> ToolResult:
+        """Time-scoped answer for 'what do I need to do today'."""
+        text = scheduler.format_due_today() or "Nothing scheduled for today."
         return ToolResult(success=True, output=text)
 
     # ── Cancel ────────────────────────────────────────────────────────────
