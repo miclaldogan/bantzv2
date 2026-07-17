@@ -291,6 +291,11 @@ class Config(BaseSettings):
     multi_agent_enabled: bool = Field(False, alias="BANTZ_MULTI_AGENT_ENABLED")
     multi_agent_max_concurrent: int = Field(3, alias="BANTZ_MULTI_AGENT_MAX_CONCURRENT")
     multi_agent_timeout: int = Field(120, alias="BANTZ_MULTI_AGENT_TIMEOUT")
+    # Per-role agent models (#548): JSON object, e.g.
+    #   {"researcher": "gemma3:4b", "jury": "qwen2.5:0.5b"}
+    # Roles not listed fall back to the class pin, then agent_default_model.
+    agent_models: str = Field("", alias="BANTZ_AGENT_MODELS")
+    agent_default_model: str = Field("gemma3:4b", alias="BANTZ_AGENT_DEFAULT_MODEL")
 
     # ── Continuous Awareness (#325) ───────────────────────────────────────
     awareness_enabled: bool = Field(False, alias="BANTZ_AWARENESS_ENABLED")

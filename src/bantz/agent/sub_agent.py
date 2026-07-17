@@ -33,6 +33,40 @@ from typing import Any
 
 log = logging.getLogger("bantz.sub_agent")
 
+# Parsed BANTZ_AGENT_MODELS cache, invalidated when the raw string changes
+# (config is live-reloadable from the Settings UI).
+_AGENT_MODELS_CACHE: tuple[str, dict[str, str]] | None = None
+
+
+def resolve_agent_model(role: str, class_override: str = "") -> str:
+    """Model for an agent role.
+
+    Precedence: BANTZ_AGENT_MODELS[role] → the class's model_override pin →
+    BANTZ_AGENT_DEFAULT_MODEL. Malformed JSON is ignored with a warning."""
+    global _AGENT_MODELS_CACHE
+    from bantz.config import config
+
+    raw = config.agent_models
+    if not isinstance(raw, str):
+        raw = ""
+    if _AGENT_MODELS_CACHE is None or _AGENT_MODELS_CACHE[0] != raw:
+        parsed: dict[str, str] = {}
+        if raw.strip():
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    parsed = {str(k): str(v) for k, v in data.items()}
+                else:
+                    log.warning("BANTZ_AGENT_MODELS is not a JSON object — ignoring")
+            except json.JSONDecodeError as exc:
+                log.warning("BANTZ_AGENT_MODELS is invalid JSON (%s) — ignoring", exc)
+        _AGENT_MODELS_CACHE = (raw, parsed)
+
+    default = config.agent_default_model
+    if not isinstance(default, str):
+        default = ""
+    return _AGENT_MODELS_CACHE[1].get(role) or class_override or default
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Result type
@@ -91,6 +125,9 @@ class SubAgent(ABC):
     system_prompt: str
     allowed_tools: set[str]
     max_tool_calls: int = 5  # circuit breaker — prevent infinite loops
+    # Optional in-code model pin; BANTZ_AGENT_MODELS[role] wins over this,
+    # and BANTZ_AGENT_DEFAULT_MODEL applies when both are empty.
+    model_override: str = ""
 
     @abstractmethod
     def _build_system(self, task: str, context: dict[str, Any]) -> str:
@@ -214,18 +251,16 @@ class SubAgent(ABC):
     # ── LLM Abstraction ──────────────────────────────────────────
 
     async def _llm_chat(self, messages: list[dict[str, str]]) -> str:
-        """Gemini-first, Ollama-fallback — mirrors Brain's pattern."""
-        try:
-            from bantz.llm.gemini import gemini
-            if gemini.is_enabled():
-                result = await gemini.chat(messages)
-                if result and result.strip():
-                    return result
-        except Exception:
-            pass
-
-        from bantz.llm.ollama import ollama
-        return await ollama.chat(messages)
+        """All sub-agent LLM traffic goes through the serialized lane (#547):
+        provider from llm/router (BANTZ_LLM_PROVIDER), model from the
+        per-role config so agents run on small side models, background
+        priority so they never delay the user's own chat."""
+        from bantz.llm.lane import llm_call
+        return await llm_call(
+            messages,
+            model=resolve_agent_model(self.role, self.model_override),
+            interactive=False,
+        )
 
     # ── Parsing Helpers ──────────────────────────────────────────
 

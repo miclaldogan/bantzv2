@@ -105,10 +105,44 @@ class AgentManager:
         if self._enabled:
             self.MAX_CONCURRENT = getattr(config, "multi_agent_max_concurrent", 3)
             self.DELEGATION_TIMEOUT = float(getattr(config, "multi_agent_timeout", 120))
+            from bantz.agent.sub_agent import resolve_agent_model
+            role_models = {
+                role: resolve_agent_model(role, cls.model_override)
+                for role, cls in AGENT_ROLES.items()
+            }
             log.info(
-                "AgentManager initialised — %d roles, max_concurrent=%d, timeout=%.0fs",
+                "AgentManager initialised — %d roles, max_concurrent=%d, timeout=%.0fs, models=%s",
                 len(AGENT_ROLES), self.MAX_CONCURRENT, self.DELEGATION_TIMEOUT,
+                role_models,
             )
+            # Best-effort: warn (never fail) if a configured agent model
+            # isn't installed in Ollama. Needs a running loop; skipped in
+            # sync contexts.
+            try:
+                asyncio.get_running_loop().create_task(
+                    self._warn_missing_models(set(role_models.values()))
+                )
+            except RuntimeError:
+                pass
+
+    async def _warn_missing_models(self, models: set[str]) -> None:
+        try:
+            from bantz.config import config
+            if (config.llm_provider or "ollama").lower() != "ollama":
+                return
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as c:
+                r = await c.get(f"{config.ollama_base_url.rstrip('/')}/api/tags")
+                available = {m["name"] for m in r.json().get("models", [])}
+            for model in models:
+                if model and model not in available:
+                    log.warning(
+                        "Agent model '%s' not installed — pull it with: "
+                        "ollama pull %s (delegations will still run; Ollama "
+                        "errors will surface per-call)", model, model,
+                    )
+        except Exception as exc:
+            log.debug("agent model availability check skipped: %s", exc)
 
     @property
     def total_delegations(self) -> int:

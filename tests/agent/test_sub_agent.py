@@ -493,35 +493,96 @@ class TestSubAgentRun:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestLLMChat:
-    """_llm_chat() — Gemini-first, Ollama-fallback."""
+    """_llm_chat() — routed through the serialized LLM lane (#548)."""
 
     @pytest.mark.asyncio
-    async def test_gemini_primary(self):
-        """Uses Gemini when available."""
-        agent = ResearcherAgent()
-        mock_gemini = MagicMock()
-        mock_gemini.is_enabled.return_value = True
-        mock_gemini.chat = AsyncMock(return_value="gemini answer")
+    async def test_goes_through_lane_with_role_model(self):
+        """_llm_chat delegates to lane.llm_call with the per-role model and
+        background priority."""
+        from bantz.config import config
 
-        with patch("bantz.agent.sub_agent.gemini", mock_gemini, create=True), \
-             patch.dict("sys.modules", {"bantz.llm.gemini": MagicMock(gemini=mock_gemini)}):
+        agent = ResearcherAgent()
+        called: dict = {}
+
+        async def fake_llm_call(messages, *, model="", interactive=True, **kw):
+            called["model"] = model
+            called["interactive"] = interactive
+            return "lane answer"
+
+        with patch("bantz.llm.lane.llm_call", fake_llm_call), \
+             patch.object(config, "agent_models", '{"researcher": "gemma3:4b"}'):
             result = await agent._llm_chat([{"role": "user", "content": "hi"}])
 
-        assert result == "gemini answer"
+        assert result == "lane answer"
+        assert called["model"] == "gemma3:4b"
+        assert called["interactive"] is False
 
     @pytest.mark.asyncio
-    async def test_ollama_fallback(self):
-        """Falls back to Ollama if Gemini fails."""
-        agent = ResearcherAgent()
-        mock_ollama = MagicMock()
-        mock_ollama.chat = AsyncMock(return_value="ollama answer")
+    async def test_provider_ollama_never_imports_gemini(self):
+        """AC #548: with BANTZ_LLM_PROVIDER=ollama and Gemini disabled, a
+        sub-agent LLM call goes to Ollama with the role model and never
+        imports bantz.llm.gemini."""
+        import sys
+        from bantz.config import config
+        from bantz.llm.ollama import ollama as ollama_singleton
 
-        # Gemini import fails
-        with patch("bantz.llm.gemini.gemini", side_effect=ImportError), \
-             patch("bantz.llm.ollama.ollama", mock_ollama):
-            result = await agent._llm_chat([{"role": "user", "content": "hi"}])
+        agent = ResearcherAgent()
+        chat_mock = AsyncMock(return_value="ollama answer")
+
+        gemini_mod = sys.modules.pop("bantz.llm.gemini", None)
+        try:
+            # A None entry makes any `import bantz.llm.gemini` raise.
+            with patch.dict(sys.modules, {"bantz.llm.gemini": None}), \
+                 patch.object(config, "llm_provider", "ollama"), \
+                 patch.object(config, "gemini_enabled", False), \
+                 patch.object(config, "llm_lane_enabled", True), \
+                 patch.object(config, "agent_models", '{"researcher": "gemma3:4b"}'), \
+                 patch.object(ollama_singleton, "chat", chat_mock):
+                result = await agent._llm_chat([{"role": "user", "content": "hi"}])
+        finally:
+            if gemini_mod is not None:
+                sys.modules["bantz.llm.gemini"] = gemini_mod
 
         assert result == "ollama answer"
+        kwargs = chat_mock.call_args.kwargs
+        assert kwargs["model_override"] == "gemma3:4b"
+        assert "keep_alive" in kwargs  # lane policy applied
+
+
+class TestResolveAgentModel:
+    """resolve_agent_model() precedence + malformed-config tolerance."""
+
+    def setup_method(self):
+        import bantz.agent.sub_agent as sa
+        sa._AGENT_MODELS_CACHE = None
+
+    def test_config_wins_over_class_pin_and_default(self):
+        from bantz.config import config
+        from bantz.agent.sub_agent import resolve_agent_model
+        with patch.object(config, "agent_models", '{"researcher": "qwen2.5:3b"}'), \
+             patch.object(config, "agent_default_model", "gemma3:4b"):
+            assert resolve_agent_model("researcher", "pinned") == "qwen2.5:3b"
+
+    def test_class_pin_beats_default(self):
+        from bantz.config import config
+        from bantz.agent.sub_agent import resolve_agent_model
+        with patch.object(config, "agent_models", ""), \
+             patch.object(config, "agent_default_model", "gemma3:4b"):
+            assert resolve_agent_model("researcher", "pinned") == "pinned"
+
+    def test_default_when_nothing_set(self):
+        from bantz.config import config
+        from bantz.agent.sub_agent import resolve_agent_model
+        with patch.object(config, "agent_models", ""), \
+             patch.object(config, "agent_default_model", "gemma3:4b"):
+            assert resolve_agent_model("researcher") == "gemma3:4b"
+
+    def test_malformed_json_falls_back(self):
+        from bantz.config import config
+        from bantz.agent.sub_agent import resolve_agent_model
+        with patch.object(config, "agent_models", "{not json"), \
+             patch.object(config, "agent_default_model", "gemma3:4b"):
+            assert resolve_agent_model("researcher") == "gemma3:4b"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
