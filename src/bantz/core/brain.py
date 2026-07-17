@@ -1019,6 +1019,7 @@ class Brain:
         is_remote: bool = False,
         progress_cb: Optional[Callable[[str], None]] = None,
         session_key: str = "",
+        voice: bool = False,
     ) -> BrainResult:
         """Process *user_input* through the full pipeline.
 
@@ -1035,6 +1036,7 @@ class Brain:
         # Isolate follow-up state per caller before anything reads it (C2).
         self._switch_session(session_key)
         self._is_remote = is_remote
+        self._voice_mode = voice
         self._ensure_memory()
         await self._ensure_graph()
         # Show translation progress before the (potentially slow) MarianMT load
@@ -1578,6 +1580,15 @@ class Brain:
         await _inject_memory(ctx, en_input)
 
         system_content = _build_chat_system(ctx, tc) + _TOPIC_DISCIPLINE + _mood_suffix()
+
+        # Voice mode: the reply will be SPOKEN — long monologues are the
+        # main perceived lag, so keep it conversational.
+        if getattr(self, "_voice_mode", False):
+            system_content += (
+                "\n\nVOICE MODE: The user is speaking to you and will HEAR "
+                "this reply. Answer in 1-3 short conversational sentences. "
+                "No lists, no markdown, no headings."
+            )
 
         # (#253) People-Pleaser guard: inject routing failure context
         if system_alert:

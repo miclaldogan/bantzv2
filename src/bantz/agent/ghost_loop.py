@@ -163,6 +163,53 @@ class GhostLoop:
         )
         thread.start()
 
+    def _wait_for_tts_quiet(self, timeout: float = 90.0) -> None:
+        """Block until TTS playback has finished (plus a short tail so the
+        speaker energy decays before the mic opens). Extends the
+        conversation window by the wait so speaking time doesn't eat it."""
+        try:
+            from bantz.agent.tts import tts_engine
+        except Exception:
+            return
+        waited = 0.0
+        # TTS may not have STARTED yet (brain still thinking) — give the
+        # reply pipeline a moment to begin before concluding it's quiet.
+        grace = 20.0
+        while waited < grace and not tts_engine.is_speaking:
+            time.sleep(0.2)
+            waited += 0.2
+        while waited < timeout and tts_engine.is_speaking:
+            time.sleep(0.2)
+            waited += 0.2
+        if waited:
+            self._conversation_end += waited
+        time.sleep(0.35)  # speaker decay tail
+        # Short cue so the user knows the follow-up mic is open.
+        self._play_listen_cue()
+
+    def _play_listen_cue(self) -> None:
+        """Tiny beep marking 'follow-up mic open' (no spoken ack here —
+        it would slow the conversational rhythm)."""
+        try:
+            import shutil
+            import subprocess
+            player = shutil.which("pw-play") or shutil.which("paplay")
+            cue = str((__import__("pathlib").Path.home()
+                       / ".local/share/bantz/wakewords/acks/cue.wav"))
+            import os
+            if not os.path.exists(cue):
+                r = subprocess.run(
+                    ["sox", "-n", "-r", "16000", "-c", "1", "-b", "16", cue,
+                     "synth", "0.12", "sine", "1050", "vol", "0.3"],
+                    capture_output=True, timeout=5,
+                )
+                if r.returncode != 0:
+                    return
+            if player:
+                subprocess.run([player, cue], capture_output=True, timeout=3)
+        except Exception:
+            pass
+
     _ACK_PHRASES = ["Yes?", "I'm here.", "Listening."]
 
     def _play_spoken_ack(self) -> None:
@@ -218,6 +265,13 @@ class GhostLoop:
         should_chain = False  # set True on successful transcription
 
         try:
+            # Conversation-mode follow-up: the previous reply may still be
+            # playing. Opening the mic now records Bantz's own voice, the
+            # VAD never sees silence, and capture drags to the max-record
+            # cap — the "follow-ups take forever" bug. Wait for TTS first.
+            if not release_mic:
+                self._wait_for_tts_quiet()
+
             # 0. Release mic from wake word listener (first call only)
             if release_mic:
                 try:

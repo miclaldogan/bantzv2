@@ -522,17 +522,26 @@ class WsBroadcastServer:
         the tts_speak_all_responses setting for typed chat."""
         from bantz.core.brain import brain
         try:
-            result = await brain.process(text)
+            result = await brain.process(text, voice=True)
         except Exception as exc:
             await self._broadcast({"type": "error", "msg": str(exc)})
             await self._broadcast({"type": "done"})
             self._voice_state("idle")
             return
+        spoken_via_stream = False
         if result.stream is not None:
             parts: list[str] = []
             try:
-                async for token in result.stream:
-                    parts.append(token)
+                # Sentence-streamed speech: the first sentence plays while
+                # the LLM is still generating the rest.
+                from bantz.agent.tts import tts_engine
+                if tts_engine.available():
+                    spoken_via_stream = True
+                    await tts_engine.speak_stream(
+                        _stream_sentences(result.stream, parts))
+                else:
+                    async for token in result.stream:
+                        parts.append(token)
             except Exception as exc:
                 log.debug("voice chat stream error: %s", exc)
             response = "".join(parts)
@@ -543,7 +552,7 @@ class WsBroadcastServer:
         if response.strip():
             await self._broadcast({"type": "token", "text": response})
         await self._broadcast({"type": "done"})
-        if response.strip():
+        if response.strip() and not spoken_via_stream:
             try:
                 from bantz.agent.tts import tts_engine
                 if tts_engine.available():
@@ -691,6 +700,37 @@ def _maybe_speak(text: str) -> None:
             asyncio.create_task(tts_engine.speak_background(text))
     except Exception as exc:
         log.debug("TTS speak skipped: %s", exc)
+
+
+_STREAM_SENT_RE = re.compile(r"(?<=[.!?…])\s+")
+_THINK_BLOCK_RE = re.compile(r"<thinking>.*?</thinking>", re.DOTALL)
+
+
+async def _stream_sentences(stream, parts: list):
+    """Yield complete sentences from an LLM token stream, skipping
+    <thinking> blocks, while appending every raw token to *parts* so the
+    caller still gets the full text for the UI/history.
+
+    A sentence is emitted only once its trailing whitespace is seen, so
+    decimals like "3.5" never split."""
+    buf = ""
+    async for token in stream:
+        parts.append(token)
+        buf += token
+        clean = _THINK_BLOCK_RE.sub("", buf)
+        open_idx = clean.find("<thinking")
+        emit_zone, hold = (clean[:open_idx], clean[open_idx:]) \
+            if open_idx != -1 else (clean, "")
+        pieces = _STREAM_SENT_RE.split(emit_zone)
+        if len(pieces) > 1:
+            for sentence in pieces[:-1]:
+                if sentence.strip():
+                    yield sentence.strip()
+            emit_zone = pieces[-1]
+        buf = emit_zone + hold
+    tail = _THINK_BLOCK_RE.sub("", buf).split("<thinking", 1)[0].strip()
+    if tail:
+        yield tail
 
 
 def _store_assistant_reply(text: str) -> None:

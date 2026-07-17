@@ -44,7 +44,7 @@ FRAME_DURATION_MS = 30  # WebRTC VAD supports 10, 20, or 30 ms
 FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)  # 480 samples
 
 # Maximum recording duration (safety limit)
-MAX_RECORD_SECONDS = 30.0
+MAX_RECORD_SECONDS = 30.0  # fallback; overridden by config.vad_max_record_s
 
 
 def find_resampling_input_device(pa) -> int | None:
@@ -200,13 +200,18 @@ class VoiceCapture:
         frames_for_silence = int(silence_ms / FRAME_DURATION_MS)
         started_speaking = False
         start_time = time.monotonic()
+        try:
+            from bantz.config import config as _cfg
+            max_record_s = float(getattr(_cfg, "vad_max_record_s", MAX_RECORD_SECONDS))
+        except Exception:
+            max_record_s = MAX_RECORD_SECONDS
 
         try:
             while True:
                 # Safety timeout
                 elapsed = time.monotonic() - start_time
-                if elapsed > MAX_RECORD_SECONDS:
-                    log.info("VoiceCapture: hit max duration (%.0fs)", MAX_RECORD_SECONDS)
+                if elapsed > max_record_s:
+                    log.info("VoiceCapture: hit max duration (%.0fs)", max_record_s)
                     break
 
                 # Read a frame

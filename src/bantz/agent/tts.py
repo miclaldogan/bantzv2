@@ -518,6 +518,78 @@ class TTSEngine:
             await asyncio.sleep(0.1)
         self._speak_task = asyncio.create_task(self.speak(text))
 
+    async def speak_stream(self, sentences) -> None:
+        """Speak sentences as they arrive from an async iterator.
+
+        The first sentence starts playing while the LLM is still
+        generating the rest — the perceived-latency fix for voice
+        replies. Pipelines like speak(): synthesize N+1 while playing N.
+        The iterator is always fully drained (even when TTS is
+        unavailable) so the producing stream never stalls."""
+        if not self.available():
+            async for _ in sentences:
+                pass
+            return
+
+        self._stop_requested = False
+        self._speaking = True
+        _emit_voice_event("tts_started")
+
+        ducked = False
+        try:
+            from bantz.config import config
+            if config.audio_duck_enabled:
+                from bantz.agent.audio_ducker import audio_ducker
+                ducked = audio_ducker.duck()
+        except Exception as exc:
+            log.debug("TTS: audio duck failed — %s", exc)
+
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _producer() -> None:
+            try:
+                async for raw in sentences:
+                    sent = strip_markdown_for_tts(raw)
+                    if "<thinking" in sent:
+                        sent = sent.split("<thinking", 1)[0].strip()
+                    if sent:
+                        await queue.put(sent)
+            finally:
+                await queue.put(None)
+
+        producer = asyncio.create_task(_producer())
+        prev_wav: bytes | None = None
+        spoken = 0
+        try:
+            while not self._stop_requested:
+                sent = await queue.get()
+                if sent is None:
+                    break
+                synth = asyncio.create_task(self._synthesize(sent))
+                if prev_wav:
+                    await self._play(prev_wav)
+                prev_wav = await synth
+                spoken += 1
+            if prev_wav and not self._stop_requested:
+                await self._play(prev_wav)
+            if spoken:
+                log.info("TTS: spoke %d streamed sentences", spoken)
+        except asyncio.CancelledError:
+            self._kill_playback()
+        except Exception as exc:
+            log.error("TTS: speak_stream error — %s", exc)
+        finally:
+            producer.cancel()
+            if ducked:
+                try:
+                    from bantz.agent.audio_ducker import audio_ducker
+                    audio_ducker.restore()
+                except Exception:
+                    pass
+            self._speaking = False
+            self._playing = None
+            _emit_voice_event("tts_finished")
+
     def stop(self) -> None:
         """Immediately stop all TTS playback."""
         self._stop_requested = True
