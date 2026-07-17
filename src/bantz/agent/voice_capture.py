@@ -47,6 +47,24 @@ FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)  # 480 samples
 MAX_RECORD_SECONDS = 30.0
 
 
+def find_resampling_input_device(pa) -> int | None:
+    """Prefer the pipewire/pulse PyAudio device over the raw default.
+
+    The ALSA default often maps straight to hardware (48 kHz only on this
+    class of laptop), so opening at 16 kHz fails with -9997. The pipewire
+    and pulse compatibility devices resample to any requested rate.
+    Returns a device index, or None to use the default."""
+    try:
+        for i in range(pa.get_device_count()):
+            d = pa.get_device_info_by_index(i)
+            if d.get("maxInputChannels", 0) > 0 and \
+                    d.get("name", "").lower() in ("pipewire", "pulse", "default"):
+                return i
+    except Exception:
+        pass
+    return None
+
+
 @contextmanager
 def suppress_alsa_stderr():
     """Temporarily silence C-level ALSA warnings on fd 2.
@@ -158,6 +176,7 @@ class VoiceCapture:
                 format=pyaudio.paInt16,
                 input=True,
                 frames_per_buffer=FRAME_SIZE,
+                input_device_index=find_resampling_input_device(pa),
             )
         except Exception as exc:
             log.error("VoiceCapture: mic open failed — %s", exc)

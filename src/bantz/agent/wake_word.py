@@ -544,7 +544,9 @@ class WakeWordListener:
             return False
 
         try:
-            from bantz.agent.voice_capture import suppress_alsa_stderr
+            from bantz.agent.voice_capture import (
+                find_resampling_input_device, suppress_alsa_stderr,
+            )
             with suppress_alsa_stderr():
                 self._pa = pyaudio.PyAudio()
             self._audio_stream = self._pa.open(
@@ -553,6 +555,7 @@ class WakeWordListener:
                 format=pyaudio.paInt16,
                 input=True,
                 frames_per_buffer=self._porcupine.frame_length,
+                input_device_index=find_resampling_input_device(self._pa),
             )
             return True
         except Exception as exc:
