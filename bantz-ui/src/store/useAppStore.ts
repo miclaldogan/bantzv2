@@ -210,8 +210,6 @@ const SEED_SERVICES: ServiceItem[] = [
   { name: "Ollama",   port: 11434, status: "offline", uptime: "—", detail: "awaiting probe" },
   { name: "Gemini",   port: null,  status: "offline", uptime: "—", detail: "awaiting probe" },
   { name: "Telegram", port: 443,   status: "offline", uptime: "—", detail: "awaiting probe" },
-  { name: "Redis",    port: 6379,  status: "offline", uptime: "—", detail: "awaiting probe" },
-  { name: "Neo4j",    port: 7687,  status: "offline", uptime: "—", detail: "awaiting probe" },
 ];
 
 // ── Snooze persistence (survives reloads) ───────────────────────────────────

@@ -145,6 +145,10 @@ class Config(BaseSettings):
     # ── Scheduler / Reminders ─────────────────────────────────────────────
     reminder_check_interval: int = Field(30, alias="BANTZ_REMINDER_CHECK_INTERVAL")
 
+    # ── Telemetry cadence (#559 heat diet) ────────────────────────────────
+    vitals_interval: float = Field(5.0, alias="BANTZ_VITALS_INTERVAL")
+    services_interval: float = Field(60.0, alias="BANTZ_SERVICES_INTERVAL")
+
     # ── Job Scheduler / APScheduler (#128) ────────────────────────────────
     job_scheduler_enabled: bool = Field(True, alias="BANTZ_JOB_SCHEDULER_ENABLED")
     night_maintenance_hour: int = Field(3, alias="BANTZ_MAINTENANCE_HOUR")

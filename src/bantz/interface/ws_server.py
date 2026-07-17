@@ -55,7 +55,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import time
 from collections import deque
 from pathlib import Path
@@ -69,8 +68,6 @@ from bantz.core.event_bus import bus, Event
 
 log = logging.getLogger("bantz.ws_server")
 
-_VITALS_INTERVAL = 2.0
-_SERVICES_INTERVAL = 30.0
 _WS_PORT = 8765
 
 # Rolling buffer of the most recent log payloads, scanned by _compute_anomalies
@@ -406,24 +403,31 @@ class WsBroadcastServer:
     # ── vitals broadcast ───────────────────────────────────────────────────
 
     async def _vitals_loop(self) -> None:
+        from bantz.config import config
         while True:
             try:
-                payload = _collect_vitals()
-                await self._broadcast(payload)
+                # The psutil sweep + VRAM read is the expensive part — skip it
+                # entirely when no UI is connected (a fresh client gets data
+                # within one interval).
+                if self._clients:
+                    payload = _collect_vitals()
+                    await self._broadcast(payload)
             except Exception:
                 pass
-            await asyncio.sleep(_VITALS_INTERVAL)
+            await asyncio.sleep(config.vitals_interval)
 
     # ── services broadcast ─────────────────────────────────────────────────
 
     async def _services_loop(self) -> None:
+        from bantz.config import config
         while True:
             try:
-                payload = await _collect_services()
-                await self._broadcast(payload)
+                if self._clients:
+                    payload = await _collect_services()
+                    await self._broadcast(payload)
             except Exception:
                 pass
-            await asyncio.sleep(_SERVICES_INTERVAL)
+            await asyncio.sleep(config.services_interval)
 
     # ── log forwarding ─────────────────────────────────────────────────────
 
@@ -794,20 +798,36 @@ def _compute_anomalies(cpu: float, ram_pct: float) -> list[dict]:
     return out
 
 
+# pynvml state: None = untried, False = unavailable, else a device handle.
+# One NVML query replaces an nvidia-smi subprocess spawn per vitals tick
+# (#559); the 10s TTL cache lets vitals + anomaly checks share one read.
+_NVML_HANDLE: Any = None
+_VRAM_CACHE: tuple[float, tuple[float, float]] = (0.0, (0.0, 0.0))
+
+
 def _collect_vram() -> tuple[float, float]:
-    try:
-        r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
-             "--format=csv,nounits,noheader"],
-            capture_output=True, text=True, timeout=2,
-        )
-        if r.returncode == 0:
-            parts = r.stdout.strip().split(",")
-            if len(parts) == 2:
-                return float(parts[0].strip()), float(parts[1].strip())
-    except Exception:
-        pass
-    return 0.0, 0.0
+    global _NVML_HANDLE, _VRAM_CACHE
+    now = time.monotonic()
+    ts, cached = _VRAM_CACHE
+    if now - ts < 10.0:
+        return cached
+    if _NVML_HANDLE is None:
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            _NVML_HANDLE = pynvml.nvmlDeviceGetHandleByIndex(0)
+        except Exception:
+            _NVML_HANDLE = False
+    result = (0.0, 0.0)
+    if _NVML_HANDLE is not False:
+        try:
+            import pynvml
+            mem = pynvml.nvmlDeviceGetMemoryInfo(_NVML_HANDLE)
+            result = (mem.used / 1048576, mem.total / 1048576)
+        except Exception:
+            pass
+    _VRAM_CACHE = (now, result)
+    return result
 
 
 _DIRECTIVE_PROMPT = """Parse this directive into a scheduled job. Return JSON only:
@@ -971,8 +991,6 @@ async def _collect_services() -> dict:
         _probe_ollama(),
         _probe_gemini(),
         _probe_telegram(),
-        _probe_redis(),
-        _probe_neo4j(),
         return_exceptions=True,
     )
     services = [
@@ -1014,26 +1032,6 @@ async def _probe_ollama() -> dict:
     except Exception:
         pass
     return {"name": "Ollama", "port": 11434, "status": "offline", "detail": "not reachable", "uptime": "—"}
-
-
-async def _probe_redis() -> dict:
-    ok = await _probe_tcp("localhost", 6379)
-    return {
-        "name": "Redis", "port": 6379,
-        "status": "online" if ok else "offline",
-        "detail": "connected" if ok else "not reachable",
-        "uptime": "—",
-    }
-
-
-async def _probe_neo4j() -> dict:
-    ok = await _probe_tcp("localhost", 7687)
-    return {
-        "name": "Neo4j", "port": 7687,
-        "status": "online" if ok else "offline",
-        "detail": "bolt reachable" if ok else "container halted",
-        "uptime": "—",
-    }
 
 
 async def _probe_gemini() -> dict:
