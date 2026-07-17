@@ -516,6 +516,40 @@ After executing tools, report what you did and the outcome.
         return "\n".join(parts)
 
 
+class JuryVerdictAgent(SubAgent):
+    """Tiny read-only judge for the Jury (#557).
+
+    Given an incident digest of bus signals, it may peek at system info
+    (2 calls max) and must return a structured verdict. Runs on the
+    smallest configured model — it fires rarely and answers briefly.
+    """
+
+    role = "jury"
+    display_name = "Jury"
+    max_tool_calls = 2
+    allowed_tools = {
+        "system_info",
+        "summarizer",
+    }
+
+    system_prompt = """\
+You are the Jury — a read-only verdict agent inside the Bantz system.
+You receive an incident digest (recent failures, anomalies, agent
+outcomes). Judge the system state briefly and honestly.
+
+RULES:
+1. You may call system_info at most twice to check live state.
+2. Never speculate beyond the evidence; unknown = say unknown.
+3. Keep the verdict short.
+
+Respond in the end with a JSON object:
+{"summary": "one-line judgement", "data": {"verdict": "ok|degraded|broken", "cause": "...", "suggestion": "..."}}
+"""
+
+    def _build_system(self, task: str, context: dict[str, Any]) -> str:
+        return self.system_prompt
+
+
 class ReviewerAgent(SubAgent):
     """Specialised in analysis, validation, and quality checking.
 
@@ -576,6 +610,7 @@ AGENT_ROLES: dict[str, type[SubAgent]] = {
     "web": WebAgent,
     "developer": DeveloperAgent,
     "reviewer": ReviewerAgent,
+    "jury": JuryVerdictAgent,
 }
 
 # Human-friendly aliases for flexible delegation

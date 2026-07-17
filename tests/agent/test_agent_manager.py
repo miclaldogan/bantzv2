@@ -321,6 +321,6 @@ class TestStatsAndReset:
     def test_list_roles(self):
         mgr = AgentManager()
         roles = mgr.list_roles()
-        assert len(roles) == 3
+        assert len(roles) == 4
         role_ids = {r["role"] for r in roles}
         assert "web" in role_ids

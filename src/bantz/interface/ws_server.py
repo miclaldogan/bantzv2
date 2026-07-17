@@ -405,14 +405,27 @@ class WsBroadcastServer:
 
     async def _vitals_loop(self) -> None:
         from bantz.config import config
+        prev_anomaly_ids: set[str] = set()
         while True:
             try:
-                # The psutil sweep + VRAM read is the expensive part — skip it
-                # entirely when no UI is connected (a fresh client gets data
-                # within one interval).
+                # The full psutil sweep + VRAM read is the expensive part —
+                # skip it when no UI is connected (a fresh client gets data
+                # within one interval). Anomalies are still derived every
+                # tick from a cheap cpu/ram read so the jury's edge-
+                # triggered anomaly_detected events flow headless (#557).
                 if self._clients:
                     payload = _collect_vitals()
+                    anomalies = payload.get("anomalies", [])
                     await self._broadcast(payload)
+                else:
+                    anomalies = _compute_anomalies(
+                        psutil.cpu_percent(interval=None),
+                        psutil.virtual_memory().percent,
+                    )
+                ids = {str(a.get("id")) for a in anomalies}
+                if ids != prev_anomaly_ids:
+                    prev_anomaly_ids = ids
+                    await bus.emit("anomaly_detected", anomalies=anomalies)
             except Exception:
                 pass
             await asyncio.sleep(config.vitals_interval)

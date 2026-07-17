@@ -478,6 +478,9 @@ class JobScheduler:
         # Register health check job (#168)
         self._register_health_check()
 
+        # Register jury daily self-check (#557)
+        self._register_jury_selfcheck()
+
         # APScheduler event listeners for history tracking
         from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
         self._scheduler.add_listener(self._on_job_executed, EVENT_JOB_EXECUTED)
@@ -598,6 +601,22 @@ class JobScheduler:
             "Registered proactive engagement (%.1fh interval, %dm jitter, max=%d/day)",
             hours, config.proactive_jitter_minutes, config.proactive_max_daily,
         )
+
+    def _register_jury_selfcheck(self) -> None:
+        """Register the jury's daily self-check (#557) as a cron job."""
+        from bantz.config import config
+        if not getattr(config, "jury_enabled", False):
+            return
+        from apscheduler.triggers.cron import CronTrigger
+        from bantz.agent.jury import _job_jury_selfcheck
+        self._scheduler.add_job(
+            _job_jury_selfcheck,
+            CronTrigger(hour=config.jury_selfcheck_hour, minute=0),
+            id="jury_selfcheck",
+            name="Jury daily self-check (#557)",
+            replace_existing=True,
+        )
+        log.info("Registered jury self-check (daily %02d:00)", config.jury_selfcheck_hour)
 
     def _register_health_check(self) -> None:
         """Register health check job (#168) as an interval job."""

@@ -473,6 +473,18 @@ async def _daemon() -> None:
         except Exception as _tts_exc:
             log.warning("TTS warm-up failed: %s", _tts_exc)
 
+    # Start the jury verifier (#557) — event-driven, zero idle LLM cost.
+    # AgentManager is initialised here too (normally brain does it lazily on
+    # first chat) so jury escalations can delegate before any conversation.
+    if getattr(config, "jury_enabled", False):
+        try:
+            from bantz.agent.agent_manager import agent_manager
+            agent_manager.init()
+            from bantz.agent.jury import jury
+            jury.init()
+        except Exception as _jury_exc:
+            log.warning("Jury failed to initialise: %s", _jury_exc)
+
     # Start the voice front-end: wake word listener + ghost loop (#165/#36).
     # Both self-gate on their own config flags and no-op gracefully when a
     # dependency (Picovoice key, mic, whisper) is missing, so this is safe to

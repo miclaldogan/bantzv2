@@ -172,6 +172,7 @@ class AgentManager:
         role: str,
         task: str,
         context: dict[str, Any] | None = None,
+        internal: bool = False,
     ) -> SubAgentResult:
         """Delegate a task to a sub-agent.
 
@@ -207,7 +208,10 @@ class AgentManager:
                 f"Too many concurrent delegations ({self._active}/{self.MAX_CONCURRENT}). "
                 "Wait for current tasks to finish."
             )
-        if len(self._history) >= self.MAX_PER_CONVERSATION:
+        # System-internal delegations (jury/loop agents) bypass the
+        # per-conversation quota — they aren't conversation turns — but
+        # still respect MAX_CONCURRENT and the LLM lane.
+        if not internal and len(self._history) >= self.MAX_PER_CONVERSATION:
             return SubAgentResult.failure(
                 f"Delegation limit reached ({self.MAX_PER_CONVERSATION} per session). "
                 "Start a new conversation."

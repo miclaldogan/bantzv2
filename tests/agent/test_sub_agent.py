@@ -148,9 +148,9 @@ class TestCreateAgent:
     def test_available_roles_list(self):
         """available_roles() returns role dicts."""
         roles = available_roles()
-        assert len(roles) == 3
+        assert len(roles) == 4
         role_names = {r["role"] for r in roles}
-        assert role_names == {"web", "developer", "reviewer"}
+        assert role_names == {"web", "developer", "reviewer", "jury"}
         # Each has display_name
         for r in roles:
             assert "display_name" in r
@@ -607,9 +607,9 @@ class TestRoleRegistry:
                 assert AGENT_ROLES[alias] == AGENT_ROLES.get(canonical), \
                     f"Alias '{alias}' shadows a different canonical role"
 
-    def test_three_roles_registered(self):
-        assert len(AGENT_ROLES) == 3
-        assert set(AGENT_ROLES.keys()) == {"web", "developer", "reviewer"}
+    def test_registered_roles(self):
+        assert len(AGENT_ROLES) == 4
+        assert set(AGENT_ROLES.keys()) == {"web", "developer", "reviewer", "jury"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
