@@ -57,7 +57,10 @@ Persistent notes for Claude Code sessions working on this repo. Read this first.
 - **~~Duplicate "Dinner" entries~~** (DELETED 2026-06-14): 5 identical Dinner@19:00 events on the firat.edu.tr primary calendar were the test-run duplicates; deleted 4, kept `hqjjgqj2ak3ltdfl9f9fa08vng`.
 - **Autonomy dial not enforced**: `requires_confirm` is set on the routing decision but the executor doesn't act on it (only shell's own `DESTRUCTIVE_COMMANDS` confirm runs).
 - **~~Briefing category filter not wired~~** (FIXED 2026-07-17): cache path already categorized in `briefing._gmail_from_cache`; live fallback `briefing._get_gmail` now does too.
-- **Wake word needs Picovoice key**: everything else is on; paste the free key into `BANTZ_PICOVOICE_ACCESS_KEY` in `~/.local/share/bantz/.env` + `systemctl --user restart bantz-daemon`.
+- **~~Wake word needs Picovoice key~~** (FIXED 2026-07-17): `BANTZ_WAKE_ENGINE=openwakeword` — fully local "bantz" model (`~/.local/share/bantz/wakewords/bantz_clf.pkl`, retrain with `scripts/train_wakeword.py`; Turkish-pronunciation corpus). Porcupine kept as fallback engine. Mic gotcha: PyAudio must open the **pipewire/pulse** device (`voice_capture.find_resampling_input_device`) — raw ALSA default is 48k-only.
+- **Streamed replies now persisted** (FIXED 2026-07-17): ws_server `_store_assistant_reply` (strip_internal'd) — before this, WS-mode chat history contained only user rows ("are you even listening" bug). Session-scoped: daemon restart still starts a fresh conversation window (cross-session = MemPalace).
+- **Local mail: only app password missing**: mbsyncrc/notmuch-config/timer all installed; user pastes password into `~/.local/share/bantz/secrets/mbsync-gmail` → mail flows; then #553/#556.
+- **Disk pressure**: 03:00 maintenance flagged 1% free (recovered to ~7%); big: ~/Downloads 71G, ~/.cache/huggingface 13G, ~/.cache/yay 11G.
 - **web_research is Ollama-bound**: deep research makes many local-model calls; on a memory-constrained machine Ollama can stall mid-run (it falls back, but a full report needs healthy Ollama).
 
 ## Standing rules (from the user)
