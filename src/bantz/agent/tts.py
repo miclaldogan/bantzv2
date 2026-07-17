@@ -44,6 +44,17 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+
+def _emit_voice_event(name: str) -> None:
+    """Emit a speaking-state transition on the bus (bridged to the UI as
+    ``voice_state`` frames by ws_server). Never raises — TTS must keep
+    working even if the bus isn't bound yet."""
+    try:
+        from bantz.core.event_bus import bus
+        bus.emit_threadsafe(name)
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Fonetik Diksiyon Sözlüğü — Phonetic Lexicon (#262)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -426,6 +437,7 @@ class TTSEngine:
 
         self._stop_requested = False
         self._speaking = True
+        _emit_voice_event("tts_started")
 
         # Audio ducking: lower other apps' volume while we speak
         ducked = False
@@ -487,6 +499,7 @@ class TTSEngine:
                     log.debug("TTS: audio restore failed — %s", exc)
             self._speaking = False
             self._playing = None
+            _emit_voice_event("tts_finished")
 
     async def speak_background(self, text: str) -> None:
         """Speak in background (fire-and-forget, interruptible)."""

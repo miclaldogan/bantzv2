@@ -25,6 +25,20 @@
         "center": true,
         "backgroundColor": "#00000000",
         "shadow": true
+      },
+      {
+        "label": "overlay",
+        "title": "Bantz Voice",
+        "url": "index.html?overlay=1",
+        "width": 360,
+        "height": 92,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "backgroundColor": "#00000000"
       }
     ],
     "security": {

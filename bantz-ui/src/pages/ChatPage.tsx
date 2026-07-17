@@ -151,6 +151,35 @@ export function ChatPage({ wsStatus, onSend }: ChatPageProps) {
                     </div>
                     <div className="border-l-2 border-ember-500 bg-obsidian-800/60 px-3 py-2 font-terminal text-[15px] leading-relaxed text-fg-primary">
                       {t.text}
+                      {t.images && t.images.length > 0 && (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          {t.images.map((m) => (
+                            <a
+                              key={m.image}
+                              href={m.url || m.image}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="group block border border-obsidian-600 bg-obsidian-900/60 transition-colors duration-150 ease-bantz hover:border-ember-500"
+                              title={m.title}
+                            >
+                              <img
+                                src={m.image}
+                                alt={m.title}
+                                loading="lazy"
+                                className="h-28 w-full object-cover opacity-90 group-hover:opacity-100"
+                                onError={(e) => {
+                                  (e.currentTarget.closest("a") as HTMLElement)?.style.setProperty("display", "none");
+                                }}
+                              />
+                              {m.title && (
+                                <div className="truncate px-2 py-1 font-terminal text-[10px] tracking-wide text-obsidian-200 group-hover:text-fg-secondary">
+                                  {m.title}
+                                </div>
+                              )}
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

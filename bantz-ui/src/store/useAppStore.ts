@@ -1,11 +1,23 @@
 import { create } from "zustand";
 
+// Hero images surfaced by web_news / web_research ("images" WS frames).
+export interface MediaItem {
+  image: string; // hero image URL
+  title: string;
+  url: string;   // source article
+}
+
 export interface ChatTurn {
   id: string;
   role: "bantz" | "user" | "system";
   text: string;
   ts: number;
+  images?: MediaItem[];
 }
+
+// Live voice pipeline state ("voice_state" WS frames) — drives the overlay
+// and any listening/speaking indicators.
+export type VoiceState = "idle" | "wake" | "listening" | "processing" | "speaking";
 
 export interface VitalSample {
   t: number;
@@ -124,6 +136,7 @@ interface AppState {
   services: ServiceItem[];
   configValues: ConfigValues | null;
   research: ResearchProgress | null;
+  voiceState: VoiceState;
   wsSend: ((msg: Record<string, unknown>) => boolean) | null;
 
   pushChat: (turn: Omit<ChatTurn, "id" | "ts"> & Partial<Pick<ChatTurn, "ts">>) => void;
@@ -141,6 +154,7 @@ interface AppState {
   setServices: (services: ServiceItem[]) => void;
   setConfigValues: (cv: ConfigValues) => void;
   setResearch: (progress: ResearchProgress | null) => void;
+  setVoiceState: (state: VoiceState) => void;
   setWsSend: (fn: ((msg: Record<string, unknown>) => boolean) | null) => void;
 }
 
@@ -271,6 +285,7 @@ export const useAppStore = create<AppState>((set) => ({
   services:     SEED_SERVICES,
   configValues: null,
   research:     null,
+  voiceState:   "idle",
   wsSend:       null,
 
   pushChat: (turn) =>
@@ -352,6 +367,8 @@ export const useAppStore = create<AppState>((set) => ({
   setConfigValues: (cv) => set({ configValues: cv }),
 
   setResearch: (progress) => set({ research: progress }),
+
+  setVoiceState: (state) => set({ voiceState: state }),
 
   setWsSend: (fn) => set({ wsSend: fn }),
 }));

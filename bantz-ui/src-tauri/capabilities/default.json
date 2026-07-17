@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities required by the Bantz Operations Center window.",
-  "windows": ["main"],
+  "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
     "shell:allow-open"

@@ -9,7 +9,7 @@ import { LogsPage } from "./pages/LogsPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useWebSocket } from "./hooks/useWebSocket";
-import { useAppStore, type Anomaly, type ConfigValues, type ServiceItem, type Task, type TaskPriority } from "./store/useAppStore";
+import { useAppStore, type Anomaly, type ConfigValues, type MediaItem, type ServiceItem, type Task, type TaskPriority, type VoiceState } from "./store/useAppStore";
 
 async function getWindow() {
   try {
@@ -156,6 +156,7 @@ export default function App() {
   const setConfigValues  = useAppStore((s) => s.setConfigValues);
   const setAnomalies     = useAppStore((s) => s.setAnomalies);
   const setResearch      = useAppStore((s) => s.setResearch);
+  const setVoiceState    = useAppStore((s) => s.setVoiceState);
   const setWsSend        = useAppStore((s) => s.setWsSend);
   const alertCount       = useAppStore((s) => s.anomalies.length);
 
@@ -290,12 +291,45 @@ export default function App() {
           break;
         }
 
+        case "voice_state": {
+          const v = d as { state?: string };
+          const s = String(v.state ?? "idle");
+          const known: VoiceState[] = ["idle", "wake", "listening", "processing", "speaking"];
+          setVoiceState(known.includes(s as VoiceState) ? (s as VoiceState) : "idle");
+          break;
+        }
+
+        case "voice_transcript": {
+          // What the user said to the wake word — echo it into the chat log
+          // so the spoken conversation is visible in the Broadcast Channel.
+          const v = d as { text?: string };
+          const text = String(v.text ?? "").trim();
+          if (text) pushChat({ role: "user", text: `🎙 ${text}` });
+          break;
+        }
+
+        case "images": {
+          const im = d as { topic?: string; items?: MediaItem[] };
+          const items = Array.isArray(im.items)
+            ? im.items.filter((x) => x && typeof x.image === "string" && x.image)
+            : [];
+          if (items.length) {
+            pushChat({
+              role: "bantz",
+              text: im.topic ? `Visuals — ${im.topic}` : "Visuals",
+              images: items,
+            });
+          }
+          break;
+        }
+
         default:
           break;
       }
     },
     [pushChat, pushVital, setStreamingText, pushLog, pushAlert,
-     setTasks, setServices, setConfigValues, setAnomalies, setResearch],
+     setTasks, setServices, setConfigValues, setAnomalies, setResearch,
+     setVoiceState],
   );
 
   const { status, attempts, send } = useWebSocket({

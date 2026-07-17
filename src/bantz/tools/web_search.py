@@ -82,6 +82,55 @@ def _emit_research_progress(
     log.info("[web_research] %s: %s (%ss, %s)", stage, detail, elapsed, state)
 
 
+# ── article hero images (Jarvis view) ───────────────────────────────────────
+
+def _article_images(articles: list[dict], limit: int = 4) -> list[dict]:
+    """Best-effort og:image extraction for the top articles.
+
+    Fetches each article page concurrently with short timeouts and pulls the
+    hero image via bantz-web's image_fetcher. Failures are silently skipped —
+    images are garnish, never a reason for the tool to fail or stall."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(a: dict) -> dict | None:
+        url = (a.get("url") or "").strip()
+        if not url:
+            return None
+        try:
+            import requests  # noqa: PLC0415
+            from image_fetcher import extract_primary_image_url  # noqa: PLC0415
+            resp = requests.get(
+                url, timeout=4,
+                headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"},
+            )
+            img = extract_primary_image_url(resp.text, url)
+        except Exception:
+            return None
+        if not img:
+            return None
+        return {"image": img, "title": a.get("title") or "", "url": url}
+
+    candidates = [a for a in articles if a.get("url")][:limit]
+    if not candidates:
+        return []
+    try:
+        with ThreadPoolExecutor(max_workers=len(candidates)) as ex:
+            results = list(ex.map(_one, candidates))
+    except Exception:
+        return []
+    return [r for r in results if r]
+
+
+def _emit_images(topic: str, items: list[dict]) -> None:
+    """Push hero images to the UI (ws_server bridges 'show_images' → frames)."""
+    if not items:
+        return
+    try:
+        bus.emit_threadsafe("show_images", topic=topic, items=items)
+    except Exception:
+        pass
+
+
 # ── wrapped functions ───────────────────────────────────────────────────────
 
 def execute_web_search(query: str, max_results: int = 5) -> str:
@@ -101,12 +150,14 @@ def execute_web_search(query: str, max_results: int = 5) -> str:
     return "\n".join(lines).strip()
 
 
-def execute_web_news(topic: str = "general") -> str:
-    """Latest news for a topic via bantz-web's news searcher. Returns a list string."""
+def execute_web_news(topic: str = "general") -> tuple[str, list[dict]]:
+    """Latest news for a topic via bantz-web's news searcher.
+
+    Returns (report string, hero-image items for the UI)."""
     from news_searcher import search_news  # noqa: PLC0415
     articles = search_news(topic)
     if not articles:
-        return f"No news found for: {topic}"
+        return f"No news found for: {topic}", []
     lines = [f"Latest news — {topic}:", ""]
     for i, a in enumerate(articles, 1):
         lines.append(f"{i}. {a.get('title') or 'Untitled'}")
@@ -116,7 +167,9 @@ def execute_web_news(topic: str = "general") -> str:
         if a.get("content"):
             lines.append(f"   {a['content'][:200]}")
         lines.append("")
-    return "\n".join(lines).strip()
+    images = _article_images(articles)
+    _emit_images(topic, images)
+    return "\n".join(lines).strip(), images
 
 
 def execute_web_research(topic: str, max_results: int = DEFAULT_RESEARCH_RESULTS) -> str:
@@ -135,6 +188,8 @@ def execute_web_research(topic: str, max_results: int = DEFAULT_RESEARCH_RESULTS
     sess_path = storage.session_path(topic)
     storage.save(sess_path, session)
     bw_main.run_research(session, sess_path, max_results, bw_config.REPORT_DIR)
+    images = _article_images(session.get("sources") or [], limit=6)
+    _emit_images(topic, images)
     return session.get("final_report") or "Research completed but produced no report."
 
 
@@ -229,10 +284,11 @@ class WebNewsTool(BaseTool):
     async def execute(self, topic: str = "", query: str = "", **kwargs: Any) -> ToolResult:
         topic = (topic or query or kwargs.get("text", "") or "general").strip() or "general"
         try:
-            output = await asyncio.to_thread(execute_web_news, topic)
+            output, images = await asyncio.to_thread(execute_web_news, topic)
         except Exception as exc:
             return ToolResult(success=False, output="", error=f"web news failed: {exc}")
-        return ToolResult(success=True, output=output, data={"topic": topic})
+        return ToolResult(success=True, output=output,
+                          data={"topic": topic, "images": images})
 
 
 registry.register(WebSearchTool())

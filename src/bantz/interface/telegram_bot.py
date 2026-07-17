@@ -788,7 +788,7 @@ async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     try:
         from bantz.tools.web_search import execute_web_news
-        out = await asyncio.to_thread(execute_web_news, topic)
+        out, _images = await asyncio.to_thread(execute_web_news, topic)
         await _send_long(update, placeholder, out)
     except Exception as exc:
         log.exception("news error")

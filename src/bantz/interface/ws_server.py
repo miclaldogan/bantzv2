@@ -121,6 +121,10 @@ class WsBroadcastServer:
         self._clients: set[ServerConnection] = set()
         self._server: Any | None = None
         self._tasks: list[asyncio.Task] = []
+        # Daemon mode sets this so wake-word utterances are routed through
+        # the brain here. live_ui consumes "voice_input" itself, so the flag
+        # stays False there to avoid double-processing.
+        self.voice_chat = False
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -140,6 +144,15 @@ class WsBroadcastServer:
         bus.on("health_alert", self._on_health_alert)
         bus.on("observer_error", self._on_observer_error)
         bus.on("research_progress", self._on_research_progress)
+        # Voice pipeline state → UI ("voice_state" frames for the overlay)
+        bus.on("wake_word_detected", self._on_wake_word)
+        bus.on("ghost_loop_listening", self._on_ghost_listening)
+        bus.on("voice_no_speech", self._on_voice_no_speech)
+        bus.on("voice_input", self._on_voice_input)
+        bus.on("tts_started", self._on_tts_started)
+        bus.on("tts_finished", self._on_tts_finished)
+        # Tool-surfaced media (news/research images) → UI gallery
+        bus.on("show_images", self._on_show_images)
 
         self._tasks = [
             asyncio.create_task(self._vitals_loop(),        name="ws-vitals"),
@@ -449,6 +462,80 @@ class WsBroadcastServer:
             "reason": str(event.data.get("message", event.data)),
         }
         asyncio.create_task(self._broadcast(payload))
+
+    # ── voice pipeline bridge ─────────────────────────────────────────────
+
+    def _voice_state(self, state: str) -> None:
+        asyncio.create_task(self._broadcast({"type": "voice_state", "state": state}))
+
+    def _on_wake_word(self, event: Event) -> None:
+        self._voice_state("wake")
+
+    def _on_ghost_listening(self, event: Event) -> None:
+        self._voice_state("listening")
+
+    def _on_voice_no_speech(self, event: Event) -> None:
+        self._voice_state("idle")
+
+    def _on_tts_started(self, event: Event) -> None:
+        self._voice_state("speaking")
+
+    def _on_tts_finished(self, event: Event) -> None:
+        self._voice_state("idle")
+
+    def _on_voice_input(self, event: Event) -> None:
+        text = str(event.data.get("text", "")).strip()
+        if not text:
+            return
+        asyncio.create_task(self._broadcast({"type": "voice_transcript", "text": text}))
+        self._voice_state("processing")
+        if self.voice_chat:
+            asyncio.create_task(self._handle_voice_chat(text))
+
+    async def _handle_voice_chat(self, text: str) -> None:
+        """Route a wake-word utterance through the brain (daemon mode).
+
+        The reply is broadcast to every connected UI client and spoken
+        aloud — voice questions always get a voice answer, independent of
+        the tts_speak_all_responses setting for typed chat."""
+        from bantz.core.brain import brain
+        try:
+            result = await brain.process(text)
+        except Exception as exc:
+            await self._broadcast({"type": "error", "msg": str(exc)})
+            await self._broadcast({"type": "done"})
+            self._voice_state("idle")
+            return
+        if result.stream is not None:
+            parts: list[str] = []
+            try:
+                async for token in result.stream:
+                    parts.append(token)
+            except Exception as exc:
+                log.debug("voice chat stream error: %s", exc)
+            response = "".join(parts)
+        else:
+            response = await _to_tr(result.response or "")
+        if response.strip():
+            await self._broadcast({"type": "token", "text": response})
+        await self._broadcast({"type": "done"})
+        if response.strip():
+            try:
+                from bantz.agent.tts import tts_engine
+                if tts_engine.available():
+                    await tts_engine.speak_background(response)
+            except Exception as exc:
+                log.debug("voice reply TTS failed: %s", exc)
+
+    def _on_show_images(self, event: Event) -> None:
+        items = event.data.get("items") or []
+        if not items:
+            return
+        asyncio.create_task(self._broadcast({
+            "type": "images",
+            "topic": event.data.get("topic", ""),
+            "items": items,
+        }))
 
     def _on_research_progress(self, event: Event) -> None:
         """Bridge a 'research_progress' bus event to a structured frame (#490).

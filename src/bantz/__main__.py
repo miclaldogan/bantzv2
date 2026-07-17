@@ -189,10 +189,14 @@ def _open_ui() -> None:
     subprocess.run([npm, "run", "tauri:dev"], cwd=ui_dir, check=False)
 
 
-async def _start_ws_server() -> None:
-    """Start the WebSocket broadcast server (non-blocking background task)."""
+async def _start_ws_server(voice_chat: bool = False) -> None:
+    """Start the WebSocket broadcast server (non-blocking background task).
+
+    voice_chat=True (daemon mode) makes ws_server the consumer of
+    wake-word "voice_input" events; live_ui handles those itself."""
     try:
         from bantz.interface.ws_server import ws_server
+        ws_server.voice_chat = voice_chat
         await ws_server.start()
     except Exception as exc:
         import logging
@@ -450,7 +454,7 @@ async def _daemon() -> None:
         log.warning("GPS server failed to start: %s", exc)
 
     # Start WebSocket server for Tauri UI
-    await _start_ws_server()
+    await _start_ws_server(voice_chat=True)
 
     # Warm up TTS engine so the first chat response isn't delayed by model load
     if config.tts_enabled:
@@ -468,6 +472,27 @@ async def _daemon() -> None:
                 )
         except Exception as _tts_exc:
             log.warning("TTS warm-up failed: %s", _tts_exc)
+
+    # Start the voice front-end: wake word listener + ghost loop (#165/#36).
+    # Both self-gate on their own config flags and no-op gracefully when a
+    # dependency (Picovoice key, mic, whisper) is missing, so this is safe to
+    # attempt whenever wake word is enabled.
+    voice_started = False
+    if config.wake_word_enabled:
+        try:
+            from bantz.agent.ghost_loop import ghost_loop
+            from bantz.agent.wake_word import wake_listener
+            ghost_loop.start()
+            voice_started = wake_listener.start()
+            if voice_started:
+                log.info("Voice front-end: wake word listener + ghost loop running")
+            else:
+                log.warning(
+                    "Wake word enabled but listener failed to start "
+                    "(missing BANTZ_PICOVOICE_ACCESS_KEY or mic?)"
+                )
+        except Exception as _voice_exc:
+            log.warning("Voice front-end failed to start: %s", _voice_exc)
 
     # Graceful shutdown
     stop_event = asyncio.Event()
