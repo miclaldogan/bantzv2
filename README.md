@@ -1,6 +1,6 @@
 # Bantz (It's Still in Early Development)
 
-Bantz is a local-first AI assistant that runs on your Linux machine and acts as a personal butler — it has a voice, remembers things across sessions, runs scheduled jobs overnight, controls your desktop, reads your email, and talks to you like a person who's known you long enough to be useful. The primary interface is the Operations Center desktop app (`bantz --ui`), with a `bantz` CLI alongside it. Everything is local by default. Nothing phones home unless you configure it to.
+Bantz is a local-first AI assistant that runs on your Linux machine and acts as a personal butler — it has a voice, remembers things across sessions, runs scheduled jobs overnight, controls your desktop, reads your email, and talks to you like a person who's known you long enough to be useful. It is also a small **multi-agent system**: the brain can hand tasks to specialist sub-agents (researcher, developer, reviewer) that run on their own small local models, serialized through a single LLM lane so a modest machine never runs two local inferences at once. The primary interface is the Operations Center desktop app (`bantz --ui`), with a `bantz` CLI alongside it. Everything is local by default. Nothing phones home unless you configure it to.
 
 ---
 
@@ -62,10 +62,12 @@ Memory persistence      MemPalace (ChromaDB + SQLite KG)
 
 Supporting systems run alongside the main loop:
 
+- **LLM Lane** (`llm/lane.py`) — the single choke point for every agent/workflow/background LLM call: one local inference at a time, interactive chat gets priority, and Ollama `keep_alive` is managed per model class (conversation model stays warm 30 min, agent side-models unload after 5)
+- **Agent Manager** (`agent/agent_manager.py` + `agent/sub_agent.py`) — spawns ephemeral specialist sub-agents (researcher / developer / reviewer) with per-role small models (`BANTZ_AGENT_MODELS`), tool whitelists, concurrency caps, and timeouts; the brain routes suitable requests to them first-class (`route="agent"`)
 - **APScheduler** (`agent/job_scheduler.py`) — persistent SQLAlchemy job store, nightly maintenance/reflection/overnight email poll
-- **Ghost Loop** (`agent/ghost_loop.py`) — wake word → VAD capture → STT → brain dispatch
+- **Ghost Loop** (`agent/ghost_loop.py`) — wake word → VAD capture → STT → brain dispatch; started automatically by the daemon when voice is enabled
 - **Affinity Engine** (`agent/affinity_engine.py`) — cumulative score [-100, 100] drives persona tier
-- **Event Bus** (`core/event_bus.py`) — decoupled pub/sub between brain, TUI, voice, notifications
+- **Event Bus** (`core/event_bus.py`) — decoupled pub/sub between brain, UI, voice, agents; delegation/job/workflow outcomes flow here with correlation IDs
 - **GPS Server** (`core/gps_server.py`) — local HTTP server receiving phone location updates
 
 ---
@@ -81,11 +83,13 @@ Supporting systems run alongside the main loop:
 - Onboarding: first-run identity setup, stored in memory wing
 - 400-token memory budget enforced per request (35/40/25 split across layers)
 
-**Voice pipeline**
-- Wake word detection via Porcupine (runs on dedicated daemon thread, always-on)
+**Voice pipeline** (end-to-end: say the wake word → speak → Bantz answers out loud)
+- Wake word detection via Porcupine (runs on dedicated daemon thread, always-on); the daemon starts the whole voice front-end automatically when enabled
 - VAD-based audio capture via WebRTC VAD (auto-stops when you stop talking)
 - STT via faster-whisper (local, GPU-accelerated if available)
-- TTS via Piper + aplay (local, no cloud)
+- TTS via Piper + pw-play (local, no cloud); voice questions always get a spoken answer
+- Spoken conversations appear in the Broadcast Channel (🎙 transcript echo + reply)
+- A compact always-on-top **voice overlay** window ("Bantz Voice") pins to the corner of the screen and animates through listening / thinking / speaking states — you always see what Bantz is doing
 - Audio ducking: system volume lowers during Bantz speech
 - Ambient sound classification: silence / speech / noisy from mic energy (no FFT)
 - Conversation window: 60s follow-up without re-triggering wake word
@@ -95,8 +99,9 @@ Supporting systems run alongside the main loop:
 - Nightly maintenance workflow (3am): database compaction, memory distillation, digest prep
 - Nightly reflection (11pm): daily summary written to reflection journal
 - Overnight email/calendar poll (every 2h, 00-07): urgent keyword detection
-- Morning briefing prep (6am): pre-generates briefing for fast delivery at wake-up time
-- Reminder system with repeat support (30s check interval)
+- Morning briefing prep (6am): pre-generates briefing for fast delivery at wake-up time; the mail section is category-filtered (personal/institutional surface, notification noise dropped) on both the cache and live paths
+- Reminder system with repeat support (30s check interval); "what do I need to do today" gets a real time-scoped answer
+- Proactive check-ins: occasional short messages grounded in what actually happened overnight (mail/calendar/classroom cache), max once a day
 
 **Desktop and computer control**
 - Desktop screenshot + local VLM analysis (built-in multimodal model; remote endpoint optional)
@@ -137,7 +142,7 @@ Supporting systems run alongside the main loop:
 **Interfaces**
 - **Operations Center** — Tauri + React desktop app, launched with `bantz --ui`. Six pages, all live over a local WebSocket (`:8765`):
   - **Broadcast Channel** — chat with Bantz; streamed responses, including live progress from long jobs
-  - **Vitals** — CPU / RAM / VRAM / DISK, refreshed every 2s
+  - **Vitals** — CPU / RAM / VRAM / DISK (VRAM read via pynvml — no subprocess spawns; interval configurable, telemetry pauses entirely when no UI is connected)
   - **Kernel Log** — live log stream from the daemon
   - **Directives** — scheduled jobs and reminders (APScheduler), with a New Directive box that parses natural language ("every morning at 7am …")
   - **Anomaly Watch** — real-time system anomalies (see below)
@@ -148,6 +153,7 @@ Supporting systems run alongside the main loop:
 - `web_search` — quick web lookup (under ~60s), tiered SearXNG → DuckDuckGo fallback
 - `web_research` — deep, multi-source research producing a structured report; runs async with live progress streamed to the Broadcast Channel and a cancel control
 - `web_news` — news pipeline: fetch + extract + summarize current headlines for a topic
+- **Jarvis view**: news and research results bring their article hero images with them — a clickable image grid appears in the Broadcast Channel alongside the spoken/written answer
 - Wired directly into the tool layer (no HTTP, no subprocess); routed by Chain-of-Thought ("research X", "search X", "news about X", plus Turkish: araştır / ara / haberler)
 
 **Anomaly Watch**
@@ -155,12 +161,18 @@ Supporting systems run alongside the main loop:
 - Thresholds tuned for a personal machine (CPU > 80%, RAM > 85%, disk > 85%, swap > 60% warn / > 85% critical), plus a combined memory-pressure signal
 - Per-anomaly **Investigate** (asks Bantz to analyze it in the Broadcast Channel) and **Snooze 1h** (client-side, persists across reloads, auto-expires)
 
+**Multi-agent**
+- Ask for something that needs real legwork — "thoroughly research X and verify it across sources" — and the brain routes it to a specialist sub-agent instead of a single tool call; the agent plans its own tool use, executes, and returns a synthesized, cited answer
+- Three roles today (researcher / developer / reviewer, with aliases), each on its own small local model via `BANTZ_AGENT_MODELS` (default `gemma3:4b`) so delegation doesn't evict your conversation model
+- All agent and background LLM traffic serializes through one lane — your typed chat always has priority, and parallel local inference (the thing that melts small machines) is structurally impossible
+- Explicit delegation works too: "have the researcher look into X" → `delegate_task`
+- Every delegation emits start/done events with correlation IDs and duration — groundwork for the jury/monitor agent and the Agents UI panel (see roadmap)
+
 **Multi-step workflows**
 - Chain-of-Thought routing selects tools and builds multi-step plans
 - Plan-and-Solve executor: `$REF_STEP_N` variable binding between steps
 - YAML-based workflow engine for deterministic step sequences
 - Inline workflow detection: "send email, add to calendar, remind me tomorrow" → 3 tool calls
-- Delegate-to-subagent tool: spawns sub-agents for parallel or specialized tasks
 
 **i18n**
 - MarianMT offline translation (Turkish↔English) — no API key, runs locally
@@ -168,7 +180,7 @@ Supporting systems run alongside the main loop:
 
 ### What's missing or incomplete
 
-**Wake word**: requires a Porcupine access key from Picovoice. Without it the voice pipeline silently disables itself. There's no fallback wake word engine.
+**Wake word**: requires a Porcupine access key from Picovoice (free). Without it the wake listener logs a warning and stays off while the rest of the voice stack (TTS/STT) keeps working. A fully local openWakeWord engine with a custom "Bantz" model — no external account at all — is the next planned replacement (epic [#563](https://github.com/miclaldogan/bantzv2/issues/563)).
 
 **VLM / vision analysis**: runs locally by default via Ollama (`BANTZ_VLM_BACKEND=ollama`). Bantz uses a built-in multimodal path — the same local model that handles chat also reads the screen (e.g. `gemma4:e4b-it-qat`), with `moondream` as a lightweight fallback. A remote VLM endpoint (`BANTZ_VLM_BACKEND=remote` + `BANTZ_VLM_ENDPOINT`, e.g. a Jetson/Colab box) is optional for offloading.
 
@@ -180,7 +192,9 @@ Supporting systems run alongside the main loop:
 
 **Proactive interventions**: implemented in `agent/interventions.py`, gated behind `BANTZ_RL_ENABLED`. Off by default. Not well-tested in the current build.
 
-**Autonomy confirmation**: the Settings "Autonomy" dial is parsed into a `requires_confirm` flag on the routing decision (low = always confirm, absolute = never), but the executor does not yet *enforce* it — destructive shell commands still gate on their own `DESTRUCTIVE_COMMANDS` confirm, independent of this dial.
+**Autonomy confirmation**: the Settings "Autonomy" dial is enforced on the single-tool path and on agent delegations (low = ask first), but the multi-step PlanExecutor does not yet check it per step — destructive shell commands there still gate only on their own `DESTRUCTIVE_COMMANDS` confirm.
+
+**Roadmap**: Bantz is mid-way through becoming a fuller multi-agent system — a mail agent over a local mbsync/notmuch mail store (works offline), an event-driven "jury" agent that watches job failures and anomalies and files verdicts, loop agents on schedules, WhatsApp/Telegram awareness via a desktop-notification listener, and an Agents panel in the Operations Center. The full plan lives in epic [#563](https://github.com/miclaldogan/bantzv2/issues/563).
 
 **web_research is Ollama-bound**: deep research runs many local model calls, so on a memory-constrained machine the model can stall mid-run; it falls back gracefully but a full report needs a healthy Ollama.
 
@@ -254,6 +268,14 @@ BANTZ_OLLAMA_ROUTING_MODEL=
 # Conversation provider: ollama (local, default) | claude | gemini | openai
 # Switchable live from Settings → Conversation Provider (persists to .env).
 BANTZ_LLM_PROVIDER=ollama
+
+# Multi-agent: sub-agents on their own small models, serialized through the
+# LLM lane (interactive chat always has priority over agent traffic).
+BANTZ_MULTI_AGENT_ENABLED=true
+BANTZ_AGENT_MODELS={"researcher":"gemma3:4b","developer":"gemma3:4b","reviewer":"gemma3:4b"}
+# Model residency: conversation model stays warm; agent models unload fast.
+BANTZ_OLLAMA_KEEP_ALIVE=30m
+BANTZ_OLLAMA_BG_KEEP_ALIVE=5m
 
 # Claude / Anthropic
 BANTZ_ANTHROPIC_API_KEY=your_key_here
