@@ -700,6 +700,13 @@ def _store_assistant_reply(text: str) -> None:
     replies only ever exist as joined tokens in this process, so the WS
     consumer is the one place that can write them to history."""
     try:
+        from bantz.core.finalizer import strip_internal
+        text = strip_internal(text)
+    except Exception:
+        pass
+    if not text.strip():
+        return
+    try:
         from bantz.data.layer import data_layer
         data_layer.conversations.add("assistant", text)
     except Exception as exc:
