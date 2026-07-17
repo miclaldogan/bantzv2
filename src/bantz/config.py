@@ -25,6 +25,14 @@ class Config(BaseSettings):
     # Leave empty (default) to use the main ollama_model for everything.
     ollama_routing_model: str = Field("", alias="BANTZ_OLLAMA_ROUTING_MODEL")
 
+    # ── LLM lane (#547) — serialized local-LLM access ─────────────────────
+    # One local model computes at a time; interactive chat outranks
+    # background (agent/workflow/jury) calls. keep_alive: how long Ollama
+    # keeps a model resident after the last request ("30m", "5m", 0, -1).
+    llm_lane_enabled: bool = Field(True, alias="BANTZ_LLM_LANE_ENABLED")
+    ollama_keep_alive: str = Field("30m", alias="BANTZ_OLLAMA_KEEP_ALIVE")
+    ollama_bg_keep_alive: str = Field("5m", alias="BANTZ_OLLAMA_BG_KEEP_ALIVE")
+
     # ── Vector Search ─────────────────────────────────────────────────────
     vector_search_weight: float = Field(0.5, alias="BANTZ_VECTOR_SEARCH_WEIGHT")
 

@@ -107,13 +107,17 @@ class OllamaClient:
             )
             self.routing_model = self.model
 
-    async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None, model_override: str = "", think: bool | None = None) -> str:
+    async def chat(self, messages: list[dict], stream: bool = False, *, options: dict | None = None, model_override: str = "", think: bool | None = None, keep_alive: str | int | None = None) -> str:
         """Simple chat — returns a single string.
 
         ``think``: native-thinking control for models that support it
         (gemma4, deepseek-r1, qwen3). False = off, True = on, None = model
         default. Non-streaming responses return content only — native
         thinking, when on, is dropped here by design.
+
+        ``keep_alive``: how long Ollama keeps the model resident after this
+        request ("30m", "5m", 0 = unload immediately, -1 = pin). None omits
+        the field (Ollama's server default, 5 min).
         """
         try:
             payload: dict = {"model": model_override or self.model, "messages": messages, "stream": False}
@@ -121,6 +125,8 @@ class OllamaClient:
                 payload["options"] = options
             if think is not None:
                 payload["think"] = think
+            if keep_alive is not None:
+                payload["keep_alive"] = keep_alive
             resp = await self.client.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
@@ -134,7 +140,7 @@ class OllamaClient:
             _notify_health(False)
             raise
 
-    async def chat_stream(self, messages: list[dict], *, options: dict | None = None, model_override: str = "", think: bool | None = None) -> AsyncIterator[str]:
+    async def chat_stream(self, messages: list[dict], *, options: dict | None = None, model_override: str = "", think: bool | None = None, keep_alive: str | int | None = None) -> AsyncIterator[str]:
         """
         Stream tokens from Ollama via NDJSON.
         Ollama /api/chat with stream:true returns lines like:
@@ -155,6 +161,8 @@ class OllamaClient:
             payload["options"] = options
         if think is not None:
             payload["think"] = think
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
         in_thinking = False
         async with self.client.stream(
             "POST",
