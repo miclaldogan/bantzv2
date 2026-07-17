@@ -90,6 +90,22 @@ _TOPIC_DISCIPLINE = (
 )
 
 
+_TURKISH_CHARS = set("çğıöşüÇĞİŞÖÜ")
+_TURKISH_WORDS = frozenset({
+    "bir", "ve", "ne", "mi", "mı", "mu", "nasıl", "nedir", "merhaba",
+    "selam", "bugün", "yarın", "saat", "hava", "var", "yok", "evet",
+    "hayır", "lütfen", "bana", "benim", "için", "ile", "çok", "değil",
+})
+
+
+def _looks_turkish(text: str) -> bool:
+    """Cheap Turkish detector for typed input (voice uses whisper's)."""
+    if any(c in _TURKISH_CHARS for c in text):
+        return True
+    words = [w.strip(".,!?").lower() for w in text.split()]
+    return sum(1 for w in words if w in _TURKISH_WORDS) >= 2
+
+
 def _keep_alive_kwargs(provider) -> dict:
     """keep_alive applies only to the Ollama client (#560) — the main
     conversation model stays resident so an idle gap doesn't cost a
@@ -719,6 +735,25 @@ class Brain:
             f"  outcome: {detail}"
         )
 
+    async def _translate_to_english(self, text: str) -> str:
+        """Turkish input → English for routing/tools, via the LLM lane
+        (small local model — better quality than the legacy MarianMT)."""
+        try:
+            from bantz.llm.lane import llm_call
+            out = await asyncio.wait_for(llm_call(
+                [{"role": "user", "content": (
+                    "Translate this Turkish message to English. Output ONLY "
+                    f"the English translation, nothing else:\n\n{text}"
+                )}],
+                model=config.agent_default_model,
+                interactive=True,
+            ), timeout=20)
+            out = out.strip().strip('"')
+            return out or text
+        except Exception as exc:
+            log.warning("TR→EN lane translation failed: %s — using raw input", exc)
+            return text
+
     async def _execute_agent_route(
         self,
         plan: dict,
@@ -1024,6 +1059,7 @@ class Brain:
         progress_cb: Optional[Callable[[str], None]] = None,
         session_key: str = "",
         voice: bool = False,
+        reply_lang: str = "",
     ) -> BrainResult:
         """Process *user_input* through the full pipeline.
 
@@ -1049,6 +1085,18 @@ class Brain:
             if _b and _b.is_enabled():
                 progress_cb("Translating\u2026")
         en_input = await self._to_en(user_input)
+
+        # Mirror language: Turkish in → English internals → Turkish reply.
+        # Voice passes whisper's detection; typed input falls back to a
+        # cheap heuristic. Input translation goes through the LLM lane
+        # (small local model) — far better than the old MarianMT path.
+        self._reply_lang = reply_lang if reply_lang in ("tr", "en") else ""
+        if config.mirror_language:
+            if not self._reply_lang and _looks_turkish(user_input):
+                self._reply_lang = "tr"
+            if self._reply_lang == "tr" and en_input == user_input:
+                en_input = await self._translate_to_english(user_input)
+
         tc = time_ctx.snapshot()
         self._turn_counter += 1  # (#276) advance TTL clock
 
@@ -1592,6 +1640,15 @@ class Brain:
                 "\n\nVOICE MODE: The user is speaking to you and will HEAR "
                 "this reply. Answer in 1-3 short conversational sentences. "
                 "No lists, no markdown, no headings."
+            )
+
+        # Mirror language: the user spoke/wrote Turkish — answer in Turkish
+        # (internals stayed English; only the reply mirrors).
+        if getattr(self, "_reply_lang", "") == "tr":
+            system_content += (
+                "\n\nThe user is communicating in TURKISH. Write your entire "
+                "reply in natural, fluent Turkish. Keep the same butler "
+                "personality."
             )
 
         # (#253) People-Pleaser guard: inject routing failure context

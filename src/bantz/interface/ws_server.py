@@ -509,20 +509,24 @@ class WsBroadcastServer:
         text = str(event.data.get("text", "")).strip()
         if not text:
             return
+        lang = str(event.data.get("lang", "") or "")
         asyncio.create_task(self._broadcast({"type": "voice_transcript", "text": text}))
         self._voice_state("processing")
         if self.voice_chat:
-            asyncio.create_task(self._handle_voice_chat(text))
+            asyncio.create_task(self._handle_voice_chat(text, lang))
 
-    async def _handle_voice_chat(self, text: str) -> None:
+    async def _handle_voice_chat(self, text: str, lang: str = "") -> None:
         """Route a wake-word utterance through the brain (daemon mode).
 
         The reply is broadcast to every connected UI client and spoken
         aloud — voice questions always get a voice answer, independent of
-        the tts_speak_all_responses setting for typed chat."""
+        the tts_speak_all_responses setting for typed chat. *lang* is the
+        whisper-detected input language; with mirror mode on, the reply
+        comes back (and is spoken) in that language."""
         from bantz.core.brain import brain
+        reply_lang = lang if lang in ("tr", "en") else ""
         try:
-            result = await brain.process(text, voice=True)
+            result = await brain.process(text, voice=True, reply_lang=reply_lang)
         except Exception as exc:
             await self._broadcast({"type": "error", "msg": str(exc)})
             await self._broadcast({"type": "done"})
@@ -538,7 +542,8 @@ class WsBroadcastServer:
                 if tts_engine.available():
                     spoken_via_stream = True
                     await tts_engine.speak_stream(
-                        _stream_sentences(result.stream, parts))
+                        _stream_sentences(result.stream, parts),
+                        language=reply_lang)
                 else:
                     async for token in result.stream:
                         parts.append(token)
@@ -556,7 +561,7 @@ class WsBroadcastServer:
             try:
                 from bantz.agent.tts import tts_engine
                 if tts_engine.available():
-                    await tts_engine.speak_background(response)
+                    await tts_engine.speak_background(response, language=reply_lang)
             except Exception as exc:
                 log.debug("voice reply TTS failed: %s", exc)
 

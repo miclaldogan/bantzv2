@@ -316,6 +316,19 @@ class Config(BaseSettings):
     # Max seconds a single VAD capture may run (music/noise keeps WebRTC
     # VAD "voiced", so this cap bounds worst-case listening latency).
     vad_max_record_s: float = Field(10.0, alias="BANTZ_VAD_MAX_RECORD_S")
+
+    # ── Mirror-language + Turkish voice (#voice-turkish) ──────────────────
+    # Reply in the language the user spoke (whisper-detected for voice,
+    # heuristic for typed). Internals stay English via LLM-lane translation.
+    mirror_language: bool = Field(True, alias="BANTZ_MIRROR_LANGUAGE")
+    # Turkish TTS backend: xtts (Coqui XTTS v2, best quality) | piper.
+    tts_tr_backend: str = Field("xtts", alias="BANTZ_TTS_TR_BACKEND")
+    tts_tr_model: str = Field("tr_TR-dfki-medium", alias="BANTZ_TTS_TR_MODEL")
+    xtts_python: str = Field(
+        "~/miniforge3/envs/butler_tts/bin/python", alias="BANTZ_XTTS_PYTHON")
+    xtts_speaker: str = Field("Damien Black", alias="BANTZ_XTTS_SPEAKER")
+    xtts_speed: float = Field(1.15, alias="BANTZ_XTTS_SPEED")
+    xtts_idle_unload_min: int = Field(10, alias="BANTZ_XTTS_IDLE_UNLOAD_MIN")
     # Local mail store (#552): mbsync maildir + notmuch index.
     localmail_enabled: bool = Field(False, alias="BANTZ_LOCALMAIL_ENABLED")
     maildir_path: str = Field("~/Mail", alias="BANTZ_MAILDIR_PATH")

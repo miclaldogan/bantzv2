@@ -426,7 +426,7 @@ class TTSEngine:
     def is_speaking(self) -> bool:
         return self._speaking
 
-    async def speak(self, text: str) -> None:
+    async def speak(self, text: str, language: str = "") -> None:
         """Speak text with streaming sentence-by-sentence pipeline.
 
         Synthesizes the next sentence while playing the current one.
@@ -466,7 +466,7 @@ class TTSEngine:
             log.info("TTS: speaking %d sentences", len(sentences))
 
             # Pre-synthesize first sentence
-            next_wav: bytes | None = await self._synthesize(sentences[0])
+            next_wav: bytes | None = await self._synthesize(sentences[0], language)
 
             for i, sentence in enumerate(sentences):
                 if self._stop_requested:
@@ -480,7 +480,7 @@ class TTSEngine:
                 synth_task: asyncio.Task | None = None
                 if i + 1 < len(sentences):
                     synth_task = asyncio.create_task(
-                        self._synthesize(sentences[i + 1])
+                        self._synthesize(sentences[i + 1], language)
                     )
 
                 # Play current sentence
@@ -510,15 +510,15 @@ class TTSEngine:
             self._playing = None
             _emit_voice_event("tts_finished")
 
-    async def speak_background(self, text: str) -> None:
+    async def speak_background(self, text: str, language: str = "") -> None:
         """Speak in background (fire-and-forget, interruptible)."""
         if self._speak_task and not self._speak_task.done():
             self.stop()
             # Give previous task a moment to clean up
             await asyncio.sleep(0.1)
-        self._speak_task = asyncio.create_task(self.speak(text))
+        self._speak_task = asyncio.create_task(self.speak(text, language))
 
-    async def speak_stream(self, sentences) -> None:
+    async def speak_stream(self, sentences, language: str = "") -> None:
         """Speak sentences as they arrive from an async iterator.
 
         The first sentence starts playing while the LLM is still
@@ -565,7 +565,7 @@ class TTSEngine:
                 sent = await queue.get()
                 if sent is None:
                     break
-                synth = asyncio.create_task(self._synthesize(sent))
+                synth = asyncio.create_task(self._synthesize(sent, language))
                 if prev_wav:
                     await self._play(prev_wav)
                 prev_wav = await synth
@@ -600,14 +600,54 @@ class TTSEngine:
 
     # ── Internal: Synthesis ─────────────────────────────────────────────
 
-    async def _synthesize(self, sentence: str) -> bytes | None:
-        """Synthesize a single sentence via Piper → raw WAV bytes."""
+    def _resolve_tr_model(self) -> str:
+        """Lazily resolve the Turkish Piper voice (fallback behind XTTS)."""
+        if getattr(self, "_model_path_tr", None) is not None:
+            return self._model_path_tr
+        from bantz.config import config
+        name = config.tts_tr_model
+        self._model_path_tr = ""
+        for d in [
+            Path.home() / ".local" / "share" / "bantz",
+            Path.home() / ".local" / "share" / "piper-voices",
+        ]:
+            for candidate in (d / f"{name}.onnx", d / name / f"{name}.onnx"):
+                if candidate.exists():
+                    self._model_path_tr = str(candidate)
+                    return self._model_path_tr
+        log.warning("TTS: Turkish piper voice %s not found", name)
+        return ""
+
+    async def _synthesize(self, sentence: str, language: str = "") -> bytes | None:
+        """Synthesize a single sentence → raw PCM bytes.
+
+        language="tr" prefers the XTTS bridge (Coqui, best Turkish) and
+        falls back to the Turkish Piper voice; default is the configured
+        (English) Piper voice."""
         if not sentence or not self._piper_path or not self._model_path:
             return None
 
+        model_path = self._model_path
+        if language == "tr":
+            from bantz.config import config as _cfg
+            if _cfg.tts_tr_backend == "xtts":
+                try:
+                    from bantz.agent.xtts_bridge import xtts_bridge
+                    if xtts_bridge.available():
+                        pcm = await asyncio.to_thread(
+                            xtts_bridge.synth, sentence, self._sample_rate, "tr",
+                        )
+                        if pcm:
+                            return pcm
+                except Exception as exc:
+                    log.debug("TTS: xtts path failed — %s", exc)
+            tr_model = self._resolve_tr_model()
+            if tr_model:
+                model_path = tr_model
+
         cmd = [
             self._piper_path,
-            "--model", self._model_path,
+            "--model", model_path,
             "--output-raw",
         ]
         if self._speaker > 0:

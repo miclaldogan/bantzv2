@@ -58,6 +58,9 @@ class STTEngine:
         # Idle unload (#560): last transcription time + pending timer.
         self._last_used: float = 0.0
         self._unload_timer = None
+        # Whisper-detected language of the last transcription ("tr"/"en"/…),
+        # consumed by the mirror-language pipeline.
+        self.last_language: str = ""
 
     # ── idle unload (#560) ────────────────────────────────────────────────
 
@@ -200,6 +203,7 @@ class STTEngine:
                 return None
 
             if result:
+                self.last_language = info.language or ""
                 log.info("STT: transcribed %d chars (lang=%s, prob=%.2f)",
                          len(result), info.language, info.language_probability)
             else:

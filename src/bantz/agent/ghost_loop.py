@@ -318,8 +318,11 @@ class GhostLoop:
             self._last_text = text
             log.info("Ghost Loop: [4/4] ✅ TRANSCRIBED → \"%s\"", text[:120])
 
-            # 5. Dispatch as voice input
-            bus.emit_threadsafe("voice_input", text=text)
+            # 5. Dispatch as voice input (lang → mirror-language pipeline)
+            bus.emit_threadsafe(
+                "voice_input", text=text,
+                lang=getattr(stt_engine, "last_language", ""),
+            )
             log.info("Ghost Loop: voice_input emitted to EventBus")
 
             # Log current awareness snapshot alongside the transcription
