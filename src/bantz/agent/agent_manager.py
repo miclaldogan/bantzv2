@@ -242,6 +242,8 @@ class AgentManager:
             )
         except Exception:
             pass
+        from bantz.core.event_bus import new_corr_id
+        corr_id = new_corr_id()
         try:
             from bantz.core.event_bus import bus as _bus
             await _bus.emit(
@@ -250,6 +252,7 @@ class AgentManager:
                 display_name=agent.display_name,
                 task=task[:80],
                 active=self._active,
+                corr_id=corr_id,
             )
         except Exception:
             pass
@@ -298,6 +301,8 @@ class AgentManager:
                 duration_s=round(record.duration_s, 1),
                 tools_used=result.tools_used,
                 error=result.error,
+                corr_id=corr_id,
+                summary=(result.summary or "")[:200],
             )
         except Exception:
             pass

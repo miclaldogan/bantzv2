@@ -814,16 +814,28 @@ class JobScheduler:
         # Keep last 100 entries
         if len(self._job_history) > 100:
             self._job_history = self._job_history[-100:]
+        # APScheduler listeners run off-loop → threadsafe emit (#549).
+        try:
+            from bantz.core.event_bus import bus
+            bus.emit_threadsafe("job_ok", job_id=event.job_id)
+        except Exception:
+            pass
 
     def _on_job_error(self, event) -> None:
+        exc_text = str(event.exception)[:200] if event.exception else ""
         self._job_history.append({
             "job_id": event.job_id,
             "time": datetime.now().isoformat(),
             "status": "error",
-            "exception": str(event.exception)[:200] if event.exception else "",
+            "exception": exc_text,
         })
         if len(self._job_history) > 100:
             self._job_history = self._job_history[-100:]
+        try:
+            from bantz.core.event_bus import bus
+            bus.emit_threadsafe("job_failed", job_id=event.job_id, exception=exc_text)
+        except Exception:
+            pass
 
     # ── Stats / Doctor ────────────────────────────────────────────────
 

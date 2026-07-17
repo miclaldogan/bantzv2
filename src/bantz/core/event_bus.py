@@ -54,10 +54,33 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
 log = logging.getLogger("bantz.event_bus")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent event catalogue (#549)
+# ═══════════════════════════════════════════════════════════════════════════
+# Multi-agent events flowing on this bus and their payload keys. corr_id
+# (from new_corr_id()) pairs start/finish frames and lets the jury + UI
+# attribute outcomes; it is a data-key convention, not an Event field.
+#
+#   delegation_start   role, task, corr_id
+#   delegation_done    role, success, duration_s, corr_id, summary (≤200)
+#   job_ok             job_id
+#   job_failed         job_id, exception (str)
+#   workflow_done      workflow, corr_id
+#   workflow_failed    workflow, corr_id, error (str)
+#   agent_progress     role, corr_id, tool, ok            (B1, planned)
+#   jury_verdict       corr_id, verdict, cause, llm       (B3, planned)
+#   anomaly_detected   anomalies (list of dicts; edge-triggered)  (B3, planned)
+
+
+def new_corr_id() -> str:
+    """Short correlation id for pairing start/finish events."""
+    return uuid.uuid4().hex[:12]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -284,6 +307,47 @@ class EventBus:
                     getattr(cb, "__name__", cb),
                     event.name,
                 )
+
+    # ── request/reply helper ──────────────────────────────────────────
+
+    async def wait_for(
+        self,
+        event_name: str,
+        predicate: Callable[[Event], bool] | None = None,
+        timeout: float = 30.0,
+    ) -> Event | None:
+        """Await the next *event_name* event (optionally matching
+        *predicate*). Returns the Event, or None on timeout.
+
+        The temporary subscriber is always removed — including on timeout
+        or cancellation — so repeated waits never leak subscribers::
+
+            cid = new_corr_id()
+            ...emit delegation with cid...
+            ev = await bus.wait_for(
+                "delegation_done",
+                predicate=lambda e: e.data.get("corr_id") == cid,
+                timeout=120.0,
+            )
+        """
+        fut: asyncio.Future[Event] = asyncio.get_running_loop().create_future()
+
+        def _waiter(event: Event) -> None:
+            if fut.done():
+                return
+            try:
+                if predicate is None or predicate(event):
+                    fut.set_result(event)
+            except Exception:
+                log.exception("wait_for predicate failed for %r", event_name)
+
+        self.on(event_name, _waiter)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self.off(event_name, _waiter)
 
     # ── introspection ─────────────────────────────────────────────────
 

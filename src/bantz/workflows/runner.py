@@ -49,7 +49,31 @@ class WorkflowRunner:
         workflow: WorkflowDef,
         inputs: dict[str, Any] | None = None,
     ) -> WorkflowResult:
-        """Execute all steps in order and return the result."""
+        """Execute all steps in order and return the result.
+
+        Emits workflow_done / workflow_failed on the event bus (#549) so
+        the jury and UI can observe workflow outcomes."""
+        result = await self._run_inner(workflow, inputs)
+        try:
+            from bantz.core.event_bus import bus, new_corr_id
+            payload: dict[str, Any] = {
+                "workflow": workflow.name,
+                "corr_id": new_corr_id(),
+            }
+            if result.success:
+                await bus.emit("workflow_done", **payload)
+            else:
+                payload["error"] = (result.error or "")[:200]
+                await bus.emit("workflow_failed", **payload)
+        except Exception:
+            pass
+        return result
+
+    async def _run_inner(
+        self,
+        workflow: WorkflowDef,
+        inputs: dict[str, Any] | None = None,
+    ) -> WorkflowResult:
         t0 = time.perf_counter()
         ctx = self._build_context(workflow, inputs or {})
         results: list[StepResult] = []
