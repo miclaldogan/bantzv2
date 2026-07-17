@@ -53,6 +53,47 @@ _COOLDOWN_SECONDS = 2.0
 _FALLBACK_KEYWORD = "computer"
 
 
+class _OpenWakeWordEngine:
+    """Fully local wake engine (#551): openWakeWord's melspectrogram +
+    embedding ONNX features with a locally trained "bantz" classifier
+    head (scripts/train_wakeword.py). No account, no key.
+
+    Duck-typed to pvporcupine so the listener's audio plumbing is
+    untouched: sample_rate / frame_length / process(pcm) -> index /
+    delete().
+    """
+
+    sample_rate = 16000
+    frame_length = 1280  # 80 ms — openWakeWord's native frame size
+
+    def __init__(self, clf_path: str, threshold: float) -> None:
+        import joblib
+        import numpy as np
+        from openwakeword.utils import AudioFeatures
+        bundle = joblib.load(clf_path)
+        self._clf = bundle["clf"]
+        self._n_frames = int(bundle.get("n_frames", 16))
+        self._features = AudioFeatures(ncpu=1)
+        self._threshold = threshold
+        self._np = np
+        # The embedding buffer needs ~1.5s of audio before the first full
+        # window exists; skip scoring until then.
+        self._frames_seen = 0
+
+    def process(self, pcm) -> int:
+        x = self._np.asarray(pcm, dtype=self._np.int16)
+        self._features(x)  # streaming feature buffer update
+        self._frames_seen += 1
+        if self._frames_seen < self._n_frames + 6:
+            return -1
+        window = self._features.get_features(self._n_frames)
+        score = float(self._clf.predict_proba(window.reshape(1, -1))[0, 1])
+        return 0 if score >= self._threshold else -1
+
+    def delete(self) -> None:
+        pass
+
+
 class WakeWordListener:
     """Always-on Porcupine wake word listener on a dedicated daemon thread.
 
@@ -108,7 +149,7 @@ class WakeWordListener:
 
         self._on_wake = on_wake
 
-        if not self._init_porcupine():
+        if not self._init_engine():
             return False
 
         if not self._init_audio():
@@ -413,6 +454,47 @@ class WakeWordListener:
         except Exception:
             pass
         return None
+
+    def _init_engine(self) -> bool:
+        """Choose the wake engine per BANTZ_WAKE_ENGINE.
+
+        openwakeword (default): the local "bantz" model, no external
+        account. Falls back to porcupine when the model file is missing
+        AND a Picovoice key is configured."""
+        from bantz.config import config
+        engine = str(getattr(config, "wake_engine", "openwakeword")).lower()
+        if engine == "openwakeword":
+            if self._init_openwakeword():
+                return True
+            log.info("Wake word: openwakeword unavailable — trying porcupine")
+        return self._init_porcupine()
+
+    def _init_openwakeword(self) -> bool:
+        from pathlib import Path
+        from bantz.config import config
+        path = Path(
+            getattr(config, "wake_model_path", "")
+            or "~/.local/share/bantz/wakewords/bantz_clf.pkl"
+        ).expanduser()
+        if not path.exists():
+            log.warning(
+                "Wake word: no local model at %s — run scripts/train_wakeword.py",
+                path,
+            )
+            return False
+        try:
+            sens = self._get_sensitivity()
+            # Higher sensitivity → lower score threshold (Porcupine semantics).
+            threshold = max(0.55, min(0.95, 1.0 - 0.5 * sens))
+            self._porcupine = _OpenWakeWordEngine(str(path), threshold)
+            log.info(
+                "Wake word: openWakeWord engine ready (model=%s, threshold=%.2f)",
+                path.name, threshold,
+            )
+            return True
+        except Exception as exc:
+            log.error("Wake word: openWakeWord init failed — %s", exc)
+            return False
 
     def _init_porcupine(self) -> bool:
         """Initialize Porcupine engine. Returns True on success."""

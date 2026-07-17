@@ -307,6 +307,10 @@ class Config(BaseSettings):
     agent_default_model: str = Field("gemma3:4b", alias="BANTZ_AGENT_DEFAULT_MODEL")
     # WebAgent may drive the browser only when explicitly allowed (#555).
     webagent_browser: bool = Field(False, alias="BANTZ_WEBAGENT_BROWSER")
+    # Wake engine (#551): openwakeword = fully local "bantz" model
+    # (scripts/train_wakeword.py), porcupine = legacy Picovoice.
+    wake_engine: str = Field("openwakeword", alias="BANTZ_WAKE_ENGINE")
+    wake_model_path: str = Field("", alias="BANTZ_WAKE_MODEL_PATH")
     # Local mail store (#552): mbsync maildir + notmuch index.
     localmail_enabled: bool = Field(False, alias="BANTZ_LOCALMAIL_ENABLED")
     maildir_path: str = Field("~/Mail", alias="BANTZ_MAILDIR_PATH")
