@@ -124,7 +124,7 @@ Supporting systems run alongside the main loop:
   - -100 → clipped and resentful
   - 0 → neutral and professional
   - +100 → deeply bonded, proactive, affectionate
-- Highwater protection: score can't drop from a tier you've reached
+- High-water protection: score can't drop from a tier you've reached
 - Bonding Meter: sigmoid-gated interaction scoring, configurable rate/midpoint
 
 **Security and permissions**
