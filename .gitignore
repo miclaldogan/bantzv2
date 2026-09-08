@@ -27,7 +27,9 @@ latest_bantz_chat.txt
 *.ppn
 
 # Test/analysis artifacts
+pytest.log
 pytest_final.txt
+eval/routing_eval_run.log
 CODEBASE_ANALYSIS.md
 LICENSE.txt
 
@@ -37,9 +39,16 @@ mempalace/
 # loop_eval run-queue lock (#509) — runtime state, never committed
 eval/loop_eval/.run.lock
 
-# loop_eval batch outputs (#510/#511) — data, not source
-eval/loop_eval/results/
-eval/loop_eval/manifests/
+# loop_eval batch outputs (#510/#511) — COMMITTED, deliberately.
+# These were ignored as "data, not source" and the b_realm batches were then
+# lost: only aggregate stats survived, so the pre-registered residual-failure
+# taxonomy (TAXONOMY.md) could never be executed — it labels from transcripts —
+# and the headline paired deltas could not be regenerated. A full batch is
+# ~4 MB (146 tasks x 4 conditions, transcripts included), which is not a size
+# worth trading evidence for. The paper's conclusion also promises the
+# per-iteration traces are released.
+#   eval/loop_eval/results/
+#   eval/loop_eval/manifests/
 
 # loop_eval generated figures (#515) — regenerate via figures.py
 eval/loop_eval/figures/
