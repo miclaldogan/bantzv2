@@ -77,7 +77,8 @@ def _cost_block(provider: Any, iterations: list, wall_ms: int) -> dict:
     - ``loop_overhead_tokens``  tokens spent by iterations AFTER the first —
       the price of looping, which is the number the cost/benefit claim needs.
     - ``finalize_tokens``       task total minus everything attributed to
-      iterations, i.e. the initial cot_route plus the finalizer.
+      iterations. Iteration 1 carries the initial routing call (Brain marks
+      the counters before cot_route), so this is the finalizer alone.
 
     Mock runs never reach a real provider, so every count is legitimately 0.
     """

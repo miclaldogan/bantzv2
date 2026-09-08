@@ -296,6 +296,9 @@ class Brain:
         # first and recalls, returns None for short output, then _finalize
         # recalls again — same query, twice. Cache by en_input within a turn.
         self._recall_cache: tuple[str, Any] | None = None
+        # Provider token counters captured just before the turn's first
+        # routing call (#503 cost accounting); consumed by the recovery loop.
+        self._route_tok_mark: tuple[int, int] | None = None
         # Screen vision context (#189+): VLM description of last screenshot
         self._last_screen_description: str = ""
         self._screen_description_turn: int = -1
@@ -867,7 +870,11 @@ class Brain:
         # Provider token counters at the last iteration boundary; each record
         # gets the delta since this mark, so a re-decision's routing call is
         # charged to the iteration it produced (#503 cost accounting).
-        _tok_mark = _provider_usage()
+        # Start from the mark taken before the initial cot_route (set by
+        # process()) so iteration 1 carries its own routing call; fall back to
+        # "now" for callers that enter the loop without routing first.
+        _tok_mark = getattr(self, "_route_tok_mark", None) or _provider_usage()
+        self._route_tok_mark = None
         decision_source = "initial"
         result: ToolResult | None = None
         last_exc: Exception | None = None
@@ -1252,6 +1259,11 @@ class Brain:
         if progress_cb:  # #435: tell the user we're about to call the LLM
             progress_cb("Thinking\u2026")
         tool_ctx = self._build_tool_context(en_input)
+        # Mark token usage before the FIRST routing call so iteration 1 can be
+        # charged with the decision that produced it, exactly as later
+        # iterations are charged with their re-decide call. Without this the
+        # initial route leaks into finalize_tokens and iteration 1 reads 0.
+        self._route_tok_mark = _provider_usage()
         plan, routing_error = await cot_route(
             en_input, registry.all_schemas(),
             recent_history=recent_history,
