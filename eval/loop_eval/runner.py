@@ -49,6 +49,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 TASKS_DIR = HERE / "tasks"
@@ -63,6 +64,40 @@ _STRIP_ENV = ("BANTZ_DATA_DIR", "BANTZ_PALACE_PATH",
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _cost_block(provider: Any, iterations: list, wall_ms: int) -> dict:
+    """Real token accounting for one task (contract #500 §2).
+
+    Provider counters are cumulative for the subprocess, and one subprocess
+    runs exactly one task, so the snapshot IS the task total. Per-iteration
+    counts come from the Brain's trace, which charges each re-decision's
+    routing call to the iteration it produced.
+
+    - ``loop_overhead_tokens``  tokens spent by iterations AFTER the first —
+      the price of looping, which is the number the cost/benefit claim needs.
+    - ``finalize_tokens``       task total minus everything attributed to
+      iterations, i.e. the initial cot_route plus the finalizer.
+
+    Mock runs never reach a real provider, so every count is legitimately 0.
+    """
+    usage = provider.snapshot_usage() if provider is not None else {}
+    total_in = int(usage.get("tokens_in", 0))
+    total_out = int(usage.get("tokens_out", 0))
+    iter_in = sum(int(it.get("tokens_in", 0)) for it in iterations)
+    iter_out = sum(int(it.get("tokens_out", 0)) for it in iterations)
+    overhead = sum(int(it.get("tokens_in", 0)) + int(it.get("tokens_out", 0))
+                   for it in iterations[1:])
+    return {
+        "llm_calls": int(usage.get("calls", 0)),
+        "tokens_in": total_in,
+        "tokens_out": total_out,
+        "wall_ms": wall_ms,
+        # Clamped at 0: the schema requires non-negative ints, and a provider
+        # that under-reports must not produce a negative remainder.
+        "loop_overhead_tokens": max(0, overhead),
+        "finalize_tokens": max(0, (total_in + total_out) - (iter_in + iter_out)),
+    }
 
 
 def condition_slug(cond: dict) -> str:
@@ -247,6 +282,14 @@ def run_child() -> int:
                              task["expected_tool"])
     from bantz.core.brain import brain
 
+    # Zero the provider's token counters so `usage` covers exactly this task
+    # (one task per subprocess, so the process-wide counter IS the task).
+    try:
+        from bantz.llm.ollama import ollama as _ollama
+        _ollama.reset_usage()
+    except Exception:  # noqa: BLE001 — accounting must not block the run
+        _ollama = None
+
     t0 = time.perf_counter()
 
     async def drive() -> tuple[str, bool]:
@@ -354,9 +397,7 @@ def run_child() -> int:
         "recovery": bool(success) and loop_triggered,
         "outcome_class": outcome,
         "iterations": iterations,
-        "cost": {"llm_calls": 0 if mock else 2, "tokens_in": 0,
-                 "tokens_out": 0, "wall_ms": wall_ms,
-                 "loop_overhead_tokens": 0, "finalize_tokens": 0},
+        "cost": _cost_block(_ollama, iterations, wall_ms),
         "transcript_path": str(transcript_path),
         "ts": _now_iso(),
         "final_response_excerpt": response[:500],

@@ -47,6 +47,24 @@ EXCERPT_MAX = 500
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+def condition_key(cond: dict) -> str:
+    """Canonical analysis key for a condition — the single source of truth.
+
+    ``tool_loop_mode`` MUST be part of the key: re-decide and retry are
+    separate conditions, and pooling them silently doubles every steps>1
+    denominator instead of failing loudly (the b_realm batches merged this
+    way — steps1 n=146 against steps3 n=290).
+
+    The default mode is omitted so keys for pre-ablation batches, which carry
+    no ``tool_loop_mode`` at all, stay byte-identical. This mirrors
+    ``runner.condition_slug``, which applies the same rule to file names.
+    """
+    key = f"{cond['model']}|steps{cond['tool_loop_max_steps']}"
+    if cond.get("tool_loop_mode", "redecide") != "redecide":
+        key += f"|{cond['tool_loop_mode']}"
+    return key
+
+
 def _need(obj: dict, field: str, types: type | tuple, errs: list[str],
           where: str) -> Any:
     if field not in obj:

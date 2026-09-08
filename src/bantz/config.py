@@ -67,6 +67,11 @@ class Config(BaseSettings):
     # bounded retry?); it costs zero extra LLM calls.
     tool_loop_mode: str = Field("redecide", pattern="^(redecide|retry)$",
                                 alias="BANTZ_TOOL_LOOP_MODE")
+    # Decoding seed for the routing call. -1 (default) omits the field
+    # entirely, so production decoding is unchanged; the eval harness sets a
+    # real seed because temperature=0 alone is only near-deterministic on the
+    # local Ollama runtime (observed: 96/100/98 on identical inputs).
+    ollama_seed: int = Field(-1, alias="BANTZ_OLLAMA_SEED")
 
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")

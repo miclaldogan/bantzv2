@@ -63,8 +63,7 @@ def load_records(results_dir: Path) -> tuple[list[dict], dict]:
 
 
 def cond_key(rec: dict) -> str:
-    c = rec["condition"]
-    return f"{c['model']}|steps{c['tool_loop_max_steps']}"
+    return schema.condition_key(rec["condition"])
 
 
 def in_denominator(rec: dict) -> bool:

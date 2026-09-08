@@ -37,6 +37,38 @@ class OllamaClient:
                 f"Expected format: http://<host>:<port>"
             )
         self._client: httpx.AsyncClient | None = None
+        # Per-process token accounting. Ollama already returns these counts on
+        # every /api/chat response and they used to be discarded, which is why
+        # the eval harness reported tokens_in/out as 0 and could not compute
+        # cost-per-recovery. chat() returns str, so the counts ride a side
+        # channel rather than changing every call site's signature.
+        self.usage: dict[str, int] = self._zero_usage()
+
+    @staticmethod
+    def _zero_usage() -> dict[str, int]:
+        return {"calls": 0, "tokens_in": 0, "tokens_out": 0, "eval_ms": 0}
+
+    def reset_usage(self) -> None:
+        """Zero the counters — call at the start of a measured unit of work."""
+        self.usage = self._zero_usage()
+
+    def snapshot_usage(self) -> dict[str, int]:
+        """Copy of the counters since the last reset."""
+        return dict(self.usage)
+
+    def _record_usage(self, data: dict) -> None:
+        """Accumulate one response's counts. Never raises: a missing or
+        malformed field must not fail the caller's actual request."""
+        try:
+            self.usage["calls"] += 1
+            self.usage["tokens_in"] += int(data.get("prompt_eval_count") or 0)
+            self.usage["tokens_out"] += int(data.get("eval_count") or 0)
+            # eval_duration is nanoseconds
+            self.usage["eval_ms"] += int((data.get("eval_duration") or 0) // 1_000_000)
+        except Exception:  # noqa: BLE001 — accounting must never break a call
+            import logging as _logging
+            _logging.getLogger("bantz.llm.ollama").debug(
+                "usage accounting skipped for one response", exc_info=True)
 
     @property
     def model(self) -> str:
@@ -134,6 +166,7 @@ class OllamaClient:
             )
             resp.raise_for_status()
             data = resp.json()
+            self._record_usage(data)
             _notify_health(True)
             return data["message"]["content"]
         except Exception:
@@ -193,6 +226,9 @@ class OllamaClient:
                         yield "</thinking>"
                     yield token
                 if data.get("done", False):
+                    # The terminating line carries the final counts for the
+                    # whole stream.
+                    self._record_usage(data)
                     if in_thinking:
                         yield "</thinking>"
                     return

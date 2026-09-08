@@ -174,6 +174,21 @@ _PRE_TOOL_LINES: dict[str, str] = {
 }
 
 
+def _provider_usage() -> tuple[int, int]:
+    """Cumulative (tokens_in, tokens_out) reported by the active local
+    provider, or (0, 0) when the provider does not report usage.
+
+    Only Ollama is instrumented; every other provider returns zeros so the
+    per-iteration fields stay honest rather than fabricated.
+    """
+    try:
+        from bantz.llm.ollama import ollama
+        u = ollama.usage
+        return int(u.get("tokens_in", 0)), int(u.get("tokens_out", 0))
+    except Exception:  # noqa: BLE001 — accounting must never break the pipeline
+        return 0, 0
+
+
 def _estimate_tokens(text: str) -> int:
     """Rough token estimate (~4 chars/token) used only to *bound* the C1
     recovery loop's re-decide cost against ``tool_loop_token_budget`` (#501).
@@ -676,11 +691,16 @@ class Brain:
         index: int, tool_name: str, tool_args: dict, decision_source: str, *,
         result: "ToolResult | None", exc: "Exception | None", gated: str | None,
         wall_ms: int, error: str | None = None,
+        tokens_in: int = 0, tokens_out: int = 0,
     ) -> dict:
         """One per-iteration trace entry in the loop_eval contract shape (#500).
 
-        Brain does not measure LLM tokens (the eval runner does), so tokens_in/
-        tokens_out are reported as 0 here; only ``wall_ms`` is real.
+        ``tokens_in``/``tokens_out`` are the provider-reported counts consumed
+        since the previous iteration boundary, so each re-decision's routing
+        call is attributed to the iteration it produced. They default to 0,
+        which keeps every caller that does not measure byte-identical; the
+        first iteration excludes the initial cot_route call, which happens in
+        ``process()`` before this loop is entered.
         """
         if result is not None:
             res = {
@@ -701,8 +721,8 @@ class Brain:
             "result": res,
             "exception": f"{type(exc).__name__}: {exc}" if exc is not None else None,
             "gated": gated,
-            "tokens_in": 0,
-            "tokens_out": 0,
+            "tokens_in": int(tokens_in),
+            "tokens_out": int(tokens_out),
             "wall_ms": int(wall_ms),
         }
 
@@ -844,6 +864,10 @@ class Brain:
 
         iterations: list = []
         overhead_tokens = 0
+        # Provider token counters at the last iteration boundary; each record
+        # gets the delta since this mark, so a re-decision's routing call is
+        # charged to the iteration it produced (#503 cost accounting).
+        _tok_mark = _provider_usage()
         decision_source = "initial"
         result: ToolResult | None = None
         last_exc: Exception | None = None
@@ -889,9 +913,12 @@ class Brain:
                     f"Confirm? (yes/no)"
                 )
                 data_layer.conversations.add("assistant", warn)
+                _tok_now = _provider_usage()
                 iterations.append(self._iter_record(
                     index, tool_name, tool_args, decision_source,
                     result=None, exc=None, gated="needs_confirm", wall_ms=0,
+                    tokens_in=_tok_now[0] - _tok_mark[0],
+                    tokens_out=_tok_now[1] - _tok_mark[1],
                 ))
                 return _RecoveryOutcome(
                     iterations=iterations,
@@ -905,11 +932,15 @@ class Brain:
             # ── Resolve tool ────────────────────────────────────────────
             tool = registry.get(tool_name)
             if tool is None:
+                _tok_now = _provider_usage()
                 iterations.append(self._iter_record(
                     index, tool_name, tool_args, decision_source,
                     result=None, exc=None, gated=None, wall_ms=0,
                     error=f"Tool not found: {tool_name}",
+                    tokens_in=_tok_now[0] - _tok_mark[0],
+                    tokens_out=_tok_now[1] - _tok_mark[1],
                 ))
+                _tok_mark = _tok_now
                 result = None
                 if index >= max_steps:
                     err = f"Tool not found: {tool_name}"
@@ -943,10 +974,14 @@ class Brain:
                     result = None
                 wall_ms = int((time.monotonic() - t0) * 1000)
 
+                _tok_now = _provider_usage()
                 iterations.append(self._iter_record(
                     index, tool_name, tool_args, decision_source,
                     result=result, exc=exc, gated=None, wall_ms=wall_ms,
+                    tokens_in=_tok_now[0] - _tok_mark[0],
+                    tokens_out=_tok_now[1] - _tok_mark[1],
                 ))
+                _tok_mark = _tok_now
 
                 if result is not None and result.success:
                     return _RecoveryOutcome(

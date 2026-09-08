@@ -20,6 +20,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import schema  # noqa: E402  — shared contract module (condition_key)
+
 SAMPLE_SEED = 516  # fixed: the stratified sample must be reproducible
 
 COLUMNS = ["task_id", "condition", "failure_class", "recoverable",
@@ -90,7 +93,7 @@ def write_sheet(records: list[dict], out: Path) -> None:
             cond = rec["condition"]
             writer.writerow({
                 "task_id": rec["task_id"],
-                "condition": f"{cond['model']}|steps{cond['tool_loop_max_steps']}",
+                "condition": schema.condition_key(cond),
                 "failure_class": rec["failure_class"],
                 "recoverable": rec["recoverable"],
                 "outcome_class": rec["outcome_class"],

@@ -460,6 +460,19 @@ def _supports_native_think(model: str) -> bool:
 _ROUTING_OPTIONS: dict = {"num_predict": 768, "temperature": 0}
 
 
+def _routing_options() -> dict:
+    """Routing decode options, plus a seed when one is configured.
+
+    ``config.ollama_seed`` defaults to -1, which returns _ROUTING_OPTIONS
+    unchanged — production decoding is byte-identical unless a seed is set.
+    """
+    from bantz.config import config  # local: module has no top-level config import
+    seed = getattr(config, "ollama_seed", -1)
+    if seed is None or seed < 0:
+        return _ROUTING_OPTIONS
+    return {**_ROUTING_OPTIONS, "seed": int(seed)}
+
+
 async def _stream_and_collect(
     messages: list[dict],
     *,
@@ -859,7 +872,7 @@ async def cot_route(
     try:
         raw = await _stream_and_collect(
             messages, emit_thinking=True, source="cot_route",
-            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
+            options=_routing_options(), model_override=ollama.routing_model,
         )
 
         if _is_refusal(raw):
@@ -892,7 +905,7 @@ async def cot_route(
             try:
                 raw = await _stream_and_collect(
                     messages, emit_thinking=True, source="cot_route_fallback",
-                    options=_ROUTING_OPTIONS, model_override=ollama.model,
+                    options=_routing_options(), model_override=ollama.model,
                 )
                 if not _is_refusal(raw):
                     _log_thinking(raw)
@@ -925,7 +938,7 @@ async def cot_route(
 
         raw2 = await _stream_and_collect(
             messages, emit_thinking=False, source="cot_route_retry",
-            options=_ROUTING_OPTIONS, model_override=ollama.routing_model,
+            options=_routing_options(), model_override=ollama.routing_model,
         )
         _log_thinking(raw2, tag="retry")
         plan = _extract_json(raw2, utterance=en_input)
