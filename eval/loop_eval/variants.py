@@ -41,6 +41,16 @@ TASKS_DIR = Path(__file__).resolve().parent / "tasks"
 
 TRANSIENT_ERROR = "transient service error (503) — the request may succeed if retried"
 
+#: Fault-persistence sweep. The original corpus injected transient faults that
+#: failed exactly once, which made "retry the same call" correct BY
+#: CONSTRUCTION and left the retry-vs-re-decide ablation a tautology, since
+#: transient dominates the recoverable classes. Sweeping how many times the
+#: call fails separates "the loop budget was enough" from "re-deciding helped":
+#: with a step budget S, retry can only win while fail_times < S.
+#: fail_times=1 keeps its historical id and payload so earlier batches still
+#: dedupe and stay comparable.
+TRANSIENT_FAIL_TIMES = (1, 2, 3)
+
 #: Permanent-failure text per category — phrased so a reasonable agent can
 #: tell there is no point retrying.
 UNRECOVERABLE_ERRORS = {
@@ -209,15 +219,30 @@ def _variant_shell(base: dict, variant: str) -> dict:
     return v
 
 
-def make_transient(base: dict) -> dict:
-    v = _variant_shell(base, "transient")
+def make_transient(base: dict, fail_times: int = 1) -> dict:
+    """Transient-fault variant: the expected tool fails *fail_times* times,
+    then succeeds.
+
+    The suffix is bare ``transient`` for the historical single-failure case and
+    ``transient{n}`` beyond it, so existing ids, result files and manifests are
+    untouched.
+    """
+    suffix = "transient" if fail_times == 1 else f"transient{fail_times}"
+    v = _variant_shell(base, suffix)
     v["failure_injection"] = {
         "class": "transient_error",
-        "params": {"fail_times": 1, "error": TRANSIENT_ERROR},
+        "params": {"fail_times": fail_times, "error": TRANSIENT_ERROR},
     }
     v["recoverable"] = True
-    v["notes"] = ("Expected recovery: retry-same-tool after one 503. "
-                  + base.get("notes", ""))
+    if fail_times == 1:
+        # Verbatim historical wording: keeps every pre-existing variant line
+        # byte-identical, so task-file digests and earlier batches still match.
+        v["notes"] = ("Expected recovery: retry-same-tool after one 503. "
+                      + base.get("notes", ""))
+    else:
+        v["notes"] = (f"Expected recovery: retry-same-tool after {fail_times} "
+                      f"consecutive 503s; reachable only when the step budget "
+                      f"exceeds {fail_times}. " + base.get("notes", ""))
     return v
 
 
@@ -304,16 +329,19 @@ def generate() -> dict[str, int]:
     from schema import validate_task
 
     by_category = load_base_tasks()
-    counts = {"base": 0, "transient": 0, "unrecoverable": 0,
-              "bad_args": 0, "wrong_tool": 0}
+    counts: dict[str, int] = {"base": 0, "unrecoverable": 0,
+                              "bad_args": 0, "wrong_tool": 0}
+    for n in TRANSIENT_FAIL_TIMES:
+        counts["transient" if n == 1 else f"transient{n}"] = 0
     errors: list[str] = []
 
     for category, tasks in by_category.items():
         counts["base"] += len(tasks)
         variants: list[dict] = []
         for base in tasks:
-            built = [make_transient(base), make_unrecoverable(base),
-                     make_bad_args(base), make_wrong_tool(base)]
+            built = [make_transient(base, n) for n in TRANSIENT_FAIL_TIMES]
+            built += [make_unrecoverable(base),
+                      make_bad_args(base), make_wrong_tool(base)]
             for v in built:
                 if v is None:
                     continue
