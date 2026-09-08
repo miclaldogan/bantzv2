@@ -134,6 +134,106 @@ BAD_ARGS: dict[str, dict] = {
         "prompt": "Check the weather for Istanbul, Turkey.",
         "error": "unknown location — pass the bare city name, e.g. 'Istanbul'",
     },
+    # ── expanded curation ────────────────────────────────────────────────
+    # Two sub-shapes, deliberately kept distinct:
+    #   (a) FORMAT errors — a schema/coercion layer could repair these
+    #       deterministically (dates, paths, flags, bare city names).
+    #   (b) IDENTIFIER errors — the model passes a human description where an
+    #       opaque id is required. No schema can invent the id; recovery needs
+    #       the error observed, or a lookup call first.
+    # Both are argument faults, but they predict different repair strategies,
+    # so the paper can separate "repairable by validation" from "needs the
+    # failure fed back".
+    "calendar_query_date_01": {
+        "key": "date", "malformed": "July 4th",
+        "prompt": "Do I have anything scheduled on the 4th of July?",
+        "error": "invalid date format — dates must be YYYY-MM-DD",
+    },
+    "calendar_delete_01": {
+        "key": "title", "malformed": "dentist appointment",
+        "prompt": "Cancel that dentist appointment of mine and take it off "
+                  "the calendar.",
+        "error": "no event matched — title must be the exact event title",
+    },
+    "gmail_read_01": {
+        "key": "message_id", "malformed": "the final exam email",
+        "prompt": "Open the email about the final exam and read it to me.",
+        "error": "unknown message_id — pass the id from the inbox listing, "
+                 "not a description",
+    },
+    "gmail_search_sender_01": {
+        "key": "from_sender", "malformed": "professor Yilmaz",
+        "prompt": "Do I have any email from professor Yilmaz?",
+        "error": "no sender matched — from_sender must be a bare address "
+                 "fragment, not a title",
+    },
+    "gmail_search_topic_01": {
+        "key": "subject_filter", "malformed": "weekend hike plans",
+        "prompt": "Search my email for anything about the weekend hike.",
+        "error": "no subject matched — subject_filter must be a single "
+                 "keyword",
+    },
+    "reminder_cancel_01": {
+        "key": "reminder_id", "malformed": "watering the plants",
+        "prompt": "Cancel my reminder about watering the plants.",
+        "error": "unknown reminder_id — pass the id from the reminder list, "
+                 "not its text",
+    },
+    "fs_read_01": {
+        "key": "path", "malformed": "shopping.txt",
+        "prompt": "Read my shopping list out of the notes folder.",
+        "error": "no such path — expected an absolute path like "
+                 "~/notes/shopping.txt",
+    },
+    "fs_read_02": {
+        "key": "path", "malformed": "ideas.txt",
+        "prompt": "What did I write in my ideas file in the notes folder?",
+        "error": "no such path — expected an absolute path like "
+                 "~/notes/ideas.txt",
+    },
+    "fs_ls_01": {
+        "key": "path", "malformed": "notes",
+        "prompt": "List what is in my notes folder.",
+        "error": "no such path — expected an absolute path like ~/notes",
+    },
+    "fs_overwrite_01": {
+        "key": "path", "malformed": "report_draft.md",
+        "prompt": "Replace what is in my report draft with 'final version "
+                  "submitted'.",
+        "error": "no such path — expected an absolute path like "
+                 "~/report_draft.md",
+    },
+    "shell_memory_01": {
+        "key": "command", "malformed": "free",
+        "prompt": "Check how much RAM is free on the system.",
+        "error": "free: output unreadable without -h — run 'free -h'",
+    },
+    "shell_ls_downloads_01": {
+        "key": "command", "malformed": "ls Downloads",
+        "prompt": "List what is in my Downloads folder using the shell.",
+        "error": "ls: cannot access 'Downloads' — use the full path "
+                 "'ls ~/Downloads'",
+    },
+    "weather_city_01": {
+        "key": "city", "malformed": "Elazig, Turkey",
+        "prompt": "What's the weather like in Elazig, Turkey today?",
+        "error": "unknown location — pass the bare city name, e.g. 'Elazig'",
+    },
+    "weather_rain_01": {
+        "key": "city", "malformed": "Istanbul, TR",
+        "prompt": "Will it rain in Istanbul, TR this evening?",
+        "error": "unknown location — pass the bare city name, e.g. 'Istanbul'",
+    },
+    "websearch_deadline_01": {
+        "key": "query", "malformed": "conference deadline",
+        "prompt": "When is the deadline? Search the web for it.",
+        "error": "no results — query too vague, name the conference and year",
+    },
+    "websearch_porcupine_01": {
+        "key": "query", "malformed": "wake word key",
+        "prompt": "Search whether that wake word engine needs a key.",
+        "error": "no results — query too vague, name the engine",
+    },
 }
 
 #: wrong_tool curation: base_id -> (decoy tool the phrasing biases toward,
@@ -206,6 +306,86 @@ WRONG_TOOL: dict[str, dict] = {
         "decoy": "shell",
         "prompt": "Check what changed in the latest Ollama release — see "
                   "what's new.",
+    },
+    # ── expanded curation ────────────────────────────────────────────────
+    # Each decoy is a tool that is genuinely plausible for the reworded
+    # prompt, not a random wrong answer: shell/filesystem overlap on file
+    # operations, calendar/reminder overlap on "things I have coming up",
+    # and web_search is the catch-all a router reaches for when a local tool
+    # would do. Nothing is injected at the fixture layer — the corpus biases
+    # selection and the correct tool stays available throughout.
+    "calendar_query_date_01": {
+        "decoy": "reminder",
+        "prompt": "Have I got anything set for 2026-07-04 — events on my "
+                  "calendar, not just nudges?",
+    },
+    "calendar_upcoming_01": {
+        "decoy": "reminder",
+        "prompt": "What have I got coming up? List the events on my "
+                  "calendar.",
+    },
+    "calendar_delete_01": {
+        "decoy": "reminder",
+        "prompt": "Drop the Dentist entry — take it off my calendar.",
+    },
+    "calendar_create_02": {
+        "decoy": "reminder",
+        "prompt": "Don't let me forget to call grandma on 2026-07-05 — put "
+                  "it on the calendar as an event.",
+    },
+    "fs_read_02": {
+        "decoy": "shell",
+        "prompt": "cat ~/notes/ideas.txt for me and tell me what it says.",
+    },
+    "fs_write_01": {
+        "decoy": "shell",
+        "prompt": "echo 'call the bank on Monday' into ~/notes/todo.txt.",
+    },
+    "fs_overwrite_01": {
+        "decoy": "shell",
+        "prompt": "Overwrite ~/report_draft.md with 'final version "
+                  "submitted' — clobber whatever is there.",
+    },
+    "fs_create_folder_file_01": {
+        "decoy": "shell",
+        "prompt": "mkdir a realm folder under ~/projects and drop a plan.md "
+                  "in it containing 'eval first'.",
+    },
+    "shell_ls_downloads_01": {
+        "decoy": "filesystem",
+        "prompt": "What files are sitting in my ~/Downloads folder? Use the "
+                  "shell for it.",
+    },
+    "shell_python_version_01": {
+        "decoy": "web_search",
+        "prompt": "Find out which Python version this machine has.",
+    },
+    "shell_memory_01": {
+        "decoy": "web_search",
+        "prompt": "Find out how much RAM is currently free on this machine.",
+    },
+    "reminder_add_02": {
+        "decoy": "calendar",
+        "prompt": "Schedule a nudge for 09:00 to take my medication — a "
+                  "reminder, not a calendar entry.",
+    },
+    "reminder_cancel_01": {
+        "decoy": "calendar",
+        "prompt": "Clear the plant-watering entry from my schedule — it is "
+                  "one of my reminders.",
+    },
+    "weather_city_02": {
+        "decoy": "web_search",
+        "prompt": "Look up today's temperature in Istanbul.",
+    },
+    "weather_local_01": {
+        "decoy": "web_search",
+        "prompt": "Look up how hot it is outside where I am.",
+    },
+    "gmail_search_sender_01": {
+        "decoy": "web_search",
+        "prompt": "Look up whether professor Yilmaz has been in touch with "
+                  "me lately.",
     },
 }
 
