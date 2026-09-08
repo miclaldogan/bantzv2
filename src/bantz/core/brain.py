@@ -730,6 +730,65 @@ class Brain:
         }
 
     @staticmethod
+    def _check_tool_args(tool_name: str, tool_args: dict) -> list[str]:
+        """Validate (and, per config, repair in place) a tool call's arguments.
+
+        Returns the messages for whatever is still wrong afterwards. A tool
+        with no declared ``parameters`` yields no errors, so undeclared tools
+        behave exactly as they always have.
+
+        ``arg_repair_mode`` of "coerce"/"both" runs the deterministic repair
+        first — types, dates, times, unknown keys — which costs no model call.
+        Whatever it cannot derive (identifiers, enum choices, semantic values)
+        is returned for the caller to feed back as an observation.
+        """
+        try:
+            from bantz.tools import arg_schema
+            tool = registry.get(tool_name)
+            params = dict(getattr(tool, "parameters", {}) or {}) if tool else {}
+            if not params:
+                return []
+            if config.arg_repair_mode in ("coerce", "both"):
+                repaired, notes = arg_schema.repair(params, tool_args)
+                if notes:
+                    log.info("arg repair on %s: %s", tool_name, "; ".join(notes))
+                    tool_args.clear()
+                    tool_args.update(repaired)
+            return [str(e) for e in arg_schema.validate(params, tool_args)]
+        except Exception:  # noqa: BLE001 — validation must never break a call
+            log.exception("arg validation raised for %s — treating as valid",
+                          tool_name)
+            return []
+
+    async def _redecide(
+        self, en_input: str, recent_history: list, tool_ctx: str,
+        observation: str, overhead_tokens: int, token_budget: int,
+    ) -> tuple[dict | None, int]:
+        """One observe→re-decide step. Returns (plan, overhead_tokens).
+
+        ``plan`` is None when the loop should stop: either the per-turn token
+        budget is spent, or the model declined to name another tool (an
+        honest give-up). Extracted so the tool-failure path and the argument
+        -validation path re-decide through exactly one implementation.
+        """
+        est = _estimate_tokens(observation + en_input)
+        if overhead_tokens + est > token_budget:
+            log.info("C1 loop: token budget %d exhausted (+%d) — stop re-decide",
+                     token_budget, est)
+            return None, overhead_tokens
+        overhead_tokens += est
+        redecide_ctx = (tool_ctx + "\n\n" + observation).strip()
+        plan2, _err2 = await cot_route(
+            en_input, registry.all_schemas(),
+            recent_history=recent_history,
+            tool_context=redecide_ctx,
+            skip_fastpath=True,   # SAFETY (#502): never re-enter fast-path
+        )
+        if not plan2 or plan2.get("route") != "tool" or not plan2.get("tool_name"):
+            return None, overhead_tokens
+        return plan2, overhead_tokens
+
+    @staticmethod
     def _observation_block(
         tool_name: str, tool_args: dict,
         result: "ToolResult | None", exc: "Exception | None",
@@ -959,6 +1018,52 @@ class Brain:
                     )
                 # else: treat as a failed observation and re-decide below.
             else:
+                # ── Argument schema gate (#arg-repair) ──────────────────
+                # OFF by default: config.arg_validation is False, so this
+                # whole block is skipped and the call path is byte-identical
+                # to the historical one. When on, repair is attempted first
+                # (deterministic, ZERO model calls) and only what it cannot
+                # derive becomes an observation for the loop to re-decide on.
+                arg_errors: list[str] = []
+                if config.arg_validation:
+                    arg_errors = self._check_tool_args(tool_name, tool_args)
+                    if arg_errors:
+                        log.info("arg validation failed for %s: %s",
+                                 tool_name, "; ".join(arg_errors))
+                if arg_errors and config.arg_repair_mode in ("observe", "both"):
+                    # Surface as a failed iteration so the existing
+                    # observe -> re-decide machinery handles it uniformly.
+                    _tok_now = _provider_usage()
+                    iterations.append(self._iter_record(
+                        index, tool_name, tool_args, decision_source,
+                        result=None, exc=None, gated=None, wall_ms=0,
+                        error="; ".join(arg_errors),
+                        tokens_in=_tok_now[0] - _tok_mark[0],
+                        tokens_out=_tok_now[1] - _tok_mark[1],
+                    ))
+                    _tok_mark = _tok_now
+                    result = ToolResult(
+                        success=False, output="",
+                        error="Invalid arguments — " + "; ".join(arg_errors),
+                    )
+                    last_exc = None
+                    if index >= max_steps:
+                        break
+                    observation = self._observation_block(
+                        tool_name, tool_args, result, None)
+                    plan2, overhead_tokens = await self._redecide(
+                        en_input, recent_history, tool_ctx, observation,
+                        overhead_tokens, token_budget,
+                    )
+                    if plan2 is None:
+                        break
+                    tool_name = plan2.get("tool_name") or tool_name
+                    tool_args = plan2.get("tool_args") or {}
+                    risk = plan2.get("risk_level", "safe")
+                    requires_confirm = plan2.get("requires_confirm")
+                    decision_source = "llm"
+                    continue
+
                 # ── Pre-tool announcement (speed illusion) ──────────────
                 pre_line = _PRE_TOOL_LINES.get(tool_name)
                 if pre_line:
@@ -1010,22 +1115,14 @@ class Brain:
                 # gates re-checked at the top of the loop) stay as-is.
                 continue
             observation = self._observation_block(tool_name, tool_args, result, last_exc)
-            est = _estimate_tokens(observation + en_input)
-            if overhead_tokens + est > token_budget:
-                log.info("C1 loop: token budget %d exhausted (+%d) — stop re-decide",
-                         token_budget, est)
-                break
-            overhead_tokens += est
-            redecide_ctx = (tool_ctx + "\n\n" + observation).strip()
-            plan2, _err2 = await cot_route(
-                en_input, registry.all_schemas(),
-                recent_history=recent_history,
-                tool_context=redecide_ctx,
-                skip_fastpath=True,   # SAFETY (#502): never re-enter fast-path
+            plan2, overhead_tokens = await self._redecide(
+                en_input, recent_history, tool_ctx, observation,
+                overhead_tokens, token_budget,
             )
-            if not plan2 or plan2.get("route") != "tool" or not plan2.get("tool_name"):
-                # Model chose to stop / answer in chat → honest give-up. Keep
-                # the last failed result for the finalizer to narrate.
+            if plan2 is None:
+                # Budget exhausted, or the model chose to stop / answer in
+                # chat → honest give-up. Keep the last failed result for the
+                # finalizer to narrate.
                 break
             tool_name = plan2.get("tool_name") or tool_name
             tool_args = plan2.get("tool_args") or {}

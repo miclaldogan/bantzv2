@@ -190,6 +190,30 @@ class GmailTool(BaseTool):
         "NEVER repeat a search already performed in this conversation."
     )
     risk_level = "safe"
+    parameters = {
+        "action": {"type": "string", "required": True, "enum": [
+            "summary", "count", "read", "thread", "search", "filter", "send",
+            "compose", "reply", "forward", "star", "unstar", "mark_read",
+            "mark_unread", "add_label", "remove_label", "contacts"]},
+        "message_id": {"type": "string"},
+        "thread_id": {"type": "string"},
+        "from_sender": {"type": "string"},
+        "subject_filter": {"type": "string"},
+        "days_ago": {"type": "integer"},
+        "starred": {"type": "boolean"},
+        "label": {"type": "string"},
+        "label_name": {"type": "string"},
+        "to": {"type": "string"},
+        "subject": {"type": "string"},
+        "body": {"type": "string"},
+        "intent": {"type": "string"},
+        "raw_query": {"type": "string"},
+        "alias": {"type": "string"},
+        "email": {"type": "string"},
+        "message_ids": {"type": "string"},
+        "full_text": {"type": "string"},
+        "limit": {"type": "integer"},
+    }
 
     async def execute(
         self,

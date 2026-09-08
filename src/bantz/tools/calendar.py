@@ -53,6 +53,23 @@ class CalendarTool(BaseTool):
         "Always include date/time when creating. NEVER invent event details."
     )
     risk_level = "safe"
+    parameters = {
+        "action": {"type": "string", "required": True, "enum": [
+            "today", "week", "date", "upcoming", "create", "delete", "update",
+            "conflicts"]},
+        "title": {"type": "string"},
+        "date": {"type": "string", "format": "date"},
+        "time": {"type": "string", "format": "time"},
+        "duration": {"type": "integer"},
+        "event_id": {"type": "string"},
+        "new_title": {"type": "string"},
+        "new_date": {"type": "string", "format": "date"},
+        "new_time": {"type": "string", "format": "time"},
+        "new_duration": {"type": "integer"},
+        "recurrence": {"type": "string"},
+        "attendees": {"type": "string"},
+        "limit": {"type": "integer"},
+    }
 
     async def execute(
         self,

@@ -73,6 +73,29 @@ class Config(BaseSettings):
     # local Ollama runtime (observed: 96/100/98 on identical inputs).
     ollama_seed: int = Field(-1, alias="BANTZ_OLLAMA_SEED")
 
+    # ── Tool argument schemas (#arg-repair) ───────────────────────────────
+    # All three default OFF so the pipeline is byte-identical to the
+    # historical behaviour unless an experiment turns them on.
+    #   arg_validation      check tool_args against the tool's declared
+    #                       parameters before executing
+    #   arg_repair_mode     what to do when validation fails:
+    #     none    — report the error, execute nothing (validation only)
+    #     coerce  — deterministic repair (types, dates, times, unknown keys);
+    #               ZERO model calls
+    #     observe — feed the validation error back as an observation and let
+    #               the recovery loop re-decide (costs a routing call)
+    #     both    — coerce first, observe only what coercion could not fix
+    #   arg_schema_in_prompt  advertise parameter schemas to the router,
+    #                       which may improve first-call argument quality but
+    #                       costs prompt tokens — ablated separately because
+    #                       it confounds with validation
+    arg_validation: bool = Field(False, alias="BANTZ_ARG_VALIDATION")
+    arg_repair_mode: str = Field(
+        "none", pattern="^(none|coerce|observe|both)$",
+        alias="BANTZ_ARG_REPAIR_MODE")
+    arg_schema_in_prompt: bool = Field(
+        False, alias="BANTZ_ARG_SCHEMA_IN_PROMPT")
+
     # ── Vision / Remote VLM ───────────────────────────────────────────────
     vlm_enabled: bool = Field(False, alias="BANTZ_VLM_ENABLED")
     vlm_endpoint: str = Field("http://localhost:8090", alias="BANTZ_VLM_ENDPOINT")

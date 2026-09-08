@@ -67,6 +67,14 @@ class FilesystemTool(BaseTool):
         "NEVER guess file names — list the directory first if unsure."
     )
     risk_level = "moderate"
+    parameters = {
+        "action": {"type": "string", "required": True,
+                   "enum": ["ls", "read", "write", "create_folder_and_file"]},
+        "path": {"type": "string"},
+        "content": {"type": "string"},
+        "folder_path": {"type": "string"},
+        "file_name": {"type": "string"},
+    }
 
     async def execute(
         self,

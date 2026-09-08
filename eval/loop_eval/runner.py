@@ -108,6 +108,8 @@ def condition_slug(cond: dict) -> str:
     # against pre-ablation batches.
     if cond.get("tool_loop_mode", "redecide") != "redecide":
         slug += f"_{cond['tool_loop_mode']}"
+    if cond.get("arg_mode", "off") != "off":
+        slug += f"_arg-{cond['arg_mode']}"
     return slug
 
 
@@ -432,6 +434,13 @@ def _child_env(cond: dict, mock: bool) -> dict:
     env["BANTZ_LLM_PROVIDER"] = cond["provider"]
     env["BANTZ_TOOL_LOOP_MAX_STEPS"] = str(cond["tool_loop_max_steps"])
     env["BANTZ_TOOL_LOOP_MODE"] = cond.get("tool_loop_mode", "redecide")
+    # Argument-handling condition. "off" leaves every flag at its default so
+    # the child runs the historical path; "prompt" advertises schemas to the
+    # router WITHOUT validating, which is the confound-isolating arm.
+    _arg = cond.get("arg_mode", "off")
+    env["BANTZ_ARG_VALIDATION"] = "true" if _arg in ("coerce", "observe", "both") else "false"
+    env["BANTZ_ARG_REPAIR_MODE"] = _arg if _arg in ("coerce", "observe", "both") else "none"
+    env["BANTZ_ARG_SCHEMA_IN_PROMPT"] = "true" if _arg == "prompt" else "false"
     # Disable eval-irrelevant, leak-prone subsystems for EVERY child (mock and
     # real), not just mock. MemPalace writes lock files under the live
     # ~/.mempalace/locks regardless of BANTZ_PALACE_PATH, and voice/observer/RL
@@ -506,9 +515,10 @@ def run_batch(args: argparse.Namespace) -> int:
 
     conditions = [
         {"model": model, "tool_loop_max_steps": steps,
-         "provider": args.provider, "tool_loop_mode": mode}
+         "provider": args.provider, "tool_loop_mode": mode,
+         "arg_mode": arg_mode}
         for model in args.model for steps in args.steps
-        for mode in args.mode
+        for mode in args.mode for arg_mode in args.arg_mode
     ]
 
     batch_dir = results_root / args.batch_id
@@ -583,6 +593,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="comma-separated tool_loop_mode values "
                              "(redecide,retry) — retry is the ablation "
                              "baseline: same call re-executed, no re-decide")
+    parser.add_argument("--arg-mode", type=lambda x: x.split(","),
+                        default=["off"],
+                        help="comma-separated argument-handling conditions: "
+                             "off (no validation, the historical path) | "
+                             "coerce (deterministic repair, zero LLM calls) | "
+                             "observe (feed the validation error back) | "
+                             "both | prompt (schemas advertised to the "
+                             "router, no validation)")
     parser.add_argument("--provider", default="ollama")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     parser.add_argument("--resume", action="store_true")

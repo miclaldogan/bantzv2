@@ -205,6 +205,10 @@ class WebSearchTool(BaseTool):
         "For a quick lookup, not an in-depth report. NOT for opening apps or clicking."
     )
     risk_level = "safe"
+    parameters = {
+        "query": {"type": "string", "required": True},
+        "max_results": {"type": "integer"},
+    }
 
     async def execute(self, query: str = "", **kwargs: Any) -> ToolResult:
         query = (query or kwargs.get("text", "")).strip()

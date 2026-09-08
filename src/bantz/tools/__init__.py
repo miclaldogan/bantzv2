@@ -25,17 +25,37 @@ class BaseTool(ABC):
     name: str
     description: str
     risk_level: Literal["safe", "moderate", "destructive"] = "safe"
+    #: Declared argument schema — a JSON-Schema subset, see
+    #: :mod:`bantz.tools.arg_schema`. Empty means undeclared: validation and
+    #: repair are no-ops for this tool, which is how every tool behaved before
+    #: schemas existed. Fixture doubles in the eval harness MUST mirror the
+    #: real tool's declaration or the experiment measures the wrong system.
+    parameters: dict[str, dict] = {}
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> ToolResult: ...
 
     def schema(self) -> dict:
-        """Short description of this tool for the router."""
-        return {
+        """Short description of this tool for the router.
+
+        ``parameters`` is included only when ``BANTZ_ARG_SCHEMA_IN_PROMPT`` is
+        set, so the default routing prompt is byte-identical to before — the
+        prompt is already ~4.8k tokens and adding schemas has a real budget
+        cost that has to be ablated separately.
+        """
+        out = {
             "name": self.name,
             "description": self.description,
             "risk_level": self.risk_level,
         }
+        if self.parameters:
+            try:
+                from bantz.config import config
+                if config.arg_schema_in_prompt:
+                    out["parameters"] = self.parameters
+            except Exception:  # noqa: BLE001 — schema() must never raise
+                pass
+        return out
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────

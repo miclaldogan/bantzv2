@@ -63,10 +63,14 @@ def test_corpus_size_and_categories():
 
 def test_variant_class_counts():
     """Per-class counts recorded in tasks/README.md must hold (#508)."""
-    assert len(by_class("transient_error")) == len(CORPUS)
+    from variants import TRANSIENT_FAIL_TIMES
+    # One transient variant per base per swept fail_times value.
+    assert len(by_class("transient_error")) == len(CORPUS) * len(TRANSIENT_FAIL_TIMES)
     assert len(by_class("unrecoverable")) == len(CORPUS)
-    assert len(by_class("bad_args")) >= 10
-    assert len(by_class("wrong_tool_first")) >= 10
+    # Decision-fault classes — the only ones where re-deciding can beat a
+    # plain retry, so they need real mass, not a token handful.
+    assert len(by_class("bad_args")) >= 25
+    assert len(by_class("wrong_tool_first")) >= 25
     assert len(ALL_TASKS) == len({t["id"] for t in ALL_TASKS})
 
 
@@ -87,7 +91,13 @@ def test_task_ids_follow_base_variant_convention():
     }
     for t in ALL_TASKS:
         klass = t["failure_injection"]["class"]
-        assert t["id"] == f"{t['base_id']}.{suffix_by_class[klass]}", t["id"]
+        suffix = suffix_by_class[klass]
+        if klass == "transient_error":
+            n = t["failure_injection"]["params"].get("fail_times", 1)
+            # fail_times=1 keeps the bare historical suffix so earlier batches
+            # and their result files still dedupe against this corpus.
+            suffix = "transient" if n == 1 else f"transient{n}"
+        assert t["id"] == f"{t['base_id']}.{suffix}", t["id"]
     for t in CORPUS:
         assert t["recoverable"] is None
     for t in VARIANTS:
@@ -162,15 +172,24 @@ def _world_for(task):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task", by_class("transient_error"),
                          ids=lambda t: t["id"])
-async def test_transient_fails_once_then_recovers(task):
+async def test_transient_fails_n_times_then_recovers(task):
+    """The fault-persistence sweep: a variant declaring fail_times=N must fail
+    exactly N times and succeed on attempt N+1. This is what separates "the
+    step budget was enough" from "re-deciding helped" — with a budget S, plain
+    retry can only reclaim a task while N < S."""
+    n = task["failure_injection"]["params"].get("fail_times", 1)
     world = _world_for(task)
     call = task["reference_call"]
-    first = await world.tools[call["tool"]].execute(**call["args"])
-    assert first.success is False
-    assert "503" in first.error  # failure visible to the loop
-    second = await world.tools[call["tool"]].execute(**call["args"])
-    assert second.success is True
-    assert checks.evaluate(task["success_check"], world, second.output) is True
+    tool = world.tools[call["tool"]]
+
+    for attempt in range(1, n + 1):
+        result = await tool.execute(**call["args"])
+        assert result.success is False, f"attempt {attempt} should have failed"
+        assert "503" in result.error  # failure visible to the loop
+
+    recovered = await tool.execute(**call["args"])
+    assert recovered.success is True, f"attempt {n + 1} should have recovered"
+    assert checks.evaluate(task["success_check"], world, recovered.output) is True
 
 
 @pytest.mark.asyncio

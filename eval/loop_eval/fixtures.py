@@ -183,6 +183,10 @@ class FixtureTool:
     name = "fixture"
     description = "fixture tool"
     risk_level = "safe"
+    #: Mirrored from the real tool by FixtureWorld.install() — never authored
+    #: here. Duplicating the declaration would let the eval drift away from
+    #: production and silently measure a different validation surface.
+    parameters: dict = {}
 
     def __init__(self, state: dict[str, Any] | None, call_log: CallLog,
                  failure: FailureSpec | None = None) -> None:
@@ -191,8 +195,16 @@ class FixtureTool:
         self._failure = failure
 
     def schema(self) -> dict:
-        return {"name": self.name, "description": self.description,
-                "risk_level": self.risk_level}
+        out = {"name": self.name, "description": self.description,
+               "risk_level": self.risk_level}
+        if self.parameters:
+            try:
+                from bantz.config import config
+                if config.arg_schema_in_prompt:
+                    out["parameters"] = self.parameters
+            except Exception:
+                pass
+        return out
 
     async def execute(self, **kwargs: Any):
         failure = self._failure
@@ -520,6 +532,14 @@ class FixtureWorld:
         import bantz.core.brain  # noqa: F401 — side effect: real tools register
         from bantz.tools import registry
         self._saved_registry = dict(registry._tools)
+        # Mirror each real tool's declared argument schema onto its fixture
+        # BEFORE the registry is cleared. Copying rather than re-authoring is
+        # what makes fixture/production parity structural: there is no second
+        # declaration that can drift.
+        for _name, _fixture in self.tools.items():
+            _real = self._saved_registry.get(_name)
+            if _real is not None:
+                _fixture.parameters = dict(getattr(_real, "parameters", {}) or {})
         registry._tools.clear()
         for tool in self.tools.values():
             registry.register(tool)  # type: ignore[arg-type]
@@ -546,6 +566,17 @@ class FixtureWorld:
         if foreign:
             raise AssertionError(
                 f"registry still serves non-fixture tools: {foreign}")
+        # Parity guard: a fixture whose schema does not match the real tool's
+        # would make every argument-validation measurement meaningless.
+        for name, tool in self.tools.items():
+            real = (self._saved_registry or {}).get(name)
+            if real is None:
+                continue
+            declared = dict(getattr(real, "parameters", {}) or {})
+            if tool.parameters != declared:
+                raise AssertionError(
+                    f"fixture {name!r} parameter schema differs from the real "
+                    f"tool's — the eval would measure a different system")
 
     # evidence ──────────────────────────────────────────────────────────────
 

@@ -33,6 +33,10 @@ class WeatherTool(BaseTool):
         "Uses the user's configured location if no city is specified."
     )
     risk_level = "safe"
+    parameters = {
+        # No required field: an empty city means "use the detected location".
+        "city": {"type": "string"},
+    }
 
     async def execute(self, city: str = "", **kwargs: Any) -> ToolResult:
         # Resolve city — explicit arg wins, else auto-detect

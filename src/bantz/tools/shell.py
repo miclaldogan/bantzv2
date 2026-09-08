@@ -111,6 +111,9 @@ class ShellTool(BaseTool):
         "WRONG: shell(command='click the OK button'). RIGHT: visual_click(target='OK button')."
     )
     risk_level = "moderate"
+    parameters = {
+        "command": {"type": "string", "required": True},
+    }
 
     async def execute(self, command: str = "", **kwargs: Any) -> ToolResult:
         if not command:

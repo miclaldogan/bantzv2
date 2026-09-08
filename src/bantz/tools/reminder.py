@@ -30,6 +30,15 @@ class ReminderTool(BaseTool):
         "'what do I need to do today' → action=today."
     )
     risk_level = "safe"
+    parameters = {
+        "action": {"type": "string", "required": True,
+                   "enum": ["add", "list", "cancel", "snooze", "today"]},
+        "intent": {"type": "string"},
+        "time": {"type": "string", "format": "time"},
+        "date": {"type": "string", "format": "date"},
+        "reminder_id": {"type": "string"},
+        "minutes": {"type": "integer"},
+    }
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         from bantz.core.scheduler import scheduler

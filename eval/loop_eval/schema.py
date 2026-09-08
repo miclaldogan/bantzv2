@@ -62,6 +62,8 @@ def condition_key(cond: dict) -> str:
     key = f"{cond['model']}|steps{cond['tool_loop_max_steps']}"
     if cond.get("tool_loop_mode", "redecide") != "redecide":
         key += f"|{cond['tool_loop_mode']}"
+    if cond.get("arg_mode", "off") != "off":
+        key += f"|arg-{cond['arg_mode']}"
     return key
 
 
