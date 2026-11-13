@@ -414,7 +414,7 @@ src/bantz/
 │   ├── persona.py       system prompt persona layer
 │   ├── bonding.py       interaction scoring
 │   └── greeting.py      morning briefing generation
-├── auth/                Google OAuth2 PKCE flow
+├── auth/                Google OAuth2 PKCE flow (redirect on :8766)
 └── i18n/
     └── bridge.py        MarianMT translation bridge
 ```
