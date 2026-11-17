@@ -180,7 +180,7 @@ Supporting systems run alongside the main loop:
 
 ### What's missing or incomplete
 
-**Wake word**: requires a Porcupine access key from Picovoice (free). Without it the wake listener logs a warning and stays off while the rest of the voice stack (TTS/STT) keeps working. A fully local openWakeWord engine with a custom "Bantz" model — no external account at all — is the next planned replacement (epic [#563](https://github.com/miclaldogan/bantzv2/issues/563)).
+**Wake word**: the default `openwakeword` engine uses a locally trained "Bantz" model and does not need a Picovoice account. The legacy Porcupine engine remains available via `BANTZ_WAKE_ENGINE=porcupine` and requires a Picovoice access key. If the selected engine or its model is unavailable, wake detection stays off while the rest of the voice stack (TTS/STT) can still work.
 
 **VLM / vision analysis**: runs locally by default via Ollama (`BANTZ_VLM_BACKEND=ollama`). Bantz uses a built-in multimodal path — the same local model that handles chat also reads the screen (e.g. `gemma4:e4b-it-qat`), with `moondream` as a lightweight fallback. A remote VLM endpoint (`BANTZ_VLM_BACKEND=remote` + `BANTZ_VLM_ENDPOINT`, e.g. a Jetson/Colab box) is optional for offloading.
 
