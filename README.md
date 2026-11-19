@@ -289,8 +289,10 @@ BANTZ_GEMINI_MODEL=gemini-2.0-flash
 BANTZ_OPENAI_API_KEY=your_key_here
 BANTZ_OPENAI_MODEL=gpt-4o-mini
 
-# Voice (wake word)
-BANTZ_PORCUPINE_ACCESS_KEY=your_picovoice_key
+# Voice (wake word): openwakeword is the local default; set porcupine to use Picovoice
+BANTZ_WAKE_ENGINE=openwakeword
+# Needed only with BANTZ_WAKE_ENGINE=porcupine
+# BANTZ_PORCUPINE_ACCESS_KEY=your_picovoice_key
 
 # Primary language (default Turkish)
 BANTZ_LANGUAGE=tr
