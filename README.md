@@ -224,10 +224,13 @@ bantz --doctor
 
 **Voice pipeline** (all optional — install only what you need):
 ```bash
-pip install pvporcupine pyaudio webrtcvad  # wake word + capture
-pip install faster-whisper                  # STT
+pip install openwakeword pyaudio webrtcvad  # local wake word + capture
+pip install pvporcupine                     # optional Picovoice wake engine
+pip install faster-whisper                   # STT
 # Piper TTS: install binary from https://github.com/rhasspy/piper/releases
 #            put 'piper' in PATH, download a voice model .onnx file
+# To train the local wake model, also install scikit-learn and SoX, place the
+# Piper voices at the paths in scripts/train_wakeword.py, then run that script.
 ```
 
 **MemPalace memory**:
@@ -450,6 +453,7 @@ Core (always installed):
 
 Optional (install as needed):
 - `openwakeword`, `pyaudio` — local wake word detection (default engine)
+- `scikit-learn`, SoX, Piper, and local Piper voices — train the local wake model with `python scripts/train_wakeword.py`
 - `pvporcupine` — optional Porcupine wake engine (`BANTZ_WAKE_ENGINE=porcupine`)
 - `webrtcvad` — voice activity detection
 - `faster-whisper` — local STT
