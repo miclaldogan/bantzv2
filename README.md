@@ -112,7 +112,7 @@ Supporting systems run alongside the main loop:
 - Browser control via subprocess + xdotool
 
 **External integrations**
-- Gmail: read, search, compose, reply (Google OAuth2 PKCE flow)
+- Gmail: read, search, compose, reply (Google OAuth2 PKCE flow; local callback on `localhost:8766`)
 - Google Calendar: read events, create, check conflicts
 - Google Classroom: assignments, deadlines, announcements
 - Telegram bot: full two-way remote access, screenshot-on-request, whitelist by user ID
